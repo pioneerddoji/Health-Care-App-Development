@@ -1,0 +1,360 @@
+// 데모 저장소 — Supabase env가 없을 때의 모드.
+// 첫 실행은 샘플 데이터로 시작하고, 이후 모든 변경은 기기(AsyncStorage)에
+// 저장되어 앱을 재시작해도 유지된다. (혼자 실사용 가능한 로컬 모드)
+import { demoStorage } from '../lib/demoStorage';
+import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
+import type {
+  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
+  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+} from '../types';
+import { ENTITLEMENTS, TIER_META } from '../constants/subscription';
+import {
+  SAMPLE_CHECKUPS, SAMPLE_CHILDREN, SAMPLE_GROWTH, SAMPLE_GUARDIAN,
+  SAMPLE_MEDICATIONS, SAMPLE_RECORDS, SAMPLE_VACCINATIONS,
+} from '../data/sample';
+
+let idSeq = 1000;
+const newId = (prefix: string) => `${prefix}-${++idSeq}`;
+
+/** 이 이메일로 로그인하면 샘플 데이터(아이 2명 + 14일 기록)가 로드된다 — 체험/테스트용 */
+export const DEMO_EMAIL = 'demo@kidcare.app';
+
+// 공동 관리 데모 프리셋: 하은이는 아빠가 편집자로 함께 기록하는 상태
+const DEMO_GUARDIANS: ChildGuardian[] = [
+  { guardianId: 'guardian-1', childId: 'child-1', role: 'owner', name: '김보호', relationship: '엄마', isMe: true },
+  { guardianId: 'guardian-2', childId: 'child-1', role: 'editor', name: '박아빠', relationship: '아빠', isMe: false },
+  { guardianId: 'guardian-1', childId: 'child-2', role: 'owner', name: '김보호', relationship: '엄마', isMe: true },
+];
+
+let guardian: Profile | null = null;
+let accountPassword: string | null = null;   // 데모 계정 비밀번호 (재설정 검증용)
+let accountEmail: string | null = null;
+const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription'> = {
+  children: [], records: [], growth: [],
+  medications: [], vaccinations: [], checkups: [],
+};
+
+let guardians: ChildGuardian[] = [];
+
+const myRoles = (): AllData['roles'] =>
+  Object.fromEntries(guardians.filter((g) => g.isMe).map((g) => [g.childId, g.role]));
+
+let reports: Report[] = [];
+let shareLinks: ShareLinkInfo[] = [];
+
+// 민감정보 동의 상태 — 기본 true(가입 시 동의), 철회 시 false
+const sensitiveConsent: Record<string, boolean> = {};
+const consentOf = (childId: string) => sensitiveConsent[childId] ?? true;
+
+// 데모 구독 — 샘플이 아이 2명 + 공동 보호자 1명이라 standard로 시작
+// (설정 → 플랜 관리에서 전환하며 게이팅을 체험할 수 있다)
+let subscription: Subscription = { tier: 'standard' };
+
+// ── 기기 영속화 ──────────────────────────────────────────────
+const STORAGE_KEY = 'kidcare.demo.v1';
+let hydrated = false;
+
+const hydrate = async (): Promise<void> => {
+  if (hydrated) return;
+  hydrated = true;
+  const raw = await demoStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const s = JSON.parse(raw);
+    guardian = s.guardian ?? null;
+    accountPassword = s.accountPassword ?? null;
+    accountEmail = s.accountEmail ?? null;
+    data.children = s.children ?? data.children;
+    data.records = s.records ?? data.records;
+    data.growth = s.growth ?? data.growth;
+    data.medications = s.medications ?? data.medications;
+    data.vaccinations = s.vaccinations ?? data.vaccinations;
+    data.checkups = s.checkups ?? data.checkups;
+    guardians = s.guardians ?? guardians;
+    reports = s.reports ?? reports;
+    shareLinks = s.shareLinks ?? shareLinks;
+    Object.assign(sensitiveConsent, s.sensitiveConsent ?? {});
+    subscription = s.subscription ?? subscription;
+    idSeq = s.idSeq ?? idSeq;
+    // 마이그레이션: 일반 계정(가입 사용자) 저장본에 구버전 샘플(하은/도윤)이
+    // 남아 있으면 제거한다 — 데모 계정 데이터는 유지
+    if (accountEmail && accountEmail !== DEMO_EMAIL && stripSampleData()) persist();
+  } catch { /* 손상된 저장본은 무시하고 샘플로 시작 */ }
+};
+
+// 샘플 아이(child-1/child-2)와 그에 딸린 모든 데이터를 제거. 제거했으면 true.
+const SAMPLE_CHILD_IDS = new Set(['child-1', 'child-2']);
+const stripSampleData = (): boolean => {
+  if (!data.children.some((c) => SAMPLE_CHILD_IDS.has(c.id))) return false;
+  data.children = data.children.filter((c) => !SAMPLE_CHILD_IDS.has(c.id));
+  data.records = data.records.filter((r) => !SAMPLE_CHILD_IDS.has(r.childId));
+  data.growth = data.growth.filter((g) => !SAMPLE_CHILD_IDS.has(g.childId));
+  data.medications = data.medications.filter((m) => !SAMPLE_CHILD_IDS.has(m.childId));
+  data.vaccinations = data.vaccinations.filter((v) => !SAMPLE_CHILD_IDS.has(v.childId));
+  data.checkups = data.checkups.filter((c) => !SAMPLE_CHILD_IDS.has(c.childId));
+  guardians = guardians.filter((g) => !SAMPLE_CHILD_IDS.has(g.childId));
+  reports = reports.filter((r) => !SAMPLE_CHILD_IDS.has(r.childId));
+  shareLinks = shareLinks.filter((l) => !SAMPLE_CHILD_IDS.has(l.childId));
+  return true;
+};
+
+const persist = (): void => {
+  demoStorage.setItem(STORAGE_KEY, JSON.stringify({
+    guardian, accountPassword, accountEmail, ...data, guardians, reports, shareLinks,
+    sensitiveConsent, subscription, idSeq,
+  })).catch(() => {});
+};
+
+const base: Repo = {
+  mode: 'mock',
+
+  async signUp(input: SignUpInput): Promise<AuthOutcome> {
+    // 신규 가입은 샘플 없이 빈 상태로 시작 (사용자 요구사항)
+    data.children = []; data.records = []; data.growth = [];
+    data.medications = []; data.vaccinations = []; data.checkups = [];
+    guardians = []; reports = []; shareLinks = [];
+    subscription = { tier: 'free' };   // 신규 가입은 무료 플랜부터
+    accountPassword = input.password;
+    accountEmail = input.email;
+    guardian = {
+      ...SAMPLE_GUARDIAN,
+      name: input.name,
+      relationship: input.relationship,
+      phone: input.phone,
+    };
+    return { profile: guardian };
+  },
+
+  async signIn(email: string, password: string): Promise<AuthOutcome> {
+    // 데모 계정: 샘플 데이터(아이 2명 + 14일 기록)를 새로 로드
+    if (email === DEMO_EMAIL) {
+      data.children = [...SAMPLE_CHILDREN];
+      data.records = [...SAMPLE_RECORDS];
+      data.growth = [...SAMPLE_GROWTH];
+      data.medications = [...SAMPLE_MEDICATIONS];
+      data.vaccinations = [...SAMPLE_VACCINATIONS];
+      data.checkups = [...SAMPLE_CHECKUPS];
+      guardians = [...DEMO_GUARDIANS];
+      guardian = { ...SAMPLE_GUARDIAN };
+      accountEmail = DEMO_EMAIL;          // 저장본을 데모 상태로 표시 (재시작 시 샘플 유지)
+      subscription = { tier: 'standard' }; // 데모는 항상 스탠다드 게이팅 체험
+      return { profile: guardian };
+    }
+    if (accountPassword && password !== accountPassword) {
+      return { error: '비밀번호가 일치하지 않습니다.' };
+    }
+    // 일반 계정 로그인: 직전 데모 세션의 샘플/데모용 티어가 남아 있으면 정리
+    const wasDemo = accountEmail === DEMO_EMAIL;
+    accountEmail = email;
+    stripSampleData();
+    if (wasDemo) subscription = { tier: 'free' };
+    guardian = guardian ?? { ...SAMPLE_GUARDIAN, name: email.split('@')[0] || SAMPLE_GUARDIAN.name };
+    return { profile: guardian };
+  },
+
+  async findEmailByPhone(phone: string): Promise<string | null> {
+    // 데모: 저장된 보호자의 연락처와 대조 (실서버는 RPC로 조회)
+    if (guardian?.phone && guardian.phone.replace(/\D/g, '') === phone.replace(/\D/g, '')) {
+      return accountEmail ?? 'demo-user@kidcare.app';
+    }
+    return null;
+  },
+
+  async resetPassword(email: string, phone: string, newPassword: string): Promise<void> {
+    if (!guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
+      throw new Error('가입 시 등록한 연락처와 일치하지 않습니다.');
+    }
+    accountPassword = newPassword;
+  },
+
+  async signOut() { guardian = null; },
+  // 데모 로그인 상태도 기기에 유지 — 앱 재시작 시 자동 로그인
+  async restoreSession() { return guardian; },
+
+  async loadAll(): Promise<AllData> {
+    return {
+      children: [...data.children],
+      records: [...data.records],
+      growth: [...data.growth],
+      medications: [...data.medications],
+      vaccinations: [...data.vaccinations],
+      checkups: [...data.checkups],
+      roles: myRoles(),
+      sensitiveConsent: Object.fromEntries(
+        data.children.map((c) => [c.id, consentOf(c.id)])),
+      subscription,
+    };
+  },
+
+  async createChild(input: ChildInput): Promise<Child> {
+    // 서버(트리거)와 동일한 아이 수 한도 — mock에서도 미러
+    const owned = guardians.filter((g) => g.isMe && g.role === 'owner').length;
+    const max = ENTITLEMENTS[subscription.tier].maxChildren;
+    if (owned >= max) {
+      throw new Error(`${TIER_META[subscription.tier].label} 플랜에서는 아이를 ${max}명까지 등록할 수 있어요. 플랜을 업그레이드해 주세요.`);
+    }
+    const child: Child = { ...input, id: newId('child') };
+    data.children.push(child);
+    guardians.push({
+      guardianId: guardian?.id ?? 'guardian-1', childId: child.id, role: 'owner',
+      name: guardian?.name ?? '김보호', relationship: guardian?.relationship, isMe: true,
+    });
+    return child;
+  },
+
+  async updateChild(id: string, patch: Partial<ChildInput>) {
+    data.children = data.children.map((c) => (c.id === id ? { ...c, ...patch } : c));
+  },
+
+  async deleteChildAndData(id: string) {
+    // supabase 모드의 FK cascade와 동일하게 레포트/공유 링크/동의 상태까지 정리
+    guardians = guardians.filter((g) => g.childId !== id);
+    data.children = data.children.filter((c) => c.id !== id);
+    data.records = data.records.filter((r) => r.childId !== id);
+    data.growth = data.growth.filter((g) => g.childId !== id);
+    data.medications = data.medications.filter((m) => m.childId !== id);
+    data.vaccinations = data.vaccinations.filter((v) => v.childId !== id);
+    data.checkups = data.checkups.filter((c) => c.childId !== id);
+    reports = reports.filter((r) => r.childId !== id);
+    shareLinks = shareLinks.filter((l) => l.childId !== id);
+    delete sensitiveConsent[id];
+  },
+
+  async createRecord(childId: string, input: RecordInput): Promise<DailyRecord> {
+    // 실제 백엔드에서는 RLS(has_sensitive_consent)가 차단 — mock에서도 동일 동작
+    if (!consentOf(childId)) {
+      throw new Error('건강정보 수집 동의가 철회된 상태입니다. 설정에서 재동의 후 기록할 수 있어요.');
+    }
+    const record: DailyRecord = {
+      ...input,
+      id: newId('rec'),
+      childId,
+      authorId: guardian?.id ?? 'guardian-1',
+    };
+    data.records.push(record);
+    return record;
+  },
+
+  async deleteRecord(id: string) {
+    data.records = data.records.filter((r) => r.id !== id);
+  },
+
+  async addVaccination(v: Omit<Vaccination, 'id'>): Promise<Vaccination> {
+    const vacc: Vaccination = { ...v, id: newId('vacc') };
+    data.vaccinations.push(vacc);
+    return vacc;
+  },
+
+  async updateVaccination(id: string, patch: Partial<Vaccination>) {
+    data.vaccinations = data.vaccinations.map((v) => (v.id === id ? { ...v, ...patch } : v));
+  },
+
+  async addCheckup(c: Omit<Checkup, 'id'>): Promise<Checkup> {
+    const checkup: Checkup = { ...c, id: newId('chk') };
+    data.checkups.push(checkup);
+    return checkup;
+  },
+
+  async setSubscriptionTier(tier: SubscriptionTier): Promise<Subscription> {
+    subscription = { tier };
+    return subscription;
+  },
+
+  async revokeSensitiveConsent(childId: string) {
+    sensitiveConsent[childId] = false;
+  },
+
+  async grantSensitiveConsent(childId: string) {
+    sensitiveConsent[childId] = true;
+  },
+
+  async publishReport(input): Promise<Report> {
+    const report: Report = {
+      id: newId('report'),
+      childId: input.childId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      questionsForDoctor: input.questionsForDoctor,
+      storagePath: `${input.childId}/mock.pdf`,
+      createdAt: new Date().toISOString(),
+    };
+    reports.push(report);
+    return report;
+  },
+
+  async createShareLink(reportId: string, expiresInHours: number): Promise<ShareLinkInfo> {
+    const report = reports.find((r) => r.id === reportId);
+    if (!report) throw new Error('레포트를 찾을 수 없습니다');
+    const link: ShareLinkInfo = {
+      id: newId('link'),
+      reportId,
+      childId: report.childId,
+      url: `https://kidcare.example/share/${Math.random().toString(36).slice(2, 14)}`,
+      expiresAt: new Date(Date.now() + expiresInHours * 3600_000).toISOString(),
+      periodStart: report.periodStart,
+      periodEnd: report.periodEnd,
+    };
+    shareLinks.push(link);
+    return link;
+  },
+
+  async listShareLinks(childId: string): Promise<ShareLinkInfo[]> {
+    return shareLinks.filter((l) => l.childId === childId);
+  },
+
+  async revokeShareLink(linkId: string) {
+    shareLinks = shareLinks.map((l) =>
+      l.id === linkId ? { ...l, revokedAt: new Date().toISOString() } : l);
+  },
+
+  async listGuardians(childId: string): Promise<ChildGuardian[]> {
+    return guardians.filter((g) => g.childId === childId);
+  },
+
+  async inviteGuardian(childId: string, email: string, role: 'editor' | 'viewer') {
+    const existing = guardians.find(
+      (g) => g.childId === childId && g.name === email.split('@')[0]);
+    if (existing) { existing.role = role; return; }
+    // 서버(invite_guardian RPC)와 동일한 공동 보호자 한도 — mock에서도 미러
+    const coCount = guardians.filter((g) => g.childId === childId && g.role !== 'owner').length;
+    const maxCo = ENTITLEMENTS[subscription.tier].maxCoGuardians;
+    if (coCount >= maxCo) {
+      throw new Error(maxCo === 0
+        ? '공동 보호자 초대는 스탠다드 플랜부터 가능해요.'
+        : `현재 플랜에서는 아이당 공동 보호자를 ${maxCo}명까지 초대할 수 있어요.`);
+    }
+    guardians.push({
+      guardianId: newId('guardian'), childId, role,
+      name: email.split('@')[0], relationship: '보호자', isMe: false,
+    });
+  },
+
+  async updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer') {
+    guardians = guardians.map((g) =>
+      g.childId === childId && g.guardianId === guardianId ? { ...g, role } : g);
+  },
+
+  async removeGuardian(childId: string, guardianId: string) {
+    guardians = guardians.filter(
+      (g) => !(g.childId === childId && g.guardianId === guardianId));
+  },
+};
+
+// 모든 메서드를 감싸: 호출 전 기기 저장본 하이드레이션, 변이 성공 후 자동 저장.
+// 읽기 메서드(loadAll 등)는 저장을 건너뛴다.
+const READ_ONLY = new Set(['loadAll', 'restoreSession', 'listGuardians', 'listShareLinks']);
+
+export const memoryRepo: Repo = {
+  mode: 'mock',
+  ...(Object.fromEntries(
+    (Object.keys(base) as (keyof Repo)[])
+      .filter((k) => k !== 'mode')
+      .map((k) => [k, async (...args: unknown[]) => {
+        await hydrate();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (base[k] as any)(...args);
+        if (!READ_ONLY.has(k)) persist();
+        return result;
+      }]),
+  ) as Omit<Repo, 'mode'>),
+};

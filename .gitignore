@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+dist-web/
+*.log
+.env
+scripts/output/
+
+# 임시 드래그 테스트 스크린샷
+fb2-*.png
