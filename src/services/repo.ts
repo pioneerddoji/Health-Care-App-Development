@@ -21,6 +21,8 @@ export interface AuthOutcome {
   profile?: Profile;
   /** 이메일 확인이 켜진 프로젝트에서 가입 직후 세션이 없는 경우 */
   needsEmailConfirm?: boolean;
+  /** 소셜 로그인 첫 진입(프로필 신규 생성) — 동의 화면을 거쳐야 한다 */
+  isNewUser?: boolean;
   error?: string;
 }
 
@@ -46,6 +48,9 @@ export interface Repo {
 
   signUp(input: SignUpInput): Promise<AuthOutcome>;
   signIn(email: string, password: string): Promise<AuthOutcome>;
+  /** 카카오 OAuth 로그인 — 첫 진입이면 isNewUser=true(동의 화면 경유).
+   *  노출 여부는 socialAuth.ts의 resolveKakaoLogin() 플래그가 결정 */
+  signInWithKakao(): Promise<AuthOutcome>;
   signOut(): Promise<void>;
   /** 앱 시작 시 저장된 세션 복원 */
   restoreSession(): Promise<Profile | null>;

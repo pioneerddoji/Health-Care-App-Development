@@ -108,20 +108,31 @@
 **단계**: v1.0 한국 무료(hidden) → v1.1 RevenueCat 과금 → 글로벌은 Play 국가 추가
 → (선택) 웹 채널(연간 플랜 등).
 
-### 실연동 절차 (스토어 계정 확보 후)
-1. Play Console/App Store Connect에 구독 상품 등록 — ID는 `billing.ts`의
-   `PRODUCT_IDS` 그대로 (`kidcare.standard.monthly`, `kidcare.family.monthly`).
-2. `npx expo install react-native-purchases` (**development build 필요 — Expo Go 불가**),
-   앱 시작 시 `Purchases.configure()`, 로그인 직후 `Purchases.logIn(<supabase user id>)`
-   — 이게 웹훅의 `app_user_id`가 된다.
-3. `billing.ts`의 `purchaseWithStore()`/`restorePurchases()` 내부를 주석의 가이드
-   코드로 교체 (이 파일 밖은 수정 불필요).
-4. 웹훅 배포: `supabase secrets set RC_WEBHOOK_TOKEN=<랜덤>` →
+### 실연동 절차 (2026-07-17 코드 측 완료 — 남은 것은 전부 계정 작업)
+
+**코드는 끝났다**: react-native-purchases 설치·`billing.ts` 실구현
+(configure/logIn/구매/복원, Google `상품ID:basePlanId` 형식 대응, 사용자 취소 처리),
+AppContext가 로그인/복원 시 `initBilling(uid)`·로그아웃 시 세션 정리를 호출한다.
+SDK는 live 모드 + env 키가 있을 때만 지연 로드되므로 demo/hidden 빌드와
+Expo Go/웹은 영향이 없다.
+
+남은 계정 작업 체크리스트:
+1. [ ] Play Console/App Store Connect에 구독 상품 등록 — ID는 `PRODUCT_IDS` 4개
+   (`kidcare.{standard,family}.{monthly,yearly}`; Play는 구독 2개 × base plan
+   monthly/yearly 구성 권장 — 앱은 `:basePlanId` 형식도 매칭한다).
+2. [ ] RevenueCat 프로젝트 생성 → 스토어 연결 → Entitlement/Offering 구성.
+   얼리버드는 Offering 2종(default/earlybird) + **Targeting(가입일 기준)**으로
+   서버에서 노출을 제어 — 앱은 current offering만 읽으므로 앱 업데이트 불필요.
+3. [ ] 공개 SDK 키를 EAS Secrets로: `EXPO_PUBLIC_RC_API_KEY_ANDROID`(/`_IOS`).
+4. [ ] 웹훅 배포: `supabase secrets set RC_WEBHOOK_TOKEN=<랜덤>` →
    `supabase functions deploy billing-webhook --no-verify-jwt` →
    RevenueCat 대시보드에 URL+Authorization 헤더 등록.
-5. 운영 빌드 env에 `EXPO_PUBLIC_PAYWALL_MODE=live` 추가.
+5. [ ] 운영 빌드 env에 `EXPO_PUBLIC_PAYWALL_MODE=live` 추가 후
+   **development/production build**(Expo Go 불가).
    ⚠️ EXPO_PUBLIC env 변경은 Metro 캐시에 안 잡힘 — 빌드 시 `--clear` 필요.
-6. 심사 주의: 구독 안내에 가격·기간·자동갱신 고지 필수. 복원 버튼은 이미 있음.
+6. [ ] 심사 주의: 구독 안내에 가격·기간·자동갱신 고지 필수. 복원 버튼은 이미 있음.
+7. [ ] 샌드박스 결제 테스트: 구매 → 웹훅 수신 → subscriptions 갱신 → 앱 loadAll
+   반영까지 한 사이클 확인.
 
 ## 검증 (이번 커밋)
 - RLS 통합 테스트 44건 통과: free 아이 1명 한도(트리거), free 초대 차단(RPC),

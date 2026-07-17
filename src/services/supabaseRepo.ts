@@ -2,6 +2,9 @@
 // 사진은 Storage 'record-files' 버킷에 childId/recordId/파일명 경로로 올리고,
 // 화면에는 서명 URL(24시간)로 내려준다. payload JSONB는 앱과 같은 camelCase.
 import * as FileSystem from 'expo-file-system/legacy';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import type {
@@ -262,6 +265,42 @@ export const supabaseRepo: Repo = {
       });
     }
     return { profile };
+  },
+
+  async signInWithKakao(): Promise<AuthOutcome> {
+    // Supabase OAuth: 브라우저에서 카카오 인증 → redirect URL의 토큰으로 세션 수립.
+    // 선행 설정(Kakao Developers 앱 + Supabase Kakao provider)은 socialAuth.ts 주석 참조.
+    const redirectTo = makeRedirectUri(); // app.json scheme(kidcare) / Expo Go는 exp://
+    const { data, error } = await sb().auth.signInWithOAuth({
+      provider: 'kakao',
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error) return { error: error.message };
+    const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (res.type !== 'success') return { error: '카카오 로그인이 취소되었습니다.' };
+    const { params, errorCode } = QueryParams.getQueryParams(res.url);
+    if (errorCode) return { error: errorCode };
+    if (!params.access_token || !params.refresh_token) {
+      return { error: '카카오 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.' };
+    }
+    const { data: sess, error: sErr } = await sb().auth.setSession({
+      access_token: params.access_token, refresh_token: params.refresh_token,
+    });
+    if (sErr || !sess.user) return { error: sErr?.message ?? '세션 생성에 실패했습니다.' };
+
+    let profile = await fetchProfile(sess.user.id);
+    const isNewUser = !profile;
+    if (!profile) {
+      // 첫 카카오 로그인 — 닉네임으로 프로필 생성, 이후 동의 화면을 거친다
+      const meta = sess.user.user_metadata as Record<string, unknown> | null;
+      const name = (meta?.name as string) ?? (meta?.nickname as string) ?? '보호자';
+      profile = { id: sess.user.id, name, relationship: '보호자' };
+      const { error: pErr } = await sb().from('profiles').upsert({
+        id: profile.id, name: profile.name, relationship: profile.relationship,
+      });
+      if (pErr) return { error: pErr.message };
+    }
+    return { profile, isNewUser };
   },
 
   async signOut() {

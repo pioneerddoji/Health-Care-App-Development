@@ -3,14 +3,16 @@ import { Text, StyleSheet, Alert, View, Pressable, ScrollView } from 'react-nati
 import { useApp } from '../../context/AppContext';
 import { KeyboardScreen, Field, Button, Muted, tokens } from '../../components/ui';
 import { isValidEmail } from '../../lib/validation';
+import { resolveKakaoLogin } from '../../services/socialAuth';
 
 export const LoginScreen = ({
   onGoSignUp, onGoFind,
 }: { onGoSignUp: () => void; onGoFind: () => void }) => {
-  const { signIn, mode } = useApp();
+  const { signIn, signInWithKakao, mode } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const kakaoEnabled = resolveKakaoLogin(mode);
 
   const emailErr = email.length > 0 && !isValidEmail(email)
     ? '올바른 이메일 형식이 아닙니다 (예: parent@example.com)' : null;
@@ -29,6 +31,17 @@ export const LoginScreen = ({
     }
   };
 
+  const kakao = async () => {
+    setBusy(true);
+    try {
+      const error = await signInWithKakao();
+      if (error) Alert.alert('카카오 로그인 실패', error);
+      // 성공 시 Gate가 전환: 첫 진입은 동의 화면, 기존 계정은 홈
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <KeyboardScreen>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
@@ -41,6 +54,12 @@ export const LoginScreen = ({
           secureTextEntry placeholder="8자 이상" />
         <Button label={busy ? '로그인 중…' : '로그인'} onPress={submit}
           disabled={busy || !email || !password} />
+        {kakaoEnabled && (
+          <Pressable onPress={kakao} disabled={busy}
+            style={({ pressed }) => [styles.kakaoBtn, pressed && { opacity: 0.8 }]}>
+            <Text style={styles.kakaoText}>💬 카카오로 시작하기</Text>
+          </Pressable>
+        )}
         <Button label="회원가입" variant="ghost" onPress={onGoSignUp} />
         <Pressable onPress={onGoFind} style={{ alignItems: 'center', paddingVertical: 10 }}>
           <Text style={styles.findLink}>아이디 찾기 · 비밀번호 찾기</Text>
@@ -63,4 +82,10 @@ const styles = StyleSheet.create({
   tagline: { fontSize: 14, color: tokens.inkSecondary, textAlign: 'center', marginTop: 6, marginBottom: 32 },
   error: { fontSize: 12, color: tokens.danger, marginTop: -8, marginBottom: 10 },
   findLink: { fontSize: 13, color: tokens.primary, fontWeight: '600' },
+  // 카카오 브랜드 가이드 색상 (#FEE500 배경 + 검정 87% 텍스트)
+  kakaoBtn: {
+    backgroundColor: '#FEE500', borderRadius: 12, paddingVertical: 14,
+    alignItems: 'center', marginBottom: 10,
+  },
+  kakaoText: { fontSize: 15, fontWeight: '700', color: 'rgba(0,0,0,0.87)' },
 });

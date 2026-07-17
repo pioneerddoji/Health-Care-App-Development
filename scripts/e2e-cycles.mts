@@ -136,5 +136,14 @@ ok(JSON.stringify((await repo.loadAll()).settings.dashboardOrder) === JSON.strin
 const s2 = await repo.saveSettings({});          // 빈 patch — 기존 값 유지(병합 저장)
 ok(JSON.stringify(s2.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '병합 저장(기존 키 유지)');
 
+// ── 카카오 로그인 (mock 시뮬레이션) — 계정 전환이라 맨 끝에서 실행 ──
+const k1 = await repo.signInWithKakao();
+ok(!!k1.profile && k1.isNewUser === true, '카카오 첫 로그인 = 신규(동의 화면 경유)');
+const kAll = await repo.loadAll();
+ok(kAll.children.length === 0 && kAll.subscription.tier === 'free',
+  '카카오 신규 계정 = 빈 상태 + free 티어');
+const k2 = await repo.signInWithKakao();
+ok(k2.isNewUser === false, '카카오 재로그인 = 기존 계정(동의 생략)');
+
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
 if (issues.length) { console.log('특이사항:'); issues.forEach((i) => console.log(' -', i)); process.exit(1); }

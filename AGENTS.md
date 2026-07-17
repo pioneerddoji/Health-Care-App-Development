@@ -39,8 +39,8 @@
 ```bash
 npm install                 # 최초 1회
 npx tsc --noEmit            # ① 타입체크 — 항상
-npm run test:e2e            # ② 저장소 계층 E2E 113건 (5사이클 전체 워크플로우 + 설정)
-npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 31건
+npm run test:e2e            # ② 저장소 계층 E2E 116건 (5사이클 전체 워크플로우 + 설정/카카오)
+npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 36건
 # ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 48건)
 cd supabase/tests && psql -U postgres -d <새DB> -v ON_ERROR_STOP=1 -f rls_test.sql
 # ⑤ UI 변경 시(선택): 웹 빌드 + Playwright — scripts/ 의 각 파일 헤더 참조
@@ -106,10 +106,17 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
   로직/스크린샷 테스트는 이 데모 계정 로그인을 전제로 함.
 - 네이티브 date/time 픽커(`DateField`)·키보드 회피(`KeyboardScreen`)는 웹에서 폴백으로만
   동작 → 실기기 확인 필요. 웹 프리뷰로는 픽커 UX를 검증할 수 없음.
-- **결제 미연동**: `src/services/billing.ts`의 `purchaseWithStore()`/`restorePurchases()`가
-  교체 지점(가이드 주석 포함). 페이월은 `EXPO_PUBLIC_PAYWALL_MODE`(demo/hidden/live)로
-  분기 — env 미지정 시 실서버 빌드는 **hidden**(Play 정책 안전 기본값).
-  웹훅은 `supabase/functions/billing-webhook`(미배포). 절차: docs/07 §실연동.
+- **결제: 코드 연동 완료, 계정 작업만 남음**: `billing.ts`가 RevenueCat SDK
+  (react-native-purchases)를 실호출한다 — 단 **live 모드 + env 키가 있을 때만
+  지연 로드**(Expo Go/웹/demo/hidden 빌드는 SDK를 아예 로드하지 않아 안전).
+  페이월은 `EXPO_PUBLIC_PAYWALL_MODE`(demo/hidden/live), env 미지정 시 실서버
+  빌드는 **hidden**(Play 정책 안전 기본값). live 동작 조건: ① 스토어 상품 등록
+  ② RevenueCat 대시보드 + `EXPO_PUBLIC_RC_API_KEY_ANDROID/IOS` ③ 웹훅
+  (`billing-webhook`) 배포 ④ **development build**(Expo Go 불가). 절차: docs/07 §실연동.
+- **카카오 로그인**: `EXPO_PUBLIC_KAKAO_LOGIN`(on/off) — 미지정 시 mock=on(시뮬레이션),
+  supabase=off. 실동작 전제: Kakao Developers 앱 + Supabase Kakao provider 설정
+  (socialAuth.ts 주석). 첫 카카오 로그인은 `isNewUser`로 동의 화면을 경유한다.
+  supabase 경로(브라우저 OAuth 왕복)는 실기기/실프로젝트에서 미검증.
 - **EXPO_PUBLIC_* env 변경은 Metro 캐시에 반영 안 됨** — 값 바꿔 빌드할 때
   `npx expo export --clear` 필수 (실제로 이것 때문에 검증 1회 실패했음).
 

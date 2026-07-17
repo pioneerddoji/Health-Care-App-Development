@@ -624,6 +624,54 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 SMS live 전환(공급자 계약 + OTP 서버 이전), 카카오 로그인 검토,
 off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설정).
 
+## 2026-07-17 — 결제(RevenueCat) 코드 연동 + 카카오 로그인 (이번 커밋)
+
+사용자 결정: 검토 항목 중 4번(결제 연동)·5번(카카오 로그인)을 진행하고
+**SMS 인증(공급자 계약·OTP 서버 이전)은 우선 제외**.
+
+**① RevenueCat 결제 — 코드 측 완전 연동 (계정 작업만 남음)**
+- react-native-purchases(v10) 설치, `billing.ts`의 `purchaseWithStore`/
+  `restorePurchases`를 실구현으로 교체: current offering에서 상품 매칭
+  (Google `상품ID:basePlanId` 형식 대응), 사용자 취소를 오류가 아닌 안내로 처리.
+- `initBilling(repoMode, uid)`/`endBillingSession()` 신설 — AppContext가
+  로그인·세션 복원 직후/로그아웃 시 호출. uid=`Purchases.logIn`의 app_user_id
+  = 웹훅 연결 고리(기존 설계 그대로).
+- **안전장치**: SDK는 live 모드 + `EXPO_PUBLIC_RC_API_KEY_*` 존재 시에만
+  지연 require — demo/hidden 빌드, Expo Go, 웹, Node 테스트는 네이티브 모듈을
+  아예 로드하지 않는다(미탑재 환경에서 구매 호출 시 docs/07 안내 오류).
+- 얼리버드 노출은 RevenueCat Targeting(가입일)으로 서버 제어 — 앱 코드는
+  current offering만 읽어 앱 업데이트 없이 전환 가능. docs/07 실연동 절차를
+  "남은 계정 작업 체크리스트"(상품 4개·RC 대시보드·env 키·웹훅 배포·샌드박스
+  테스트)로 갱신.
+
+**② 카카오 로그인 (Supabase OAuth)**
+- repo에 `signInWithKakao()` 추가. supabase: `signInWithOAuth(kakao,
+  skipBrowserRedirect)` → `WebBrowser.openAuthSessionAsync` → redirect URL의
+  토큰(`QueryParams`)으로 `setSession` — RN에 URL.searchParams가 없어
+  expo-auth-session의 파서 사용. redirect는 `makeRedirectUri()`(app.json
+  scheme=kidcare, Expo Go는 exp://).
+- **첫 카카오 로그인은 `isNewUser`로 판정**(프로필 행 부재) → AppContext가
+  동의 화면을 경유시킴 — "가입은 법정대리인 본인만 + 별도 동의" 원칙이
+  소셜 로그인에도 동일 적용된다. 프로필은 카카오 닉네임으로 생성.
+- 노출 플래그 `EXPO_PUBLIC_KAKAO_LOGIN`(on/off): 기본 mock=on(시뮬레이션 —
+  고정 데모 계정, 신규 시 빈 상태+free), supabase=off(**provider 설정 전
+  버튼이 보이면 눌러도 실패하므로** 설정 완료 후 on). 로그인 화면에 카카오
+  브랜드 색(#FEE500) 버튼.
+- 선행 계정 설정 문서화(docs/09 §2-2): Kakao Developers 앱 + Redirect URI +
+  Supabase Kakao provider 키 입력.
+
+**검증**
+- `tsc` 통과. `test:e2e` **116건**(카카오 mock: 신규 판정/빈 상태+free/재로그인
+  동의 생략 3건 추가), `test:gating` **36건**(카카오 플래그 기본값·오버라이드
+  3건 + SDK 미탑재 시 구매/복원 안내 오류 2건 추가) 통과.
+- 웹 빌드 + Playwright: 영속화 5건 + UI 5사이클 회귀 통과(react-native-purchases
+  추가 후에도 웹 번들 정상 = 지연 로드 확인). 카카오 mock 플로우 4건
+  (버튼 노출/첫 로그인→동의 화면/동의 후 빈 홈/새로고침 자동 로그인) 통과
+  + 로그인 화면·빈 홈 스크린샷 육안 확인.
+- ⚠️ 미검증 잔여: 실결제(live)는 스토어 상품+RC 계정+development build 필요 —
+  docs/07 체크리스트 7번(샌드박스 사이클)로 확인 예정. 카카오 supabase 경로
+  (브라우저 OAuth 왕복)는 실프로젝트+실기기에서 1회 확인 필요.
+
 ---
 
 # 앞으로 진행할 내용
@@ -636,9 +684,18 @@ off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설
 - 대시보드 드래그 순서 변경(setValue 재작성 후), 사진 뷰어 스와이프,
   레포트 PDF 2배 폰트(expo-print 실출력), 샘플 잔재 마이그레이션.
 
-## 결제 연동 (§1-2에서 B안 선택 시 또는 v1.1 — docs/07_monetization.md)
-- [ ] Play Console 구독 상품 등록 → RevenueCat(react-native-purchases,
-      development build 필요) → 웹훅 Edge Function → 가격 확정
+## 결제 연동 (v1.1 — docs/07_monetization.md)
+- [x] 코드 측 연동(react-native-purchases + billing.ts 실구현 + initBilling) — 07-17
+- [ ] 계정 작업: Play Console 상품 4개 등록 → RevenueCat 대시보드/Targeting →
+      env 키 주입 → 웹훅 배포 → development build로 샌드박스 결제 사이클 확인
+
+## 카카오 로그인 (코드 완료 — 계정 설정 후 켜기)
+- [x] signInWithKakao(supabase OAuth + mock 시뮬레이션), 신규 사용자 동의 경유 — 07-17
+- [ ] Kakao Developers 앱 + Supabase provider 설정 → `EXPO_PUBLIC_KAKAO_LOGIN=on`
+      → 실기기에서 OAuth 왕복 1회 확인
+
+## SMS 인증 (사용자 결정: 우선 제외 — 07-17)
+- 1차 출시는 off 모드(이메일 확인만) 유지. 재개 시: 공급자 계약 + OTP 서버 이전.
 
 ## 남은 마감 품질 항목
 - [ ] 접근성/한국어 카피 정리, 온보딩/빈 상태 다듬기

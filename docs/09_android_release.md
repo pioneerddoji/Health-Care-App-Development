@@ -50,6 +50,9 @@
   개인정보처리방침에 국외 이전 항목 구체화 필요.
 - [ ] schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql 순서 실행.
 - [ ] Edge Function 배포(`share-report`, `--no-verify-jwt`).
+- [ ] (선택) 카카오 로그인: Kakao Developers 앱 생성 → Redirect URI
+  `https://<ref>.supabase.co/auth/v1/callback` 등록 → Supabase Providers →
+  Kakao에 REST API 키/Secret 입력 → 빌드 env `EXPO_PUBLIC_KAKAO_LOGIN=on`.
 - [ ] `npm run verify:supabase` **전부 PASS** 확인 → 실기기에서 supabase 모드 스모크.
 - [ ] 운영 설정: Confirm email 켜기 + 커스텀 SMTP, PITR 백업(Pro 플랜) 검토.
 
@@ -68,7 +71,11 @@
 
 - [ ] ⛔ 번들 ID 반영(`app.json`) — §1-1 결정 후 즉시.
 - [x] §1-2 대비 구조: 결제 추상화(`billing.ts`)·웹훅(`billing-webhook`)·페이월 3모드
-  플래그 완료 — A안은 기본값 그대로, B안은 docs/07 §실연동 절차(SDK 계약 후 반나절).
+  플래그 완료 — **RevenueCat SDK 코드 연동도 완료(2026-07-17)**. 남은 것은
+  계정 작업뿐: docs/07 §실연동 절차 체크리스트(상품 등록·RC 대시보드·env 키·웹훅).
+- [x] 카카오 로그인 코드 완료(2026-07-17, `EXPO_PUBLIC_KAKAO_LOGIN` — 기본 off):
+  켜려면 Kakao Developers 앱 + Supabase Kakao provider 설정 후 env를 on으로.
+  ⚠️ 카카오 로그인 노출 시 사업자 정보 등록(카카오 심사)이 필요할 수 있음.
 - [x] §1-3 반영 완료: 문자 인증 우회 플래그(`EXPO_PUBLIC_SMS_MODE`, 기본 off) +
       비밀번호 재설정 메일 대체 경로. (공급자 연동은 v1.1 — OTP 서버 이전 포함)
 - [ ] 사진 서명 URL 24h 만료 시 재발급 로직(장시간 사용 대비 — 출시 전 권장).

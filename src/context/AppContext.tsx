@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
 import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
+import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
 
 interface AppState {
@@ -49,6 +50,8 @@ interface AppState {
 
   /** 성공 시 null, 실패 시 오류 메시지 반환 */
   signIn: (email: string, password: string) => Promise<string | null>;
+  /** 카카오 로그인 — 첫 진입이면 동의 화면으로 이어진다. 성공 시 null */
+  signInWithKakao: () => Promise<string | null>;
   /** 성공 시 null, 이메일 확인 필요 시 'confirm', 실패 시 오류 메시지 */
   signUp: (input: SignUpInput) => Promise<string | null>;
   signOut: () => Promise<void>;
@@ -125,6 +128,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
         if (profile) {
           setGuardian(profile);
           setConsented(true); // 기존 계정은 가입 시 동의 완료
+          initBilling(repo.mode, profile.id).catch(() => {});
           await loadAll();
         }
       } finally {
@@ -178,6 +182,17 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       if (out.error) return out.error;
       setGuardian(out.profile ?? null);
       setConsented(true); // 기존 계정은 가입 시 동의 완료
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
+      await loadAll();
+      return null;
+    },
+
+    signInWithKakao: async () => {
+      const out = await repo.signInWithKakao();
+      if (out.error) return out.error;
+      setGuardian(out.profile ?? null);
+      setConsented(!out.isNewUser); // 첫 진입은 동의 화면을 거친다
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
       return null;
     },
@@ -188,11 +203,13 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       if (out.needsEmailConfirm) return 'confirm';
       setGuardian(out.profile ?? null);
       setConsented(false); // 신규 가입은 동의 화면을 거친다
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
       return null;
     },
 
     signOut: async () => {
+      await endBillingSession().catch(() => {});
       await repo.signOut();
       setGuardian(null);
       setConsented(false);

@@ -1,7 +1,11 @@
 import { memoryRepo as repo } from '../src/services/memoryRepo';
 import { ENTITLEMENTS, PRICING, TIER_META, TIER_ORDER } from '../src/constants/subscription';
-import { PRODUCT_IDS, productIdToTier, resolvePaywallMode } from '../src/services/billing';
+import {
+  PRODUCT_IDS, productIdToTier, resolvePaywallMode,
+  initBilling, purchaseWithStore, restorePurchases,
+} from '../src/services/billing';
 import { resolveSmsMode } from '../src/services/smsAuth';
+import { resolveKakaoLogin } from '../src/services/socialAuth';
 import type { PaidTier } from '../src/types';
 
 const childInput = (name: string) => ({
@@ -80,6 +84,21 @@ ok(resolveSmsMode('mock') === 'off', 'env로 off 전환 가능(웹 검증용)');
 process.env.EXPO_PUBLIC_SMS_MODE = 'live';
 ok(resolveSmsMode('supabase') === 'live', 'env로 live 전환 가능(공급자 연동 후)');
 delete process.env.EXPO_PUBLIC_SMS_MODE;
+
+// 카카오 로그인 노출 플래그: provider 설정 전 실서버 빌드는 버튼 숨김
+delete process.env.EXPO_PUBLIC_KAKAO_LOGIN;
+ok(resolveKakaoLogin('mock') === true, '기본 카카오(mock)=on');
+ok(resolveKakaoLogin('supabase') === false, '기본 카카오(supabase)=off');
+process.env.EXPO_PUBLIC_KAKAO_LOGIN = 'on';
+ok(resolveKakaoLogin('supabase') === true, 'env로 on 전환 가능(provider 설정 후)');
+delete process.env.EXPO_PUBLIC_KAKAO_LOGIN;
+
+// 결제 SDK 미탑재 환경(Expo Go/웹/Node): 명확한 안내 오류 + initBilling은 조용한 no-op
+await initBilling('supabase', 'user-1'); // live 아님 → no-op (예외 없이 통과해야 함)
+try { await purchaseWithStore('standard', 'monthly'); ok(false, '미연동 구매 차단'); }
+catch (e) { ok(String(e).includes('docs/07'), '미연동 구매 시 안내 오류'); }
+try { await restorePurchases(); ok(false, '미연동 복원 차단'); }
+catch (e) { ok(String(e).includes('docs/07'), '미연동 복원 시 안내 오류'); }
 
 // 가격표 일관성: 얼리버드 = 정가 - ₩1,000(월간), 연간 = 월간 ×10 ("2개월 무료")
 for (const t of paidTiers) {

@@ -159,6 +159,24 @@ const base: Repo = {
     return { profile: guardian };
   },
 
+  async signInWithKakao(): Promise<AuthOutcome> {
+    // 데모: 카카오 OAuth를 시뮬레이션 — 고정 데모 계정으로 로그인.
+    // 첫 진입이면 실서버(신규 프로필 생성)와 동일하게 빈 상태 + free + 동의 화면 경유.
+    const KAKAO_EMAIL = 'kakao@kidcare.app';
+    const isNewUser = accountEmail !== KAKAO_EMAIL;
+    if (isNewUser) {
+      data.children = []; data.records = []; data.growth = [];
+      data.medications = []; data.vaccinations = []; data.checkups = [];
+      guardians = []; reports = []; shareLinks = [];
+      subscription = { tier: 'free' };
+      settings = {};
+      accountPassword = null;
+      accountEmail = KAKAO_EMAIL;
+      guardian = { ...SAMPLE_GUARDIAN, name: '카카오 보호자', relationship: '보호자', phone: undefined };
+    }
+    return { profile: guardian!, isNewUser };
+  },
+
   async findEmailByPhone(phone: string): Promise<string | null> {
     // 데모: 저장된 보호자의 연락처와 대조 (실서버는 RPC로 조회)
     if (guardian?.phone && guardian.phone.replace(/\D/g, '') === phone.replace(/\D/g, '')) {
