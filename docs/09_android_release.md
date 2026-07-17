@@ -11,7 +11,7 @@
 | 빌드 준비물 (eas.json, 아이콘/스플래시, app.json) | ✅ 준비됨 (번들 ID만 자리표시) |
 | Supabase 스키마/RLS/Edge Function 코드 | ✅ 준비됨 (**실환경 미검증**) |
 | 개인정보처리방침/이용약관 | ✅ 초안 (**법률 검토 전**) |
-| SMS 문자 인증 | ⛔ 데모 스텁 (실 발송 미연동) |
+| SMS 문자 인증 | ✅ 1차 출시는 우회(off 기본값 — 이메일 확인만). 실발송(live)은 v1.1 |
 | 결제(Play Billing) | ⛔ 미연동 (페이월 UI만 존재) |
 
 ## 1. 출시 전 반드시 결정할 것 (사용자 결정 사항)
@@ -24,10 +24,15 @@
    그대로 빌드하면 됨. 상세: docs/07 §가격 전략.
    - ⚠️ 과금 시작(v1.1) 시 필수: 비얼리버드 신규에게 정가 실제 부과(표시광고법),
      할인 유지 기간 결정(권장: 구독 유지하는 한 계속).
-3. **⛔ 회원가입 문자 인증 처리** — 둘 중 하나:
-   - A안: SMS 공급자(알리고/솔라피 등) 계약 → `smsAuth.ts`의 `sendSms()`만 교체.
-   - B안: 1차 출시는 문자 인증 단계를 끄고 이메일 확인만으로 가입
-     (코드 플래그 하나로 전환 가능하게 개발 필요 — 요청 시 반영).
+3. **✅ 회원가입 문자 인증 처리 — B안 구현 완료 (2026-07-17)**:
+   `EXPO_PUBLIC_SMS_MODE` 플래그(demo/off/live) 신설, **실서버 빌드 기본값 off**
+   (문자 인증 건너뜀 — 이메일 확인만으로 가입, 비밀번호는 재설정 메일로 대체).
+   그대로 빌드하면 1차 출시 요건 충족.
+   - ⚠️ 추후 A안(live) 전환 시: SMS 공급자 계약 + **OTP 생성·검증의 서버(Edge
+     Function) 이전 필수** — 현재 smsAuth.ts의 검증은 앱 내 데모 구현이라
+     그대로 live로 켜면 안 된다(우회 가능/레이트리밋 없음).
+   - ⚠️ off 모드 운영 준비물: Supabase Confirm email 켜기 + 비밀번호 재설정
+     링크 도착지(Site URL 또는 재설정 웹 페이지) 설정.
 4. 앱 이름 최종 확정("아이케어" — Play 내 중복/상표 검색 권장), 아이콘 시안 확정 여부.
 
 ## 2. 계정·인프라 준비 (사용자 직접, 코드로 대신 불가)
@@ -43,7 +48,7 @@
 ### 2-2. Supabase 운영 프로젝트 (약 30분, `docs/06_deployment.md` B-1 그대로)
 - [ ] ⛔ 프로젝트 생성 — **서울 리전(ap-northeast-2)** 권장. 국외 리전이면
   개인정보처리방침에 국외 이전 항목 구체화 필요.
-- [ ] schema.sql → schema_stage3.sql → schema_subscriptions.sql 순서 실행.
+- [ ] schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql 순서 실행.
 - [ ] Edge Function 배포(`share-report`, `--no-verify-jwt`).
 - [ ] `npm run verify:supabase` **전부 PASS** 확인 → 실기기에서 supabase 모드 스모크.
 - [ ] 운영 설정: Confirm email 켜기 + 커스텀 SMTP, PITR 백업(Pro 플랜) 검토.
@@ -64,7 +69,8 @@
 - [ ] ⛔ 번들 ID 반영(`app.json`) — §1-1 결정 후 즉시.
 - [x] §1-2 대비 구조: 결제 추상화(`billing.ts`)·웹훅(`billing-webhook`)·페이월 3모드
   플래그 완료 — A안은 기본값 그대로, B안은 docs/07 §실연동 절차(SDK 계약 후 반나절).
-- [ ] ⛔ §1-3 결정 반영: SMS 공급자 연동 또는 문자 인증 우회 플래그.
+- [x] §1-3 반영 완료: 문자 인증 우회 플래그(`EXPO_PUBLIC_SMS_MODE`, 기본 off) +
+      비밀번호 재설정 메일 대체 경로. (공급자 연동은 v1.1 — OTP 서버 이전 포함)
 - [ ] 사진 서명 URL 24h 만료 시 재발급 로직(장시간 사용 대비 — 출시 전 권장).
 - [ ] 버전 표기(`app.json` version/versionCode) 정리 + 릴리즈 노트 초안.
 - [ ] (선택) Sentry 등 크래시 리포팅 — 베타 피드백 수집에 유용.

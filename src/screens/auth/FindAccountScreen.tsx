@@ -5,13 +5,14 @@ import { ScrollView, Text, StyleSheet, Alert, View } from 'react-native';
 import { useApp } from '../../context/AppContext';
 import { KeyboardScreen, Field, Button, Chip, Row, Muted, Card, tokens } from '../../components/ui';
 import { digitsOnly, isValidPhone, isValidEmail, passwordError } from '../../lib/validation';
-import { requestOtp, verifyOtp } from '../../services/smsAuth';
+import { requestOtp, verifyOtp, resolveSmsMode } from '../../services/smsAuth';
 
 type Tab = 'email' | 'password';
 type Step = 'input' | 'otp' | 'done';
 
 export const FindAccountScreen = ({ onBack }: { onBack: () => void }) => {
-  const { findEmailByPhone, resetPassword } = useApp();
+  const { findEmailByPhone, resetPassword, requestPasswordResetEmail, mode } = useApp();
+  const smsMode = resolveSmsMode(mode);
   const [tab, setTab] = useState<Tab>('email');
   const [step, setStep] = useState<Step>('input');
   const [phone, setPhone] = useState('');
@@ -37,10 +38,27 @@ export const FindAccountScreen = ({ onBack }: { onBack: () => void }) => {
     }
     setBusy(true);
     try {
-      const { demoCode: code } = await requestOtp(digitsOnly(phone));
+      const { demoCode: code } = await requestOtp(digitsOnly(phone), smsMode);
       setDemoCode(code);
       setStep('otp');
       setOtpInput('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 문자 인증이 꺼진 빌드(smsMode='off'): 비밀번호 재설정 메일로 대체
+  const sendResetEmail = async () => {
+    if (!isValidEmail(email)) {
+      Alert.alert('확인', '가입한 이메일을 올바른 형식으로 입력해 주세요.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await requestPasswordResetEmail(email.trim());
+      setStep('done');
+    } catch (e) {
+      Alert.alert('실패', e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -85,7 +103,34 @@ export const FindAccountScreen = ({ onBack }: { onBack: () => void }) => {
           <Chip label="비밀번호 재설정" selected={tab === 'password'} onPress={() => reset('password')} />
         </Row>
 
-        {step === 'input' && (
+        {/* 문자 인증이 꺼진 빌드: 아이디 찾기는 안내만, 비밀번호는 재설정 메일 */}
+        {smsMode === 'off' && tab === 'email' && (
+          <Card>
+            <Muted>
+              아이디(이메일) 찾기는 휴대폰 문자 인증 도입 후 제공될 예정입니다.{'\n'}
+              가입한 이메일이 기억나지 않으면 고객센터로 문의해 주세요.
+            </Muted>
+          </Card>
+        )}
+        {smsMode === 'off' && tab === 'password' && step !== 'done' && (
+          <>
+            <Field label="가입한 이메일" value={email} onChangeText={setEmail}
+              autoCapitalize="none" keyboardType="email-address" placeholder="parent@example.com" />
+            <Muted>입력한 이메일로 비밀번호 재설정 안내 메일을 보내 드립니다.</Muted>
+            <View style={{ height: 8 }} />
+            <Button label={busy ? '발송 중…' : '재설정 메일 보내기'}
+              onPress={sendResetEmail} disabled={busy} />
+          </>
+        )}
+        {smsMode === 'off' && tab === 'password' && step === 'done' && (
+          <Card>
+            <Text style={styles.doneTitle}>재설정 메일 발송</Text>
+            <Muted>{email}(으)로 안내 메일을 보냈습니다. 메일함(스팸함 포함)을 확인해 주세요.</Muted>
+            <Button label="로그인하러 가기" onPress={onBack} />
+          </Card>
+        )}
+
+        {smsMode !== 'off' && step === 'input' && (
           <>
             {tab === 'password' && (
               <Field label="가입한 이메일" value={email} onChangeText={setEmail}
@@ -98,7 +143,7 @@ export const FindAccountScreen = ({ onBack }: { onBack: () => void }) => {
           </>
         )}
 
-        {step === 'otp' && (
+        {smsMode !== 'off' && step === 'otp' && (
           <Card>
             <Muted>{phone}로 발송된 6자리 인증번호를 입력해 주세요.</Muted>
             {demoCode && (
@@ -118,7 +163,7 @@ export const FindAccountScreen = ({ onBack }: { onBack: () => void }) => {
           </Card>
         )}
 
-        {step === 'done' && (
+        {smsMode !== 'off' && step === 'done' && (
           <Card>
             {tab === 'email' ? (
               <>

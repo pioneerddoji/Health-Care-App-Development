@@ -6,7 +6,7 @@ import React, {
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
-  ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
 import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
@@ -43,6 +43,10 @@ interface AppState {
   /** 전체 데이터 재로드 — 결제 후 서버 티어 반영 등 (billing.ts 참조) */
   loadAll: () => Promise<void>;
 
+  /** 사용자별 설정 (대시보드 순서 등) — 계정 단위 저장, 부분 병합 갱신 */
+  settings: UserSettings;
+  updateSettings: (patch: Partial<UserSettings>) => Promise<void>;
+
   /** 성공 시 null, 실패 시 오류 메시지 반환 */
   signIn: (email: string, password: string) => Promise<string | null>;
   /** 성공 시 null, 이메일 확인 필요 시 'confirm', 실패 시 오류 메시지 */
@@ -51,6 +55,7 @@ interface AppState {
   grantConsents: () => void;
   findEmailByPhone: (phone: string) => Promise<string | null>;
   resetPassword: (email: string, phone: string, newPassword: string) => Promise<void>;
+  requestPasswordResetEmail: (email: string) => Promise<void>;
 
   selectChild: (id: string) => void;
   createChild: (input: ChildInput) => Promise<Child>;
@@ -94,6 +99,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [roles, setRoles] = useState<Record<string, GuardianRole>>({});
   const [sensitiveConsent, setSensitiveConsent] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription>({ tier: 'free' });
+  const [settings, setSettings] = useState<UserSettings>({});
 
   const loadAll = useCallback(async () => {
     const all = await repo.loadAll();
@@ -106,6 +112,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     setRoles(all.roles);
     setSensitiveConsent(all.sensitiveConsent);
     setSubscription(all.subscription);
+    setSettings(all.settings);
     setSelectedChildId((cur) =>
       cur && all.children.some((c) => c.id === cur) ? cur : all.children[0]?.id ?? null);
   }, []);
@@ -161,6 +168,11 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     },
     loadAll,
 
+    settings,
+    updateSettings: async (patch) => {
+      setSettings(await repo.saveSettings(patch));
+    },
+
     signIn: async (email, password) => {
       const out = await repo.signIn(email, password);
       if (out.error) return out.error;
@@ -187,11 +199,13 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setChildren([]); setRecords([]); setGrowth([]);
       setMedications([]); setVaccinations([]); setCheckups([]);
       setSelectedChildId(null);
+      setSettings({});
     },
 
     grantConsents: () => setConsented(true),
     findEmailByPhone: (phone) => repo.findEmailByPhone(phone),
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
+    requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
 
     selectChild: setSelectedChildId,
 
@@ -289,7 +303,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     listShareLinks: (childId) => repo.listShareLinks(childId),
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
-       vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription, loadAll]);
+       vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription,
+       settings, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;
 };

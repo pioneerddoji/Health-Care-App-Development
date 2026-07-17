@@ -3,12 +3,13 @@ import { ScrollView, Text, StyleSheet, View, Alert } from 'react-native';
 import { useApp } from '../../context/AppContext';
 import { KeyboardScreen, Field, Button, Chip, Row, Muted, Card, tokens } from '../../components/ui';
 import { isValidEmail, passwordError, digitsOnly, isValidPhone } from '../../lib/validation';
-import { requestOtp, verifyOtp } from '../../services/smsAuth';
+import { requestOtp, verifyOtp, resolveSmsMode } from '../../services/smsAuth';
 
 const RELATIONSHIPS = ['엄마', '아빠', '조부모', '기타'];
 
 export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
-  const { signUp } = useApp();
+  const { signUp, mode } = useApp();
+  const smsMode = resolveSmsMode(mode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -33,7 +34,7 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
   const sendOtp = async () => {
     setBusy(true);
     try {
-      const { demoCode: code } = await requestOtp(digitsOnly(phone));
+      const { demoCode: code } = await requestOtp(digitsOnly(phone), smsMode);
       setDemoCode(code);
       setOtpSent(true);
       setOtpInput('');
@@ -42,12 +43,8 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
-  const confirmSignUp = async () => {
-    const result = verifyOtp(digitsOnly(phone), otpInput);
-    if (!result.ok) {
-      Alert.alert('인증 실패', result.reason ?? '인증번호를 확인해 주세요.');
-      return;
-    }
+  // 문자 인증이 꺼진 빌드(smsMode='off'): OTP 없이 바로 가입 — 이메일 확인으로 검증
+  const doSignUp = async () => {
     setBusy(true);
     try {
       const error = await signUp({
@@ -64,6 +61,15 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
     } finally {
       setBusy(false);
     }
+  };
+
+  const confirmSignUp = async () => {
+    const result = verifyOtp(digitsOnly(phone), otpInput);
+    if (!result.ok) {
+      Alert.alert('인증 실패', result.reason ?? '인증번호를 확인해 주세요.');
+      return;
+    }
+    await doSignUp();
   };
 
   return (
@@ -99,7 +105,10 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
           editable={!otpSent} />
         {phoneErr && <Text style={styles.error}>{phoneErr}</Text>}
 
-        {!otpSent ? (
+        {smsMode === 'off' ? (
+          <Button label={busy ? '가입 중…' : '가입 완료'}
+            onPress={doSignUp} disabled={busy || !formValid} />
+        ) : !otpSent ? (
           <Button label={busy ? '발송 중…' : '휴대폰 인증번호 받기'}
             onPress={sendOtp} disabled={busy || !formValid} />
         ) : (

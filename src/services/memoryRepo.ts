@@ -5,7 +5,8 @@ import { demoStorage } from '../lib/demoStorage';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
-  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier,
+  UserSettings, Vaccination,
 } from '../types';
 import { ENTITLEMENTS, TIER_META } from '../constants/subscription';
 import {
@@ -29,7 +30,7 @@ const DEMO_GUARDIANS: ChildGuardian[] = [
 let guardian: Profile | null = null;
 let accountPassword: string | null = null;   // 데모 계정 비밀번호 (재설정 검증용)
 let accountEmail: string | null = null;
-const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription'> = {
+const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription' | 'settings'> = {
   children: [], records: [], growth: [],
   medications: [], vaccinations: [], checkups: [],
 };
@@ -49,6 +50,10 @@ const consentOf = (childId: string) => sensitiveConsent[childId] ?? true;
 // 데모 구독 — 샘플이 아이 2명 + 공동 보호자 1명이라 standard로 시작
 // (설정 → 플랜 관리에서 전환하며 게이팅을 체험할 수 있다)
 let subscription: Subscription = { tier: 'standard' };
+
+// 사용자별 설정 — mock은 단일 계정 저장소라 설정도 하나만 유지
+// (실 모드는 user_settings 테이블에 계정별로 저장)
+let settings: UserSettings = {};
 
 // ── 기기 영속화 ──────────────────────────────────────────────
 const STORAGE_KEY = 'kidcare.demo.v1';
@@ -75,6 +80,7 @@ const hydrate = async (): Promise<void> => {
     shareLinks = s.shareLinks ?? shareLinks;
     Object.assign(sensitiveConsent, s.sensitiveConsent ?? {});
     subscription = s.subscription ?? subscription;
+    settings = s.settings ?? settings;
     idSeq = s.idSeq ?? idSeq;
     // 마이그레이션: 일반 계정(가입 사용자) 저장본에 구버전 샘플(하은/도윤)이
     // 남아 있으면 제거한다 — 데모 계정 데이터는 유지
@@ -101,7 +107,7 @@ const stripSampleData = (): boolean => {
 const persist = (): void => {
   demoStorage.setItem(STORAGE_KEY, JSON.stringify({
     guardian, accountPassword, accountEmail, ...data, guardians, reports, shareLinks,
-    sensitiveConsent, subscription, idSeq,
+    sensitiveConsent, subscription, settings, idSeq,
   })).catch(() => {});
 };
 
@@ -114,6 +120,7 @@ const base: Repo = {
     data.medications = []; data.vaccinations = []; data.checkups = [];
     guardians = []; reports = []; shareLinks = [];
     subscription = { tier: 'free' };   // 신규 가입은 무료 플랜부터
+    settings = {};                     // 설정도 새 계정 기준으로 초기화
     accountPassword = input.password;
     accountEmail = input.email;
     guardian = {
@@ -167,6 +174,10 @@ const base: Repo = {
     accountPassword = newPassword;
   },
 
+  async requestPasswordResetEmail(): Promise<void> {
+    // 데모: 실제 메일 발송 없음 — 성공으로 처리 (실서버는 supabase가 발송)
+  },
+
   async signOut() { guardian = null; },
   // 데모 로그인 상태도 기기에 유지 — 앱 재시작 시 자동 로그인
   async restoreSession() { return guardian; },
@@ -183,6 +194,7 @@ const base: Repo = {
       sensitiveConsent: Object.fromEntries(
         data.children.map((c) => [c.id, consentOf(c.id)])),
       subscription,
+      settings: { ...settings },
     };
   },
 
@@ -258,6 +270,11 @@ const base: Repo = {
   async setSubscriptionTier(tier: SubscriptionTier): Promise<Subscription> {
     subscription = { tier };
     return subscription;
+  },
+
+  async saveSettings(patch: Partial<UserSettings>): Promise<UserSettings> {
+    settings = { ...settings, ...patch };
+    return { ...settings };
   },
 
   async revokeSensitiveConsent(childId: string) {

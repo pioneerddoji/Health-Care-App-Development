@@ -1,6 +1,6 @@
 // 대시보드 — 기간 선택(7/14/30일, 플랜별 게이팅) + 그래프 5종 (성장은 프로필에서)
 // 그래프 카드를 길게 누르면 카드가 떠오르고, 누른 채 위/아래로 끌어 순서를 바꾼다
-// (아이패드 홈 화면 방식). 순서는 기기에 저장된다.
+// (아이패드 홈 화면 방식). 순서는 계정별 설정(settings.dashboardOrder)에 저장된다.
 import React, { useEffect, useMemo, useState } from 'react';
 import { Text, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -24,31 +24,49 @@ const PERIODS = [7, 14, 30];
 
 const SECTION_KEYS = ['temp', 'sleep', 'meal', 'water', 'excretion', 'timeline'] as const;
 type SectionKey = (typeof SECTION_KEYS)[number];
-const ORDER_KEY = 'kidcare.dashboard.order.v1';
+/** 구버전(계정 구분 없는 기기 전역 저장) 키 — 발견 시 계정 설정으로 1회 이관 */
+const LEGACY_ORDER_KEY = 'kidcare.dashboard.order.v1';
+
+// 저장된 순서를 유효 키만 남기고, 앱 업데이트로 새 그래프가 추가돼도
+// 목록에서 빠지지 않게 기본 순서와 합친다
+const mergeOrder = (saved?: string[]): SectionKey[] => {
+  const valid = (saved ?? []).filter(
+    (k): k is SectionKey => (SECTION_KEYS as readonly string[]).includes(k));
+  return [...valid, ...SECTION_KEYS.filter((k) => !valid.includes(k))];
+};
 
 export const DashboardScreen = () => {
   const nav = useNavigation<Nav>();
-  const { selectedChild, records, ent } = useApp();
+  const { selectedChild, records, ent, settings, updateSettings } = useApp();
   const [days, setDays] = useState(ent.dashboardPeriods.includes(14) ? 14 : ent.dashboardPeriods[0]);
-  const [order, setOrder] = useState<SectionKey[]>([...SECTION_KEYS]);
+  const [order, setOrder] = useState<SectionKey[]>(() => mergeOrder(settings.dashboardOrder));
   const from = daysAgo(days - 1);
   const to = today();
 
+  // 계정 설정이 (재)로드되면 순서 반영
   useEffect(() => {
-    demoStorage.getItem(ORDER_KEY).then((v) => {
+    setOrder(mergeOrder(settings.dashboardOrder));
+  }, [settings.dashboardOrder]);
+
+  // 구버전 기기 전역 저장값 → 계정 설정으로 1회 이관
+  useEffect(() => {
+    if (settings.dashboardOrder) return;
+    demoStorage.getItem(LEGACY_ORDER_KEY).then((v) => {
       if (!v) return;
       try {
-        const saved = (JSON.parse(v) as SectionKey[]).filter((k) => SECTION_KEYS.includes(k));
-        // 앱 업데이트로 새 그래프가 추가돼도 목록에서 빠지지 않게 합친다
-        setOrder([...saved, ...SECTION_KEYS.filter((k) => !saved.includes(k))]);
+        const saved = JSON.parse(v) as string[];
+        updateSettings({ dashboardOrder: mergeOrder(saved) }).catch(() => {});
       } catch { /* 손상된 저장값은 기본 순서 유지 */ }
+      demoStorage.removeItem(LEGACY_ORDER_KEY);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const applyOrder = (keys: string[]) => {
     const next = keys as SectionKey[];
     setOrder(next);
-    demoStorage.setItem(ORDER_KEY, JSON.stringify(next));
+    // 저장 실패(일시 오프라인 등)해도 화면 순서는 유지 — 다음 변경 때 재시도
+    updateSettings({ dashboardOrder: next }).catch(() => {});
   };
 
   const data = useMemo(() => {

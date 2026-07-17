@@ -571,13 +571,66 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - 검증: tsc, e2e 110, gating 27(가격표 일관성·상품 ID 4개 검사로 갱신),
   Playwright 11건(월간 4가격+취소선, 연간 4가격+환산가+안내) + 스크린샷 육안.
 
+## 2026-07-17 — 가입/설정/보안 저장 검토 반영: SMS 우회 플래그 + user_settings + 세션 암호화 (이번 커밋)
+
+사용자와 "회원가입·결제수단 연결·사용자별 설정/데이터 저장 방법" 검토 후,
+결정 없이 진행 가능한 3건을 우선 반영 (결제 연동 v1.1과 SMS live 전환은 추후 재논의).
+
+**① 문자 인증 우회 플래그 — 출시 차단(⛔ §1-3) 해소**
+- `EXPO_PUBLIC_SMS_MODE`(demo/off/live) 신설 — `resolveSmsMode()`, 페이월 모드와
+  같은 패턴. **미지정 시 mock=demo, supabase=off** (안전 기본값: 공급자 계약 전
+  실서버 빌드는 자동으로 문자 인증을 건너뜀 → 그대로 1차 출시 가능).
+- off 모드: 가입은 OTP 단계 없이 "가입 완료" 버튼(이메일 확인으로 검증),
+  계정 찾기는 ▸아이디 찾기=준비 중 안내 ▸비밀번호=재설정 메일
+  (`requestPasswordResetEmail` repo 신설 — supabase `resetPasswordForEmail`).
+- 검토에서 확인된 사항 문서화: 현 OTP 구현은 앱 내 생성·검증(데모 전용)이라
+  live 전환 시 서버(Edge Function) 이전 필수 — AGENTS §7, docs/09 §1-3에 기록.
+
+**② 사용자별 설정 저장 구조 (`user_settings`)**
+- 문제: 유일한 개인 설정(대시보드 그래프 순서)이 계정 구분 없는 기기 전역
+  AsyncStorage 키에 저장 — 계정 간 설정 공유·기기 변경 시 소실.
+- `schema_settings.sql` 신설: `user_settings(user_id PK, settings JSONB)` + RLS
+  본인 행만. 설정 항목이 늘어도 스키마 변경 불필요(키 규약 = `UserSettings` 타입).
+- repo에 `saveSettings`(부분 병합 저장) + `loadAll().settings`, 두 구현 미러링.
+  AppContext에 `settings`/`updateSettings` 노출, 로그아웃 시 초기화.
+- 대시보드: 순서를 계정 설정으로 이전, 구버전 기기 전역 키는 발견 시 1회
+  이관 후 제거. 저장 실패(오프라인)해도 화면 순서는 유지.
+
+**③ supabase 세션 토큰 암호화 저장**
+- 기존: 세션(리프레시 토큰 포함)이 평문 AsyncStorage — 건강정보 앱 성격에 부적합.
+- `src/lib/secureSessionStorage.ts` 신설(Supabase 권장 패턴): AES-256-CTR 키만
+  SecureStore(키체인/Keystore)에 두고 암호문은 AsyncStorage에(SecureStore 2KB
+  한도 회피). 웹은 AsyncStorage 폴백(UI 검증 전용). 구버전 평문 세션은 1회
+  수용 후 다음 저장부터 암호화(기존 로그인 유지).
+- 의존성 추가: expo-secure-store ~15.0.8, expo-crypto ~15.0.9, aes-js(순수 JS —
+  Expo Go 호환). ⚠️ expo install이 프록시 환경에서 버전 조회 실패 →
+  `expo/bundledNativeModules.json`에서 SDK 54 번들 버전을 직접 확인해 설치.
+
+**검증**
+- `tsc` 통과. `test:e2e` **113건**(설정 저장/반영/병합 3건 추가),
+  `test:gating` **31건**(SMS 모드 기본값·env 오버라이드 4건 추가) 통과.
+- **RLS 48건 통과**(로컬 PostgreSQL 16): user_settings 본인 저장/타인 비노출/
+  타인 쓰기 차단/타인 수정 무효 4건 추가.
+- 웹 빌드 + Playwright: 기본 빌드에서 영속화 5건 + UI 5사이클 회귀 통과
+  (대시보드 순서가 설정 경로로 바뀐 뒤에도 새로고침 유지 포함).
+  `EXPO_PUBLIC_SMS_MODE=off` 별도 빌드(--clear)에서 off 모드 7건
+  (가입 완료 버튼/OTP 부재/동의 진입/아이디 찾기 안내/재설정 메일 발송) 통과
+  + 스크린샷 육안 확인.
+- AES 암·복호 라운드트립(2KB급 세션 JSON·한글 포함) Node 대조 통과.
+  ⚠️ SecureStore 실동작(키체인 저장/재시작 복원)은 실기기에서만 확인 가능 —
+  supabase 모드 첫 실기기 테스트 항목에 포함할 것.
+
+**남은 것(이번 검토에서 도출, 추후 논의)**: v1.1 결제 연동(RevenueCat),
+SMS live 전환(공급자 계약 + OTP 서버 이전), 카카오 로그인 검토,
+off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설정).
+
 ---
 
 # 앞으로 진행할 내용
 
 ## 최우선: 안드로이드 출시 준비 — `docs/09_android_release.md`가 단일 기준 문서
-사용자 결정 대기 3건(⛔): ① 번들 ID ② 1차 출시 구독 정책(무료 출시 vs 결제 연동 후)
-③ SMS 인증(공급자 계약 vs 1차 우회). 결정되는 대로 §3의 개발 반영 착수.
+구독 정책(무료 출시+얼리버드, 07-12)과 SMS 인증(우회 플래그 off 기본값, 07-17)은
+결정·구현 완료. 남은 사용자 결정(⛔): **① 번들 ID** — 확정 즉시 app.json 반영.
 
 ## 사용자 실기기 확인 대기 (피드백 1~3차 반영분)
 - 대시보드 드래그 순서 변경(setValue 재작성 후), 사진 뷰어 스와이프,

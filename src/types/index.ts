@@ -16,6 +16,14 @@ export interface Subscription {
   expiresAt?: string;
 }
 
+// ── 사용자별 설정 ────────────────────────────────────────────
+/** 서버 user_settings.settings(JSONB)와 1:1 — 새 개인 설정은 여기에 필드만
+ *  추가하면 된다(스키마 변경 불필요). 계정 단위로 저장되어 기기를 바꿔도 유지. */
+export interface UserSettings {
+  /** 대시보드 그래프 카드 순서 (DashboardScreen의 SectionKey 배열) */
+  dashboardOrder?: string[];
+}
+
 /** 아이 한 명을 공동 관리하는 보호자 항목 (guardian_child + profiles 조인) */
 export interface ChildGuardian {
   guardianId: string;

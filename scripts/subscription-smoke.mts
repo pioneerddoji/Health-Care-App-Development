@@ -1,6 +1,7 @@
 import { memoryRepo as repo } from '../src/services/memoryRepo';
 import { ENTITLEMENTS, PRICING, TIER_META, TIER_ORDER } from '../src/constants/subscription';
 import { PRODUCT_IDS, productIdToTier, resolvePaywallMode } from '../src/services/billing';
+import { resolveSmsMode } from '../src/services/smsAuth';
 import type { PaidTier } from '../src/types';
 
 const childInput = (name: string) => ({
@@ -69,6 +70,16 @@ ok(resolvePaywallMode('mock') === 'demo', '기본 페이월 모드(mock)=demo');
 process.env.EXPO_PUBLIC_PAYWALL_MODE = 'live';
 ok(resolvePaywallMode('supabase') === 'live', 'env로 live 전환 가능');
 delete process.env.EXPO_PUBLIC_PAYWALL_MODE;
+
+// 문자 인증 모드 안전 기본값: SMS 공급자 계약 전 실서버 빌드는 자동 off(이메일 확인만)
+delete process.env.EXPO_PUBLIC_SMS_MODE;
+ok(resolveSmsMode('supabase') === 'off', '기본 SMS 모드(supabase)=off');
+ok(resolveSmsMode('mock') === 'demo', '기본 SMS 모드(mock)=demo');
+process.env.EXPO_PUBLIC_SMS_MODE = 'off';
+ok(resolveSmsMode('mock') === 'off', 'env로 off 전환 가능(웹 검증용)');
+process.env.EXPO_PUBLIC_SMS_MODE = 'live';
+ok(resolveSmsMode('supabase') === 'live', 'env로 live 전환 가능(공급자 연동 후)');
+delete process.env.EXPO_PUBLIC_SMS_MODE;
 
 // 가격표 일관성: 얼리버드 = 정가 - ₩1,000(월간), 연간 = 월간 ×10 ("2개월 무료")
 for (const t of paidTiers) {

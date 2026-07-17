@@ -7,7 +7,7 @@ import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
-  Subscription, SubscriptionTier, Vaccination,
+  Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 
 const sb = () => {
@@ -280,6 +280,13 @@ export const supabaseRepo: Repo = {
     throw new Error('비밀번호 재설정은 서버 연동 후 제공됩니다 (AGENTS.md §7 참조).');
   },
 
+  async requestPasswordResetEmail(email: string): Promise<void> {
+    // 재설정 링크의 도착지(redirectTo)는 Supabase 대시보드의 Site URL 설정을 따른다
+    // — 운영 프로젝트에서 재설정 웹 페이지 호스팅 후 URL 지정 필요 (docs/09 §2-3)
+    const { error } = await sb().auth.resetPasswordForEmail(email);
+    throwIf(error);
+  },
+
   async restoreSession(): Promise<Profile | null> {
     const { data } = await sb().auth.getSession();
     if (!data.session) return null;
@@ -289,7 +296,7 @@ export const supabaseRepo: Repo = {
   async loadAll(): Promise<AllData> {
     const client = sb();
     const userId = await currentUserId();
-    const [children, records, growth, medications, vaccinations, checkups, links, consents] = await Promise.all([
+    const [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow] = await Promise.all([
       client.from('children').select('*').is('deleted_at', null).order('birth_date'),
       client.from('daily_records').select('*, record_files(storage_path)')
         .order('record_date').order('record_time'),
@@ -300,8 +307,9 @@ export const supabaseRepo: Repo = {
       client.from('guardian_child').select('child_id, role').eq('guardian_id', userId),
       client.from('consents').select('child_id')
         .eq('type', 'sensitive_health').is('revoked_at', null),
+      client.from('user_settings').select('settings').eq('user_id', userId).maybeSingle(),
     ]);
-    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents]) throwIf(res.error);
+    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow]) throwIf(res.error);
 
     const consentedChildIds = new Set(
       (consents.data ?? []).map((c: { child_id: string }) => c.child_id));
@@ -331,11 +339,25 @@ export const supabaseRepo: Repo = {
         (children.data ?? []).map((c: { id: string }) => [c.id, consentedChildIds.has(c.id)]),
       ),
       subscription: await fetchSubscription(userId),
+      settings: (settingsRow.data?.settings as UserSettings | undefined) ?? {},
     };
   },
 
   async setSubscriptionTier(): Promise<Subscription> {
     throw new Error('플랜 변경은 앱스토어/플레이스토어 결제를 통해서만 가능합니다. (결제 연동은 docs/07_monetization.md 참조)');
+  },
+
+  async saveSettings(patch: Partial<UserSettings>): Promise<UserSettings> {
+    const userId = await currentUserId();
+    // 서버 병합: 현재 값을 읽어 patch만 덮어쓴 뒤 upsert
+    const { data } = await sb().from('user_settings')
+      .select('settings').eq('user_id', userId).maybeSingle();
+    const merged: UserSettings = { ...((data?.settings as UserSettings | undefined) ?? {}), ...patch };
+    const { error } = await sb().from('user_settings').upsert({
+      user_id: userId, settings: merged, updated_at: new Date().toISOString(),
+    });
+    throwIf(error);
+    return merged;
   },
 
   async createChild(input: ChildInput): Promise<Child> {

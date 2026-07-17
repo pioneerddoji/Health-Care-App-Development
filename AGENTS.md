@@ -39,9 +39,9 @@
 ```bash
 npm install                 # 최초 1회
 npx tsc --noEmit            # ① 타입체크 — 항상
-npm run test:e2e            # ② 저장소 계층 E2E 110건 (5사이클 전체 워크플로우)
-npm run test:gating         # ③ 구독 게이팅 12건
-# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 44건)
+npm run test:e2e            # ② 저장소 계층 E2E 113건 (5사이클 전체 워크플로우 + 설정)
+npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 31건
+# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 48건)
 cd supabase/tests && psql -U postgres -d <새DB> -v ON_ERROR_STOP=1 -f rls_test.sql
 # ⑤ UI 변경 시(선택): 웹 빌드 + Playwright — scripts/ 의 각 파일 헤더 참조
 npx expo export --platform web --output-dir dist-web
@@ -60,13 +60,17 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
   동의 철회, 완전 삭제(Storage 포함), 3티어 구독+페이월, 개인정보처리방침.
 - 데모 모드는 AsyncStorage 영속(재시작 시 자동 로그인) — 사용자가 현재 이 모드로
   **Windows PC + Expo Go(SDK 54)** 에서 개인 테스트 중.
+- 사용자별 설정은 `user_settings`(JSONB 1컬럼) + repo `saveSettings`(병합 저장) —
+  새 개인 설정은 `UserSettings` 타입에 필드만 추가(스키마 변경 불필요).
+  supabase 세션은 SecureStore 키 기반 암호화 저장(`src/lib/secureSessionStorage.ts`,
+  웹은 AsyncStorage 폴백).
 - 배포 준비물 완비: `eas.json`, 아이콘/스플래시, `docs/06_deployment.md` 체크리스트,
   `npm run verify:supabase`(실 프로젝트 연결 검증 스크립트).
 
 ## 6. 다음 작업 (우선순위순)
 1. **안드로이드 출시 준비**: `docs/09_android_release.md`가 단일 기준 문서.
-   사용자 결정 대기 3건(번들 ID / 1차 출시 구독 정책 / SMS 인증) — 결정되는 대로
-   §3 개발 반영(페이월 숨김 플래그 또는 RevenueCat, SMS 연동 또는 우회 플래그 등).
+   구독 정책(무료 출시+얼리버드)과 SMS(off 기본값=이메일 확인만)는 결정·구현 완료.
+   남은 사용자 결정: **번들 ID** — 확정 즉시 app.json 반영.
 2. 사용자 피드백 반영(1~3차 완료, 계속 도착 예정): 항목별 수정→검증(§4)→푸시 사이클로.
 3. Supabase 운영 프로젝트 연결 검증: 사용자가 프로젝트 생성 후
    `npm run verify:supabase` 실행 — 실패 항목 대응. Edge Function 배포·수신자 테스트.
@@ -89,9 +93,13 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 - 개인정보처리방침(`docs/privacy_policy.*`)·이용약관(`src/constants/terms.ts`)은 **법률 검토 전 초안**.
 - 번들 ID `app.kidcare.mvp`는 자리표시 — 스토어 첫 업로드 전 확정 필수(이후 변경 불가).
 - **SMS 문자 인증 미연동**: `src/services/smsAuth.ts`의 `sendSms()`는 데모 스텁(코드를
-  화면에 표시). 실서비스는 국내 공급자(알리고/솔라피 등) 또는 Twilio 계약 후 이 함수만 교체.
-  아이디/비번 찾기(`findEmailByPhone`/`resetPassword`)는 supabase 구현이 definer RPC +
-  SMS 연동 필요 → 현재 mock만 완성, supabase 경로는 명시적 오류 안내.
+  화면에 표시). **모드 플래그 `EXPO_PUBLIC_SMS_MODE`(demo/off/live)** — 미지정 시
+  mock=demo, supabase=off(문자 인증 건너뜀, 이메일 확인만 = 1차 출시 기본값).
+  'live' 전환 시 발송뿐 아니라 **OTP 생성·검증도 서버(Edge Function)로 이전 필수**
+  (현재 구현은 앱 내 검증이라 데모 전용 — 우회 가능/레이트리밋 없음).
+  아이디 찾기(`findEmailByPhone`)는 supabase 구현이 definer RPC + SMS 연동 필요 →
+  mock만 완성. off 모드의 비밀번호 재설정은 `requestPasswordResetEmail`(재설정 메일)
+  로 대체 — 단 링크 도착지(Site URL/redirect) 설정은 운영 프로젝트에서 필요.
 - **데모 로그인 규칙**: `demo@kidcare.app`로 로그인하면 샘플 데이터(아이2+14일)가 로드되고
   티어는 standard로 강제됨. 일반 가입/로그인은 빈 상태 + **free 티어**로 시작하며,
   저장본에 샘플 잔재가 있으면 `stripSampleData()`가 정리한다(memoryRepo).
@@ -116,7 +124,7 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 | `docs/08_adult_expansion.md` | 성인 관리 확대 대비 설계 규칙 (새 코드에 child 하드코딩 금지 등) |
 | `docs/09_android_release.md` | **안드로이드 출시 종합 체크리스트** (결정 사항·차단 항목·심사 폼) |
 | `QUICKSTART.md` | 사용자용 5분 실행 가이드 (Expo Go) |
-| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql (실행 순서), tests/, functions/ |
+| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql (실행 순서), tests/, functions/ |
 
 ## 9. 작업 규칙 (지금까지의 관례 유지)
 - 커밋: 의미 단위로, 본문에 "왜"를 씀. 개발 브랜치에 푸시 (main 직push 금지).

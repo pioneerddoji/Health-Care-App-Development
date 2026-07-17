@@ -128,5 +128,13 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   ok(!(child.id in end.roles) || end.roles[child.id] === undefined, `C${cycle} 삭제 후 역할 정리`);
 }
 
+// ── 사용자별 설정 (saveSettings 병합 저장 / loadAll 반영) ──
+const s1 = await repo.saveSettings({ dashboardOrder: ['sleep', 'temp'] });
+ok(JSON.stringify(s1.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '설정 저장(dashboardOrder)');
+ok(JSON.stringify((await repo.loadAll()).settings.dashboardOrder) === JSON.stringify(['sleep', 'temp']),
+  'loadAll에 설정 반영');
+const s2 = await repo.saveSettings({});          // 빈 patch — 기존 값 유지(병합 저장)
+ok(JSON.stringify(s2.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '병합 저장(기존 키 유지)');
+
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
 if (issues.length) { console.log('특이사항:'); issues.forEach((i) => console.log(' -', i)); process.exit(1); }
