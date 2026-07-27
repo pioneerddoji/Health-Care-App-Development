@@ -12,7 +12,8 @@
 | Supabase 스키마/RLS/Edge Function 코드 | ✅ 준비됨 (**실환경 미검증**) |
 | 개인정보처리방침/이용약관 | ✅ 초안 (**법률 검토 전**) |
 | SMS 문자 인증 | ✅ 1차 출시는 우회(off 기본값 — 이메일 확인만). 실발송(live)은 v1.1 |
-| 결제(Play Billing) | ⛔ 미연동 (페이월 UI만 존재) |
+| 결제(Play Billing) | ✅ 코드 연동 완료(RevenueCat). 1차는 hidden 기본값으로 출시, 과금은 계정 작업 후 v1.1 |
+| 카카오 로그인 | ✅ 코드 완료. 기본 off — Kakao/Supabase provider 설정 후 env로 on |
 
 ## 1. 출시 전 반드시 결정할 것 (사용자 결정 사항)
 
