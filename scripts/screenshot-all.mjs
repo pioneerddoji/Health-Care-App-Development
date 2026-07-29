@@ -54,7 +54,7 @@ await vis('전문 보기 ›').click();
 await page.waitForTimeout(500);
 await shot('03b-terms-full');
 await vis('확인했습니다 — 동의').click();
-for (const t of ['법정대리인 확인', '건강정보(민감정보)']) {
+for (const t of ['대상자 등록 권한 확인', '건강정보(민감정보)']) {
   await vis(t).click(); await page.waitForTimeout(120);
 }
 await vis('동의하고 시작하기').click();

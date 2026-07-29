@@ -217,11 +217,11 @@ const base: Repo = {
   },
 
   async createChild(input: ChildInput): Promise<Child> {
-    // 서버(트리거)와 동일한 아이 수 한도 — mock에서도 미러
+    // 서버(트리거)와 동일한 대상자 수 한도 — mock에서도 미러
     const owned = guardians.filter((g) => g.isMe && g.role === 'owner').length;
     const max = ENTITLEMENTS[subscription.tier].maxChildren;
     if (owned >= max) {
-      throw new Error(`${TIER_META[subscription.tier].label} 플랜에서는 아이를 ${max}명까지 등록할 수 있어요. 플랜을 업그레이드해 주세요.`);
+      throw new Error(`${TIER_META[subscription.tier].label} 플랜에서는 대상자를 ${max}명까지 등록할 수 있어요. 플랜을 업그레이드해 주세요.`);
     }
     const child: Child = { ...input, id: newId('child') };
     data.children.push(child);
@@ -356,7 +356,7 @@ const base: Repo = {
     if (coCount >= maxCo) {
       throw new Error(maxCo === 0
         ? '공동 보호자 초대는 스탠다드 플랜부터 가능해요.'
-        : `현재 플랜에서는 아이당 공동 보호자를 ${maxCo}명까지 초대할 수 있어요.`);
+        : `현재 플랜에서는 대상자당 공동 보호자를 ${maxCo}명까지 초대할 수 있어요.`);
     }
     guardians.push({
       guardianId: newId('guardian'), childId, role,

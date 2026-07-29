@@ -55,25 +55,27 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   await page.locator('input:visible').last().fill(code);
   await vis('인증하고 가입 완료').click();
   await vis('이용 동의', true).waitFor({ timeout: 5000 });
-  for (const t of ['서비스 이용약관', '법정대리인 확인', '건강정보(민감정보)']) {
+  for (const t of ['서비스 이용약관', '대상자 등록 권한 확인', '건강정보(민감정보)']) {
     await vis(t).click();
     await page.waitForTimeout(120);
   }
   await vis('동의하고 시작하기').click();
   await vis('안녕하세요').waitFor({ timeout: 10000 });
 
-  // 아이 추가
-  await vis('+ 아이 추가하기').click();
+  // 대상자 추가 (아이 유형 기본)
+  await vis('+ 대상자 추가하기').click();
   await vis('기본 정보').waitFor({ timeout: 5000 });
   const f = page.locator('input:visible');
   await f.nth(0).fill(`테스트${cycle}`);
   await f.nth(2).fill('2022-05-10'); // 생년월일 (별명 건너뜀)
   await page.mouse.wheel(0, 2000);
-  await vis('아이 등록').click();
+  // 대상자별 동의 확인 (만 14세 미만 → 법정대리인 확인)
+  await page.getByText(/^☐ /).first().click();
+  await vis('대상자 등록').click();
   await vis('안녕하세요').waitFor({ timeout: 8000 });
   const cards = await page.getByText('프로필 ›').locator('visible=true').count();
   await check(Promise.resolve(cards === expectedChildren),
-    `C${cycle}: 아이 카드 ${expectedChildren}개 기대, 실제 ${cards}`);
+    `C${cycle}: 대상자 카드 ${expectedChildren}개 기대, 실제 ${cards}`);
 
   // 기록 추가 (새 아이가 자동 선택됨)
   await page.getByText('기록', { exact: true }).locator('visible=true').last().click();

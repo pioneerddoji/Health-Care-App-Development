@@ -1,4 +1,4 @@
-// 홈 — 다자녀 카드 목록 + 선택된 아이의 오늘 요약
+// 홈 — 대상자(아이·성인) 카드 목록 + 선택된 대상자의 오늘 요약
 import React from 'react';
 import { ScrollView, Text, Pressable, StyleSheet, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -6,6 +6,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useApp } from '../../context/AppContext';
 import { Screen, Card, Button, Row, Muted, Disclaimer, tokens } from '../../components/ui';
 import { koreanAge, today } from '../../lib/date';
+import { showsChildFeatures } from '../../lib/recipient';
 import type { RootStackParamList } from '../../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -35,7 +36,7 @@ export const ChildListScreen = () => {
         <Row style={{ justifyContent: 'space-between', marginBottom: 16 }}>
           <View>
             <Text style={styles.hello}>안녕하세요, {guardian?.name ?? '보호자'}님 👋</Text>
-            <Muted>오늘도 아이의 하루를 기록해요</Muted>
+            <Muted>오늘도 우리 가족의 하루를 기록해요</Muted>
           </View>
           <Pressable onPress={() => nav.navigate('Settings')}>
             <Text style={{ fontSize: 22 }}>⚙️</Text>
@@ -45,8 +46,8 @@ export const ChildListScreen = () => {
         {children.length === 0 && (
           <Card style={{ alignItems: 'center', paddingVertical: 32 }}>
             <Text style={{ fontSize: 40, marginBottom: 8 }}>🧸</Text>
-            <Text style={styles.emptyTitle}>아직 등록된 아이가 없어요</Text>
-            <Muted>아래 버튼으로 첫 아이를 등록하고 기록을 시작해 보세요</Muted>
+            <Text style={styles.emptyTitle}>아직 등록된 대상자가 없어요</Text>
+            <Muted>아이도, 성인 가족도 등록할 수 있어요. 아래 버튼으로 시작해 보세요</Muted>
           </Card>
         )}
         {children.map((child) => {
@@ -61,7 +62,9 @@ export const ChildListScreen = () => {
                 <Row style={{ justifyContent: 'space-between' }}>
                   <Row>
                     <Text style={{ fontSize: 30, marginRight: 12 }}>
-                      {child.sex === 'female' ? '👧' : '👦'}
+                      {showsChildFeatures(child)
+                        ? (child.sex === 'female' ? '👧' : '👦')
+                        : (child.sex === 'female' ? '👩' : '👨')}
                     </Text>
                     <View>
                       <Text style={styles.name}>
@@ -85,10 +88,10 @@ export const ChildListScreen = () => {
         })}
 
         {atChildLimit ? (
-          <Button label="+ 아이 추가하기 (플랜 업그레이드 필요) 🔒" variant="ghost"
+          <Button label="+ 대상자 추가하기 (플랜 업그레이드 필요) 🔒" variant="ghost"
             onPress={() => nav.navigate('Paywall')} />
         ) : (
-          <Button label="+ 아이 추가하기" variant="ghost" onPress={() => nav.navigate('ChildForm', {})} />
+          <Button label="+ 대상자 추가하기" variant="ghost" onPress={() => nav.navigate('ChildForm', {})} />
         )}
         <Disclaimer />
       </ScrollView>

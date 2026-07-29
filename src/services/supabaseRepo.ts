@@ -6,6 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
+import { consentPlanFor } from '../lib/recipient';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
@@ -60,6 +61,9 @@ const childFromRow = (r: any): Child => ({
   primaryHospital: r.primary_hospital ?? undefined,
   guardianPhone: r.guardian_phone ?? undefined,
   otherNotes: r.other_notes ?? undefined,
+  // schema_recipients.sql 적용 전 저장본 호환 — 컬럼이 없으면 아이로 간주
+  recipientType: r.recipient_type ?? 'child',
+  isSelf: r.is_self ?? false,
 });
 
 const childToRow = (c: Partial<ChildInput>) => {
@@ -81,6 +85,8 @@ const childToRow = (c: Partial<ChildInput>) => {
   if (c.primaryHospital !== undefined) row.primary_hospital = c.primaryHospital ?? null;
   if (c.guardianPhone !== undefined) row.guardian_phone = c.guardianPhone ?? null;
   if (c.otherNotes !== undefined) row.other_notes = c.otherNotes ?? null;
+  if (c.recipientType !== undefined) row.recipient_type = c.recipientType;
+  if (c.isSelf !== undefined) row.is_self = c.isSelf;
   return row;
 };
 
@@ -408,10 +414,12 @@ export const supabaseRepo: Repo = {
     const { error: gErr } = await sb().from('guardian_child')
       .insert({ guardian_id: userId, child_id: child.id, role: 'owner' });
     throwIf(gErr);
-    const { error: cErr } = await sb().from('consents').insert([
-      { child_id: child.id, guardian_id: userId, type: 'guardian_legal' },
-      { child_id: child.id, guardian_id: userId, type: 'sensitive_health' },
-    ]);
+    // 동의는 대상자의 만 나이·본인 여부에 따라 갈린다 (lib/recipient.ts가 단일 원천)
+    const { error: cErr } = await sb().from('consents').insert(
+      consentPlanFor(input).types.map((type) => ({
+        child_id: child.id, guardian_id: userId, type,
+      })),
+    );
     throwIf(cErr);
     return child;
   },

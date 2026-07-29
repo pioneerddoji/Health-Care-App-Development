@@ -4,7 +4,8 @@
 > 작성되었다. 처음 15분: 이 문서 → `docs/DEVLOG.md`(시간순 개발 일지) → `docs/05_mvp_roadmap.md`.
 
 ## 1. 프로젝트 한 줄 요약
-한국 보호자용 0–18세 아이 건강 기록 앱 (React Native + Expo SDK 54 + TypeScript + Supabase).
+한국 가족용 건강 기록 앱 — 아이(0–18세)와 성인을 모두 관리 대상자로 등록한다
+(React Native + Expo SDK 54 + TypeScript + Supabase).
 일자별 기록 → 건강관리 영역 분류 → 그래프 → **병원 제출용 PDF 레포트** + 만료형 공유 링크.
 3티어 구독제(무료/스탠다드/패밀리) 포함. 개발 브랜치: `claude/fable5-dev-feasibility-993n3x`.
 
@@ -12,9 +13,12 @@
 1. **의료행위 금지**: 진단명 추정, 약 용량 계산·추천, "병원 안 가도 됨" 판단 기능을
    만들지 않는다. AI 보조를 붙여도 자연어 정리·태그 추천·요약까지만.
 2. **디스클레이머 고정**: 대시보드·레포트의 "보호자 관찰 기록이며 의학적 소견 아님" 고지 유지.
-3. **아이 얼굴 사진 미수집**: 프로필은 이모지 아바타만. 기록 사진은 얼굴 회피 안내 유지.
-4. **가입은 법정대리인 본인만** + 가입 시 민감정보 별도 동의. 아이 등록마다 아이 단위
-   동의 행(consents) 기록 — RLS가 이를 근거로 기록 INSERT를 차단한다.
+3. **얼굴 사진 미수집**: 프로필은 이모지 아바타만. 기록 사진은 얼굴 회피 안내 유지.
+4. **가입은 성인 본인만** + 민감정보 별도 동의. 대상자 등록마다 대상자 단위 동의 행
+   (consents) 기록 — RLS가 이를 근거로 기록 INSERT를 차단한다. 동의 근거는 라벨이
+   아니라 **만 나이**로 갈린다(`src/lib/recipient.ts`의 `consentPlanFor`가 단일 원천):
+   14세 미만=법정대리인 / 미성년=법정대리인+본인 고지 / 성인 본인=본인 동의 /
+   성인 타인=본인 위임 동의. **어느 경로든 `sensitive_health`가 기록 게이트**다.
 5. **구독 게이팅 원칙**: 핵심 안전 기능(기록·그래프·PDF·알림·동의·삭제)은 전 티어 무료.
    다운그레이드해도 기존 데이터는 잠기지 않는다(한도는 "새로 추가"에만).
 6. 사용자와는 **한국어**로 소통한다.
@@ -39,9 +43,9 @@
 ```bash
 npm install                 # 최초 1회
 npx tsc --noEmit            # ① 타입체크 — 항상
-npm run test:e2e            # ② 저장소 계층 E2E 116건 (5사이클 전체 워크플로우 + 설정/카카오)
+npm run test:e2e            # ② 저장소 계층 E2E 128건 (5사이클 + 설정/카카오/대상자 유형)
 npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 36건
-# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 48건)
+# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 58건)
 cd supabase/tests && psql -U postgres -d <새DB> -v ON_ERROR_STOP=1 -f rls_test.sql
 # ⑤ UI 변경 시(선택): 웹 빌드 + Playwright — scripts/ 의 각 파일 헤더 참조
 npx expo export --platform web --output-dir dist-web
@@ -128,10 +132,10 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 | `docs/05_mvp_roadmap.md` | 단계별 완료 현황 |
 | `docs/06_deployment.md` | 배포 가이드 + 계정 소유자 체크리스트 |
 | `docs/07_monetization.md` | 구독 설계 + 결제 연동 경로 |
-| `docs/08_adult_expansion.md` | 성인 관리 확대 대비 설계 규칙 (새 코드에 child 하드코딩 금지 등) |
+| `docs/08_adult_expansion.md` | **전연령 확대 설계·완료 기록** (대상자 유형/동의 분기/연령 전제 기능) |
 | `docs/09_android_release.md` | **안드로이드 출시 종합 체크리스트** (결정 사항·차단 항목·심사 폼) |
 | `QUICKSTART.md` | 사용자용 5분 실행 가이드 (Expo Go) |
-| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql (실행 순서), tests/, functions/ |
+| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql → schema_recipients.sql (실행 순서), tests/, functions/ |
 
 ## 9. 작업 규칙 (지금까지의 관례 유지)
 - 커밋: 의미 단위로, 본문에 "왜"를 씀. 개발 브랜치에 푸시 (main 직push 금지).
