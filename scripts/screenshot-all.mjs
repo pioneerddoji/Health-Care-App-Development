@@ -30,12 +30,12 @@ const goBack = async () => {
 };
 
 await page.goto('http://localhost:8323/', { waitUntil: 'networkidle' });
-await vis('아이케어 🧸').waitFor({ timeout: 20000 });
+await vis('케어노트').waitFor({ timeout: 20000 });
 await shot('01-login');
 
 // 회원가입(연락처+문자 인증) → 동의 → 빈 홈 → 로그아웃 → 데모 로그인
 await vis('회원가입', true).click();
-await vis('보호자 회원가입').waitFor({ timeout: 5000 });
+await vis('주로 기록할 대상자와의 관계').waitFor({ timeout: 5000 });
 const si = page.locator('input:visible');
 await si.nth(0).fill('me@example.com');
 await si.nth(1).fill('password123');
@@ -65,8 +65,8 @@ await vis('⚙️').click();
 await page.waitForTimeout(500);
 await page.mouse.wheel(0, 4000);
 await vis('로그아웃').click();
-await vis('아이케어 🧸').waitFor({ timeout: 8000 });
-await page.getByPlaceholder('parent@example.com').fill('demo@kidcare.app');
+await vis('케어노트').waitFor({ timeout: 8000 });
+await page.getByPlaceholder('parent@example.com').fill('demo@carenote.app');
 await page.getByPlaceholder('8자 이상').fill('password123');
 await vis('로그인', true).click();
 await vis('안녕하세요').waitFor({ timeout: 10000 });

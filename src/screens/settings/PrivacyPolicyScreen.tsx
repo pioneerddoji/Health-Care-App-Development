@@ -51,7 +51,7 @@ export const PrivacyPolicyScreen = () => (
           <Text style={styles.body}>{s.body}</Text>
         </View>
       ))}
-      <Muted>문의: privacy@kidcare.example (배포 시 실제 연락처로 교체)</Muted>
+      <Muted>문의: privacy@carenote.example (배포 시 실제 연락처로 교체)</Muted>
       <View style={{ height: 40 }} />
     </ScrollView>
   </Screen>

@@ -1,4 +1,4 @@
-# 아이케어 개발 일지
+# 케어노트 개발 일지
 
 진행 내용과 결정 사항을 시간순으로 기록한다. 새 작업이 끝날 때마다 상단이 아닌
 **하단에 이어서** 엔트리를 추가한다. (형식: 날짜 / 한 일 / 결정과 이유 / 검증 / 다음)
@@ -204,7 +204,7 @@
   가입→아이/동의/기록→Storage 업로드+서명 URL→RLS 격리→초대 RPC→자기승격 차단→
   viewer 강등→레포트+공유 링크→Edge Function 응답→동의 철회→cascade 삭제까지
   자동 스모크 (앱 코드와 독립적인 순수 Node 스크립트)
-- **CI**(GitHub Actions `kidcare-ci.yml`): kidcare 경로 변경 시 타입체크 +
+- **CI**(GitHub Actions `carenote-ci.yml`): carenote 경로 변경 시 타입체크 +
   PostgreSQL 16 서비스 컨테이너에서 RLS 39건 회귀 테스트
 - 개인정보처리방침 웹 게시본(`docs/privacy_policy.html`, 호스팅만 하면 됨)
 - 배포 가이드(`docs/06_deployment.md`): 준비된 것 / 계정 소유자 체크리스트
@@ -212,7 +212,7 @@
   작성 요령, 카테고리 선택 — 의료 아닌 건강/라이프스타일 권장)
 
 **결정과 이유**
-- 번들 ID는 자리표시(`app.kidcare.mvp`) 유지 — 소유 도메인 확정 전 임의 확정 시
+- 번들 ID는 자리표시(`app.carenote.mvp`) 유지 — 소유 도메인 확정 전 임의 확정 시
   스토어 첫 업로드 후 변경 불가 리스크. 체크리스트 최상단에 명시.
 - 스토어 카테고리는 의료가 아닌 건강/라이프스타일 권장 — 의료 카테고리는 심사
   기준(의료기기 규제 검토)이 더 엄격하고, 본 앱은 진단 기능이 없음.
@@ -509,7 +509,7 @@ shift 스프링 `useNativeDriver: true`. RN 실기기는 이 조합에서 네이
 할 수 있는 모든 것을 완성 — 실연동은 `billing.ts` 함수 2개 교체 + 웹훅 배포만 남김.
 
 - **`src/services/billing.ts` 신설** (smsAuth.ts의 sendSms 패턴):
-  `PRODUCT_IDS`(kidcare.standard.monthly / kidcare.family.monthly),
+  `PRODUCT_IDS`(carenote.standard.monthly / carenote.family.monthly),
   `purchaseWithStore()`/`restorePurchases()` — RevenueCat 교체 가이드 코드를
   주석으로 내장(Configure→logIn(supabase uid)→purchasePackage→웹훅→loadAll).
   클라이언트는 티어를 직접 쓰지 않는다(진실 원천 = subscriptions 테이블) 원칙 유지.
@@ -563,7 +563,7 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   ×10 규칙은 소통("2개월 공짜")과 계산이 모두 깔끔한 것이 채택 이유.
 - `PRICING` 숫자 객체를 가격의 단일 원천으로 신설(subscription.ts) — 라벨은
   `won()` 헬퍼로 파생. `PaidTier`/`BillingPeriod` 타입을 types로 승격.
-- `PRODUCT_IDS`를 티어×주기 4개로 확장(`kidcare.*.{monthly,yearly}`),
+- `PRODUCT_IDS`를 티어×주기 4개로 확장(`carenote.*.{monthly,yearly}`),
   `purchaseWithStore(tier, period)` 시그니처 변경, billing-webhook 매핑에
   연간 ID 추가.
 - 페이월: 월간/연간 토글 칩, 연간 선택 시 월 환산가("월 ₩1,583 꼴 · 12개월")
@@ -649,7 +649,7 @@ off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설
   skipBrowserRedirect)` → `WebBrowser.openAuthSessionAsync` → redirect URL의
   토큰(`QueryParams`)으로 `setSession` — RN에 URL.searchParams가 없어
   expo-auth-session의 파서 사용. redirect는 `makeRedirectUri()`(app.json
-  scheme=kidcare, Expo Go는 exp://).
+  scheme=carenote, Expo Go는 exp://).
 - **첫 카카오 로그인은 `isNewUser`로 판정**(프로필 행 부재) → AppContext가
   동의 화면을 경유시킴 — "가입은 법정대리인 본인만 + 별도 동의" 원칙이
   소셜 로그인에도 동일 적용된다. 프로필은 카카오 닉네임으로 생성.
@@ -728,6 +728,50 @@ off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설
 본인의 권리 행사 창구는 계정 삭제 웹 페이지와 함께 제작 검토. 법률 검토 질의에
 전연령 관련 3개 항목을 추가해 뒀다(docs/09 §2-3).
 
+## 2026-07-30 — 앱 이름 변경: 아이케어 → 케어노트(CareNote) (이번 커밋)
+
+사용자 지적: "전연령 기준이므로 앱 이름을 아이케어로 하는 건 부적절" → 이름과
+브랜딩을 전연령 기준으로 교체. 후보 4종을 제시해 **케어노트** 확정,
+아이콘 방향은 **"나중에 결정"** 으로 보류.
+
+**전면 반영** — 27개 파일: 앱 이름/slug/스킴(`carenote`), 번들 ID
+(`app.carenote.mvp`), 스토어 상품 ID(`carenote.*` 4종), 약관·방침 문구,
+SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에 등록 전이라
+지금 바꾸는 게 무료다(등록 후에는 변경 불가).
+
+**⚠️ 기존 사용자 데이터 보존이 이번 작업의 핵심 리스크였다.** 두 겹으로 처리:
+- 저장 키 `kidcare.demo.v1` → `carenote.demo.v1` **자동 이관**(새 키가 비어
+  있을 때 구 키를 복사해 사용, 구 키는 롤백 여지로 보존).
+- 구 데모 이메일 `demo@kidcare.app`도 계속 데모로 인식. 그러지 않으면 샘플 정리
+  마이그레이션(`stripSampleData`)이 구 데모 계정을 일반 계정으로 오인해 샘플을
+  삭제해 버린다 — 실제로 이 경로를 먼저 발견해서 막았다.
+
+**브랜딩 정리** — 곰인형(🧸)은 아이 전용 상징이라 앱 내부에서 제거: 로그인 로고는
+워드마크만, 홈 빈 상태는 📋. 단 등록 폼의 `🧸 아이` 칩은 브랜드가 아니라
+**대상자 유형 라벨**이므로 유지했다. 태그라인도 "우리 아이" → "우리 가족".
+
+**전연령 잔여 카피 발견·수정** — 이름 작업 중 8단계에서 놓친 곳이 드러났다:
+가입 화면이 여전히 "만 14세 미만 아동의 법정대리인 본인만 가입"이라고 안내하고
+있었고(전연령 정책과 모순), 관계 선택지가 엄마/아빠/조부모뿐이었다 →
+"성인 본인만 가입 + 대상자 등록 시 유형별 동의" 로 문구 교체, 관계에
+배우자/자녀/본인 추가, 라벨도 "주로 기록할 대상자와의 관계"로.
+
+**검증**
+- `tsc` 통과. `test:e2e` **133건**(구/신 데모 이메일 하위호환 5건 추가),
+  `test:gating` 36건 통과.
+- Playwright **영속화 9건**(기존 5 + **이름 변경 마이그레이션 4건**: 구 키만 있는
+  기기를 재현해 자동 로그인·대상자·플랜 보존·새 키 이관 확인),
+  UI 5사이클, 성인 플로우 14건 통과.
+- 마이그레이션 테스트를 처음엔 Node로 작성했다가 **AsyncStorage가 Node에서
+  동작하지 않아 전부 실패** — 저장소 검증이 원래 Playwright 기반인 이유를
+  재확인하고 웹 경로로 옮겼다(Node에서는 데모 이메일 하위호환만 검증).
+
+**남은 것(⛔)**: `assets/`의 아이콘·스플래시가 아직 🧸 시안이다. 곰인형 아이콘 +
+"케어노트" 조합은 전연령 앱으로서 어긋나므로 출시 전 교체가 필요하다 —
+방향 결정 대기(docs/10_branding.md 신설, docs/09 §3에 차단 항목으로 등록).
+사용자 확인 필요: Play 중복 검색, 상표 검색(CareNote는 해외 의료·요양 분야에
+동명 서비스가 있어 글로벌 확장 시 충돌 가능성), 번들 ID 최종 확정.
+
 ---
 
 # 앞으로 진행할 내용
@@ -757,7 +801,7 @@ off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설
 - [ ] 접근성/한국어 카피 정리, 온보딩/빈 상태 다듬기
 - [ ] Maestro 스모크 실기기 실행·보정
 - [ ] 사진 서명 URL 재발급 로직(출시 전 권장)
-- [x] RLS 테스트 CI 연결 — `.github/workflows/kidcare-ci.yml`
+- [x] RLS 테스트 CI 연결 — `.github/workflows/carenote-ci.yml`
 
 ## 백로그 (MVP 이후)
 - 성장 백분위 곡선 (질병관리청 소아 성장도표 데이터 연동)

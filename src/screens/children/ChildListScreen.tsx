@@ -45,7 +45,7 @@ export const ChildListScreen = () => {
 
         {children.length === 0 && (
           <Card style={{ alignItems: 'center', paddingVertical: 32 }}>
-            <Text style={{ fontSize: 40, marginBottom: 8 }}>🧸</Text>
+            <Text style={{ fontSize: 40, marginBottom: 8 }}>📋</Text>
             <Text style={styles.emptyTitle}>아직 등록된 대상자가 없어요</Text>
             <Muted>아이도, 성인 가족도 등록할 수 있어요. 아래 버튼으로 시작해 보세요</Muted>
           </Card>

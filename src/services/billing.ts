@@ -21,8 +21,8 @@ export type { PaidTier, BillingPeriod };
  * 웹훅(billing-webhook)의 product_id → tier 매핑과 반드시 일치해야 한다.
  */
 export const PRODUCT_IDS: Record<PaidTier, Record<BillingPeriod, string>> = {
-  standard: { monthly: 'kidcare.standard.monthly', yearly: 'kidcare.standard.yearly' },
-  family: { monthly: 'kidcare.family.monthly', yearly: 'kidcare.family.yearly' },
+  standard: { monthly: 'carenote.standard.monthly', yearly: 'carenote.standard.yearly' },
+  family: { monthly: 'carenote.family.monthly', yearly: 'carenote.family.yearly' },
 };
 
 /** 웹훅과 공유하는 역매핑 규칙 (테스트에서 일관성 검증) — 주기와 무관하게 티어 결정 */
@@ -112,7 +112,7 @@ const NOT_READY_MSG =
   + '연동 절차는 docs/07_monetization.md §실연동 절차를 참조하세요.';
 
 // Google Play 구독은 "상품ID:basePlanId" 형식으로 내려올 수 있다
-// (예: kidcare.standard:monthly) → 마지막 구분자를 유연하게 대조
+// (예: carenote.standard:monthly) → 마지막 구분자를 유연하게 대조
 const matchesProduct = (identifier: string, productId: string): boolean =>
   identifier === productId || identifier === productId.replace(/\.(\w+)$/, ':$1');
 

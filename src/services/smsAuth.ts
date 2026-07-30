@@ -45,7 +45,7 @@ export const requestOtp = async (phone: string, mode: SmsMode = 'demo'): Promise
   if (mode === 'off') throw new Error('문자 인증이 꺼진 빌드입니다 (EXPO_PUBLIC_SMS_MODE=off).');
   const code = generateCode();
   codes.set(phone, { code, expiresAt: Date.now() + OTP_TTL_MS });
-  await sendSms(phone, `[아이케어] 인증번호 ${code} (3분 내 입력)`);
+  await sendSms(phone, `[케어노트] 인증번호 ${code} (3분 내 입력)`);
   return { demoCode: mode === 'demo' ? code : undefined, expiresInSec: OTP_TTL_MS / 1000 };
 };
 

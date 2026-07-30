@@ -179,6 +179,19 @@ ok(JSON.stringify(s2.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '병
   await repo.deleteChildAndData(adult.id);
 }
 
+// ── 앱 이름 변경: 구 데모 이메일 하위호환 ──
+// (저장 키 이관은 AsyncStorage가 필요해 Playwright persistence-test에서 검증한다)
+{
+  const legacy = await repo.signIn('demo@kidcare.app', 'anything');
+  ok(!legacy.error, '구 데모 이메일(demo@kidcare.app)로 로그인 가능');
+  const legacyAll = await repo.loadAll();
+  ok(legacyAll.children.some((c) => c.id === 'child-1'), '구 데모 이메일 → 샘플 로드');
+  ok(legacyAll.subscription.tier === 'standard', '구 데모 이메일 → standard 체험 티어');
+  const current = await repo.signIn('demo@carenote.app', 'anything');
+  ok(!current.error, '새 데모 이메일(demo@carenote.app)로 로그인 가능');
+  ok((await repo.loadAll()).children.some((c) => c.id === 'child-1'), '새 데모 이메일 → 샘플 로드');
+}
+
 // ── 카카오 로그인 (mock 시뮬레이션) — 계정 전환이라 맨 끝에서 실행 ──
 const k1 = await repo.signInWithKakao();
 ok(!!k1.profile && k1.isNewUser === true, '카카오 첫 로그인 = 신규(동의 화면 경유)');

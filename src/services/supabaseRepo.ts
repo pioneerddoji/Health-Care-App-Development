@@ -276,7 +276,7 @@ export const supabaseRepo: Repo = {
   async signInWithKakao(): Promise<AuthOutcome> {
     // Supabase OAuth: 브라우저에서 카카오 인증 → redirect URL의 토큰으로 세션 수립.
     // 선행 설정(Kakao Developers 앱 + Supabase Kakao provider)은 socialAuth.ts 주석 참조.
-    const redirectTo = makeRedirectUri(); // app.json scheme(kidcare) / Expo Go는 exp://
+    const redirectTo = makeRedirectUri(); // app.json scheme(carenote) / Expo Go는 exp://
     const { data, error } = await sb().auth.signInWithOAuth({
       provider: 'kakao',
       options: { redirectTo, skipBrowserRedirect: true },

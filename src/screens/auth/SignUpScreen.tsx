@@ -5,7 +5,8 @@ import { KeyboardScreen, Field, Button, Chip, Row, Muted, Card, tokens } from '.
 import { isValidEmail, passwordError, digitsOnly, isValidPhone } from '../../lib/validation';
 import { requestOtp, verifyOtp, resolveSmsMode } from '../../services/smsAuth';
 
-const RELATIONSHIPS = ['엄마', '아빠', '조부모', '기타'];
+// 전연령: 아이 보호자뿐 아니라 본인 기록·성인 가족 돌봄 사용자도 포함한다
+const RELATIONSHIPS = ['엄마', '아빠', '배우자', '자녀', '본인', '기타'];
 
 export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
   const { signUp, mode } = useApp();
@@ -75,8 +76,8 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
   return (
     <KeyboardScreen>
       <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>보호자 회원가입</Text>
-        <Muted>아이케어는 만 14세 미만 아동의 법정대리인(부모 등 보호자) 본인만 가입할 수 있습니다. 다음 단계인 이용 동의에서 법정대리인 확인과 건강정보 수집·이용 동의를 진행합니다.</Muted>
+        <Text style={styles.title}>회원가입</Text>
+        <Muted>케어노트는 성인 본인만 가입할 수 있습니다. 가입 후 아이와 성인 가족을 관리 대상자로 등록할 수 있으며, 필요한 동의(미성년자는 법정대리인 동의, 성인 가족은 본인 동의)는 대상자를 등록할 때 각각 확인합니다.</Muted>
         <View style={{ height: 16 }} />
 
         <Field label="이메일" value={email} onChangeText={setEmail}
@@ -91,7 +92,7 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
         <Field label="보호자 이름" value={name} onChangeText={setName} placeholder="김보호"
           editable={!otpSent} />
 
-        <Text style={styles.label}>아이와의 관계</Text>
+        <Text style={styles.label}>주로 기록할 대상자와의 관계</Text>
         <Row style={{ flexWrap: 'wrap', marginBottom: 12 }}>
           {RELATIONSHIPS.map((r) => (
             <Chip key={r} label={r} selected={relationship === r}

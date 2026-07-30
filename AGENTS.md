@@ -1,4 +1,4 @@
-# 아이케어(kidcare) — AI 에이전트/개발자 인수인계 문서
+# 케어노트(carenote) — AI 에이전트/개발자 인수인계 문서
 
 > 이 문서는 어떤 LLM·코딩 도구·개발자든 **이 저장소만 읽고** 개발을 이어받을 수 있도록
 > 작성되었다. 처음 15분: 이 문서 → `docs/DEVLOG.md`(시간순 개발 일지) → `docs/05_mvp_roadmap.md`.
@@ -43,18 +43,18 @@
 ```bash
 npm install                 # 최초 1회
 npx tsc --noEmit            # ① 타입체크 — 항상
-npm run test:e2e            # ② 저장소 계층 E2E 128건 (5사이클 + 설정/카카오/대상자 유형)
+npm run test:e2e            # ② 저장소 계층 E2E 133건 (5사이클 + 설정/카카오/대상자/이름변경)
 npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 36건
 # ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 58건)
 cd supabase/tests && psql -U postgres -d <새DB> -v ON_ERROR_STOP=1 -f rls_test.sql
 # ⑤ UI 변경 시(선택): 웹 빌드 + Playwright — scripts/ 의 각 파일 헤더 참조
 npx expo export --platform web --output-dir dist-web
-node scripts/persistence-test.mjs   # 영속화 5건
+node scripts/persistence-test.mjs   # 영속화 9건 (이름 변경 마이그레이션 포함)
 node scripts/ui-cycles.mjs          # UI 5사이클
 node scripts/screenshot-all.mjs     # 전 화면 23컷 캡처(사용자 공유용)
 npm start                   # Expo Go 실행 (사용자 테스트용)
 ```
-CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행한다.
+CI(`.github/workflows/ci.yml`)가 push/PR마다 ①+④를 자동 실행한다.
 데모 시드 규칙: 샘플 데이터(`src/data/sample.ts`)는 '오늘' 기준 상대 날짜로 생성되어
 언제 실행해도 그래프가 채워진다 — 절대 날짜로 바꾸지 말 것.
 
@@ -95,7 +95,7 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 - 사진 서명 URL 24h 만료 — 재발급 로직은 백로그.
 - `maestro/smoke.yaml`은 실기기 미실행 상태(좌표 탭은 기기별 보정 필요할 수 있음).
 - 개인정보처리방침(`docs/privacy_policy.*`)·이용약관(`src/constants/terms.ts`)은 **법률 검토 전 초안**.
-- 번들 ID `app.kidcare.mvp`는 자리표시 — 스토어 첫 업로드 전 확정 필수(이후 변경 불가).
+- 번들 ID `app.carenote.mvp`는 자리표시 — 스토어 첫 업로드 전 확정 필수(이후 변경 불가).
 - **SMS 문자 인증 미연동**: `src/services/smsAuth.ts`의 `sendSms()`는 데모 스텁(코드를
   화면에 표시). **모드 플래그 `EXPO_PUBLIC_SMS_MODE`(demo/off/live)** — 미지정 시
   mock=demo, supabase=off(문자 인증 건너뜀, 이메일 확인만 = 1차 출시 기본값).
@@ -104,7 +104,8 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
   아이디 찾기(`findEmailByPhone`)는 supabase 구현이 definer RPC + SMS 연동 필요 →
   mock만 완성. off 모드의 비밀번호 재설정은 `requestPasswordResetEmail`(재설정 메일)
   로 대체 — 단 링크 도착지(Site URL/redirect) 설정은 운영 프로젝트에서 필요.
-- **데모 로그인 규칙**: `demo@kidcare.app`로 로그인하면 샘플 데이터(아이2+14일)가 로드되고
+- **데모 로그인 규칙**: `demo@carenote.app`(구 `demo@kidcare.app`도 계속 인식)로 로그인하면
+  샘플 데이터(아이2+14일)가 로드되고
   티어는 standard로 강제됨. 일반 가입/로그인은 빈 상태 + **free 티어**로 시작하며,
   저장본에 샘플 잔재가 있으면 `stripSampleData()`가 정리한다(memoryRepo).
   로직/스크린샷 테스트는 이 데모 계정 로그인을 전제로 함.
@@ -135,6 +136,7 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 | `docs/08_adult_expansion.md` | **전연령 확대 설계·완료 기록** (대상자 유형/동의 분기/연령 전제 기능) |
 | `docs/09_android_release.md` | **안드로이드 출시 종합 체크리스트** (결정 사항·차단 항목·심사 폼) |
 | `QUICKSTART.md` | 사용자용 5분 실행 가이드 (Expo Go) |
+| `docs/10_branding.md` | **앱 이름/브랜딩 현황과 남은 결정**(아이콘 자산 교체 대기) |
 | `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql → schema_recipients.sql (실행 순서), tests/, functions/ |
 
 ## 9. 작업 규칙 (지금까지의 관례 유지)

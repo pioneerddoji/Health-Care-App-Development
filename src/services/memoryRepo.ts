@@ -18,7 +18,13 @@ let idSeq = 1000;
 const newId = (prefix: string) => `${prefix}-${++idSeq}`;
 
 /** 이 이메일로 로그인하면 샘플 데이터(아이 2명 + 14일 기록)가 로드된다 — 체험/테스트용 */
-export const DEMO_EMAIL = 'demo@kidcare.app';
+export const DEMO_EMAIL = 'demo@carenote.app';
+
+// 아이케어(kidcare) 시절 데모 계정 — 기기에 저장된 구 계정도 계속 데모로 인식해야
+// 마이그레이션 로직이 샘플을 오삭제하지 않는다. 로그인도 계속 받아 준다.
+const LEGACY_DEMO_EMAILS = ['demo@kidcare.app'];
+const isDemoEmail = (email: string | null): boolean =>
+  email === DEMO_EMAIL || (email !== null && LEGACY_DEMO_EMAILS.includes(email));
 
 // 공동 관리 데모 프리셋: 하은이는 아빠가 편집자로 함께 기록하는 상태
 const DEMO_GUARDIANS: ChildGuardian[] = [
@@ -56,13 +62,24 @@ let subscription: Subscription = { tier: 'standard' };
 let settings: UserSettings = {};
 
 // ── 기기 영속화 ──────────────────────────────────────────────
-const STORAGE_KEY = 'kidcare.demo.v1';
+const STORAGE_KEY = 'carenote.demo.v1';
+/** 아이케어 시절 저장 키 — 앱 이름 변경 시 기존 사용자의 기록이 사라지면 안 되므로
+ *  새 키가 비어 있을 때 1회 이관한다(구 키는 롤백 여지를 위해 남겨 둔다). */
+const LEGACY_STORAGE_KEY = 'kidcare.demo.v1';
 let hydrated = false;
 
 const hydrate = async (): Promise<void> => {
   if (hydrated) return;
   hydrated = true;
-  const raw = await demoStorage.getItem(STORAGE_KEY);
+  let raw = await demoStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    const legacy = await demoStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacy) {
+      // 이름 변경 이관: 구 저장본을 새 키로 복사한 뒤 그대로 읽어들인다
+      await demoStorage.setItem(STORAGE_KEY, legacy);
+      raw = legacy;
+    }
+  }
   if (!raw) return;
   try {
     const s = JSON.parse(raw);
@@ -83,8 +100,9 @@ const hydrate = async (): Promise<void> => {
     settings = s.settings ?? settings;
     idSeq = s.idSeq ?? idSeq;
     // 마이그레이션: 일반 계정(가입 사용자) 저장본에 구버전 샘플(하은/도윤)이
-    // 남아 있으면 제거한다 — 데모 계정 데이터는 유지
-    if (accountEmail && accountEmail !== DEMO_EMAIL && stripSampleData()) persist();
+    // 남아 있으면 제거한다 — 데모 계정 데이터는 유지.
+    // 구 데모 이메일(아이케어 시절)도 데모로 인정해야 샘플이 오삭제되지 않는다.
+    if (accountEmail && !isDemoEmail(accountEmail) && stripSampleData()) persist();
   } catch { /* 손상된 저장본은 무시하고 샘플로 시작 */ }
 };
 
@@ -134,7 +152,8 @@ const base: Repo = {
 
   async signIn(email: string, password: string): Promise<AuthOutcome> {
     // 데모 계정: 샘플 데이터(아이 2명 + 14일 기록)를 새로 로드
-    if (email === DEMO_EMAIL) {
+    // 구 데모 이메일로도 계속 로그인할 수 있게 한다(앱 이름 변경 전 안내를 본 사용자)
+    if (isDemoEmail(email)) {
       data.children = [...SAMPLE_CHILDREN];
       data.records = [...SAMPLE_RECORDS];
       data.growth = [...SAMPLE_GROWTH];
@@ -151,7 +170,7 @@ const base: Repo = {
       return { error: '비밀번호가 일치하지 않습니다.' };
     }
     // 일반 계정 로그인: 직전 데모 세션의 샘플/데모용 티어가 남아 있으면 정리
-    const wasDemo = accountEmail === DEMO_EMAIL;
+    const wasDemo = isDemoEmail(accountEmail);
     accountEmail = email;
     stripSampleData();
     if (wasDemo) subscription = { tier: 'free' };
@@ -162,7 +181,7 @@ const base: Repo = {
   async signInWithKakao(): Promise<AuthOutcome> {
     // 데모: 카카오 OAuth를 시뮬레이션 — 고정 데모 계정으로 로그인.
     // 첫 진입이면 실서버(신규 프로필 생성)와 동일하게 빈 상태 + free + 동의 화면 경유.
-    const KAKAO_EMAIL = 'kakao@kidcare.app';
+    const KAKAO_EMAIL = 'kakao@carenote.app';
     const isNewUser = accountEmail !== KAKAO_EMAIL;
     if (isNewUser) {
       data.children = []; data.records = []; data.growth = [];
@@ -180,7 +199,7 @@ const base: Repo = {
   async findEmailByPhone(phone: string): Promise<string | null> {
     // 데모: 저장된 보호자의 연락처와 대조 (실서버는 RPC로 조회)
     if (guardian?.phone && guardian.phone.replace(/\D/g, '') === phone.replace(/\D/g, '')) {
-      return accountEmail ?? 'demo-user@kidcare.app';
+      return accountEmail ?? 'demo-user@carenote.app';
     }
     return null;
   },
@@ -324,7 +343,7 @@ const base: Repo = {
       id: newId('link'),
       reportId,
       childId: report.childId,
-      url: `https://kidcare.example/share/${Math.random().toString(36).slice(2, 14)}`,
+      url: `https://carenote.example/share/${Math.random().toString(36).slice(2, 14)}`,
       expiresAt: new Date(Date.now() + expiresInHours * 3600_000).toISOString(),
       periodStart: report.periodStart,
       periodEnd: report.periodEnd,

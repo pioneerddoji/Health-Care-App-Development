@@ -1,7 +1,7 @@
 -- RLS 통합 테스트 — 로컬 PostgreSQL에서 Supabase 환경(auth/storage)을 셈으로 만들어
 -- schema.sql부터 schema_settings.sql까지 전부 적용하고 2계정 권한 시나리오를 검증한다.
 --
--- 실행 (이 디렉터리 kidcare/supabase/tests 에서 — \i 경로 기준):
+-- 실행 (이 디렉터리 carenote/supabase/tests 에서 — \i 경로 기준):
 --   initdb로 임시 클러스터를 만든 뒤:
 --   psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f rls_test.sql
 --   출력에서 FAIL이 없으면 통과. (매 실행마다 새 DB 필요)

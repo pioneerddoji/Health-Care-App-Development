@@ -45,8 +45,8 @@ export const LoginScreen = ({
   return (
     <KeyboardScreen>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.logo}>아이케어 🧸</Text>
-        <Text style={styles.tagline}>우리 아이 건강 기록, 병원까지 한 번에</Text>
+        <Text style={styles.logo}>케어노트</Text>
+        <Text style={styles.tagline}>우리 가족 건강 기록, 병원까지 한 번에</Text>
         <Field label="이메일" value={email} onChangeText={setEmail}
           autoCapitalize="none" keyboardType="email-address" placeholder="parent@example.com" />
         {emailErr && <Text style={styles.error}>{emailErr}</Text>}
@@ -67,7 +67,7 @@ export const LoginScreen = ({
         <View style={{ alignItems: 'center', marginTop: 8 }}>
           <Muted>
             {mode === 'mock'
-              ? '체험해 보려면 demo@kidcare.app + 아무 비밀번호로 로그인하세요 (샘플 데이터)'
+              ? '체험해 보려면 demo@carenote.app + 아무 비밀번호로 로그인하세요 (샘플 데이터)'
               : 'Supabase 연동 모드'}
           </Muted>
         </View>

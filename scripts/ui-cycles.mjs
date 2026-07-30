@@ -34,7 +34,7 @@ const check = async (cond, label) => {
 };
 
 await page.goto('http://localhost:8321/', { waitUntil: 'networkidle' });
-await vis('아이케어 🧸').waitFor({ timeout: 20000 });
+await vis('케어노트').waitFor({ timeout: 20000 });
 
 for (let cycle = 1; cycle <= 5; cycle++) {
   console.log(`== UI Cycle ${cycle} ==`);
@@ -42,7 +42,7 @@ for (let cycle = 1; cycle <= 5; cycle++) {
 
   // 가입 → 동의
   await vis('회원가입', true).click();
-  await vis('보호자 회원가입').waitFor({ timeout: 5000 });
+  await vis('주로 기록할 대상자와의 관계').waitFor({ timeout: 5000 });
   const inputs = page.locator('input:visible, textarea:visible');
   await inputs.nth(0).fill(`cycle${cycle}@example.com`);
   await inputs.nth(1).fill('password123');
@@ -128,7 +128,7 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   await page.mouse.wheel(0, 800);
   try {
     await vis('로그아웃').click();
-    await vis('아이케어 🧸').waitFor({ timeout: 8000 });
+    await vis('케어노트').waitFor({ timeout: 8000 });
   } catch (e) {
     await page.screenshot({ path: `${SP}/fail-c${cycle}-logout.png` });
     console.log('logout fail state saved; visible buttons:',

@@ -46,7 +46,7 @@
 - **자격 판정**: "과금 기능 출시일 이전 가입 계정" — 서버의 `auth.users.created_at`으로
   판정 가능(추가 스키마 불필요). 구현은 Play 구독(티어당 구독 1개 + 월간/연간
   base plan 2개)의 개발자 지정 오퍼 + RevenueCat Offering 2종(default/earlybird).
-- 스토어 상품 4개: `kidcare.{standard,family}.{monthly,yearly}` (billing.ts PRODUCT_IDS
+- 스토어 상품 4개: `carenote.{standard,family}.{monthly,yearly}` (billing.ts PRODUCT_IDS
   = 웹훅 매핑과 테스트로 일관성 검증).
 - ⚠️ **법적 필수 조건(표시광고법)**: 취소선 정가는 실제 판매(될) 가격이어야 한다.
   과금 시작 후 얼리버드가 아닌 신규 가입자에게는 **반드시 정가를 부과**할 것.
@@ -62,7 +62,7 @@
 | **서버 강제** | 아이 수: `guardian_child` INSERT 트리거 / 공동 보호자 수: `invite_guardian` RPC. → 클라이언트 우회 불가 |
 | 클라이언트 게이팅 | 사진 장수·대시보드/레포트 기간·공유 링크(옵션/개수) — 우회 피해가 본인 한정이라 UI 게이팅으로 충분 |
 | UI | `PaywallScreen`(티어 비교+전환), 설정 플랜 카드, 각 화면 🔒 칩 → 페이월 유도 |
-| 데모 | `demo@kidcare.app` 로그인은 standard로 게이팅 체험, 일반 가입/로그인은 free 시작 |
+| 데모 | `demo@carenote.app` 로그인은 standard로 게이팅 체험, 일반 가입/로그인은 free 시작 |
 
 > 참고: **데이터 축적(기록 저장)은 전 티어 무제한**이다. 티어가 가르는 것은
 > 대시보드의 "조회 기간"뿐. "무제한 조회 플랜"은 30일 초과 구간에서 일 단위
@@ -118,7 +118,7 @@ Expo Go/웹은 영향이 없다.
 
 남은 계정 작업 체크리스트:
 1. [ ] Play Console/App Store Connect에 구독 상품 등록 — ID는 `PRODUCT_IDS` 4개
-   (`kidcare.{standard,family}.{monthly,yearly}`; Play는 구독 2개 × base plan
+   (`carenote.{standard,family}.{monthly,yearly}`; Play는 구독 2개 × base plan
    monthly/yearly 구성 권장 — 앱은 `:basePlanId` 형식도 매칭한다).
 2. [ ] RevenueCat 프로젝트 생성 → 스토어 연결 → Entitlement/Offering 구성.
    얼리버드는 Offering 2종(default/earlybird) + **Targeting(가입일 기준)**으로
