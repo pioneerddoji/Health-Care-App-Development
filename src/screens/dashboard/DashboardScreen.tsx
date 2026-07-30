@@ -94,7 +94,7 @@ export const DashboardScreen = () => {
   if (!selectedChild || !data) {
     return (
       <Screen style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <Muted>홈에서 아이를 먼저 선택해 주세요</Muted>
+        <Muted>홈에서 대상자를 먼저 선택해 주세요</Muted>
       </Screen>
     );
   }

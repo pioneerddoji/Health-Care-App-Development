@@ -71,7 +71,8 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   await page.mouse.wheel(0, 2000);
   // 대상자별 동의 확인 (만 14세 미만 → 법정대리인 확인)
   await page.getByText(/^☐ /).first().click();
-  await vis('대상자 등록').click();
+  // 헤더 타이틀('대상자 등록 · 수정')과 겹치므로 버튼 라벨을 정확히 일치시킨다
+  await vis('대상자 등록', true).click();
   await vis('안녕하세요').waitFor({ timeout: 8000 });
   const cards = await page.getByText('프로필 ›').locator('visible=true').count();
   await check(Promise.resolve(cards === expectedChildren),
