@@ -150,9 +150,10 @@ select:focus-visible, textarea:focus-visible {
 .utility-bar a { color: var(--on-dark-mute); text-decoration: none; }
 
 /* ── Primary nav (64px) ─────────────────────────────────── */
+/* 상단 크롬은 스크롤과 함께 올라가고, 대신 아래 섹션 내비가 고정된다 */
 .primary-nav {
   background: var(--surface-dark); color: var(--on-dark);
-  height: 64px; position: sticky; top: 0; z-index: 50;
+  height: 64px;
 }
 .primary-nav .container { height: 100%; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-xl); }
 .wordmark { font-size: 20px; font-weight: 700; color: var(--on-dark); text-decoration: none; white-space: nowrap; }
@@ -163,14 +164,27 @@ select:focus-visible, textarea:focus-visible {
 .nav-row a.btn { text-decoration: none; }
 @media (max-width: 900px) { .nav-row a.nav-item { display: none; } }
 
-/* ── Sub-nav strip (56px, soft) ─────────────────────────── */
-.sub-nav { background: var(--surface-soft); height: 56px; border-bottom: 1px solid var(--hairline); }
-.sub-nav .container { height: 100%; display: flex; align-items: center; gap: var(--sp-xs); overflow-x: auto; }
+/* ── Sub-nav strip (56px, soft) — 화면 최상단 고정 ──────── */
+.sub-nav {
+  background: var(--surface-soft); height: 56px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0; z-index: 60;
+}
+.sub-nav .container {
+  height: 100%; display: flex; align-items: center; gap: var(--sp-xs);
+  overflow-x: auto; scrollbar-width: none;
+}
+.sub-nav .container::-webkit-scrollbar { display: none; }
 .sub-nav a {
   font-size: 16px; font-weight: 700; color: var(--ink); text-decoration: none;
   padding: 10px 18px; border-radius: var(--r-sm); white-space: nowrap;
 }
 .sub-nav a.is-active { background: var(--ink); color: var(--on-dark); }
+
+/* 앵커로 이동할 때 제목이 고정 바(56px) 뒤로 숨지 않도록 여유를 준다 */
+:target, [id] { scroll-margin-top: 72px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 
 /* ── Buttons — 전부 2px ─────────────────────────────────── */
 .btn {
@@ -396,7 +410,7 @@ select:focus-visible, textarea:focus-visible {
 
   <div class="sub-nav">
     <div class="container">
-      <a class="is-active" href="#record">기록 항목</a>
+      <a href="#record">기록 항목</a>
       <a href="#flow">기록에서 병원까지</a>
       <a href="#recipients">대상자</a>
       <a href="#pricing">요금제</a>
@@ -684,6 +698,58 @@ select:focus-visible, textarea:focus-visible {
     }
     history.replaceState(null, '', location.pathname + location.hash);
   }
+
+  // ── 고정된 섹션 내비: 현재 보고 있는 섹션 표시 ──
+  // 바가 항상 보이므로 활성 표시를 고정해 두면 실제 위치와 어긋난다.
+  (function () {
+    var bar = document.querySelector('.sub-nav');
+    if (!bar) return;
+    var scroller = bar.querySelector('.container');
+    var links = [].slice.call(bar.querySelectorAll('a[href^="#"]'));
+    var targets = links.map(function (a) {
+      return document.getElementById(a.getAttribute('href').slice(1));
+    });
+
+    function setActive(i) {
+      links.forEach(function (a, n) {
+        var on = n === i;
+        a.classList.toggle('is-active', on);
+        if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+      });
+      // 가로 스크롤되는 모바일에서 활성 항목이 화면 밖이면 끌어온다
+      // (scrollIntoView는 페이지까지 움직이므로 컨테이너만 직접 이동시킨다)
+      var el = links[i];
+      if (el && scroller.scrollWidth > scroller.clientWidth) {
+        var left = el.offsetLeft - scroller.offsetLeft;
+        var min = scroller.scrollLeft;
+        var max = min + scroller.clientWidth - el.offsetWidth;
+        if (left < min) scroller.scrollLeft = left - 16;
+        else if (left > max) scroller.scrollLeft = left - scroller.clientWidth + el.offsetWidth + 16;
+      }
+    }
+
+    function update() {
+      // 고정 바 바로 아래를 기준선으로 삼아, 그 위로 지나간 마지막 섹션을 활성화
+      var line = bar.getBoundingClientRect().bottom + 1;
+      var idx = -1;
+      targets.forEach(function (t, i) {
+        if (t && t.getBoundingClientRect().top <= line) idx = i;
+      });
+      // 문서 끝에 닿으면 마지막 항목을 활성화 (짧은 마지막 섹션 보정)
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 2) idx = links.length - 1;
+      setActive(idx);
+    }
+
+    var ticking = false;
+    function onScroll() {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(function () { update(); ticking = false; });
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    update();
+  })();
 
   // ── 히어로 그래프 ──
   // 사진 자산이 없으므로 이 제품의 실제 피사체(체온 기록)를 히어로 우측 이미지 자리에 그린다.
