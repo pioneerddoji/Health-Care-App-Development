@@ -43,9 +43,10 @@ SHOTS: dict[str, tuple[str, tuple[int, int, int, int] | None, int]] = {
     "day":    ("08-day-records.png",     None,                  390),
     "chart":  ("11-dashboard.png",       None,                  390),
     "report": ("14-report.png",          None,                  390),
-    # 공유 링크는 발급 결과만 보여 준다. 위쪽은 레포트 화면과 겹치고,
-    # 캡처 당시 테스트 문구("사이클3 …")가 남아 있어 잘라 낸다.
-    "link":   ("c3-report-link.png",     (0, 940, 780, 1610),   560),
+    # 4단계용. `scripts/capture-share-link.mjs` 로 뽑는다 — 데모 데이터로 실제
+    # 링크를 발급한 뒤 화면 하단까지 스크롤한 상태다. 시퀀스의 폰 프레임에
+    # 들어가야 하므로 자르지 않고 폰 비율 그대로 쓴다.
+    "share":  ("28-share-link-issued.png", None,                390),
     # 24·26은 1배율(390px) 캡처다. 확대하면 뭉개지므로 원본 폭을 유지하고,
     # 대신 빈 여백을 잘라 카드 안에서 높이가 튀지 않게 한다.
     "home":   ("24-home-recipients.png", (0, 0, 390, 420),      390),
