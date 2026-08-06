@@ -25,6 +25,8 @@
 """
 from __future__ import annotations
 
+import argparse
+import base64
 import pathlib
 import re
 import sys
@@ -53,8 +55,22 @@ IMG_RE = re.compile(r'<img\s+data-anim="([a-z]+)"\s+alt="([^"]*)"\s*/?>')
 PLACEHOLDERS = ("__BETA_FORM_ID__", "__CONTACT_EMAIL__")
 
 
-def rewrite(html: str) -> str:
+def rewrite(html: str, inline: bool = False) -> str:
+    """소스의 <img data-anim="…"> 를 실제 <picture> 로 바꾼다.
+
+    inline=True 면 이미지를 base64 data URI 로 박아 **파일 하나로 완결**시킨다.
+    Artifact 미리보기처럼 외부 이미지를 CSP 로 막는 곳에서 쓴다.
+    """
     seen: set[str] = set()
+    cache: dict[str, str] = {}
+
+    def uri(fname: str) -> str:
+        if not inline:
+            return f"media/{fname}"
+        if fname not in cache:
+            b64 = base64.b64encode((MEDIA_SRC / fname).read_bytes()).decode("ascii")
+            cache[fname] = f"data:image/webp;base64,{b64}"
+        return cache[fname]
 
     def sub(m: re.Match[str]) -> str:
         name, alt = m.group(1), m.group(2)
@@ -72,8 +88,8 @@ def rewrite(html: str) -> str:
         loading = 'loading="eager" fetchpriority="high"' if first else 'loading="lazy"'
         return (
             "<picture>"
-            f'<source media="(prefers-reduced-motion: reduce)" srcset="media/{poster}">'
-            f'<img src="media/{anim}" width="{w}" height="{h}" alt="{alt}" {loading}>'
+            f'<source media="(prefers-reduced-motion: reduce)" srcset="{uri(poster)}">'
+            f'<img src="{uri(anim)}" width="{w}" height="{h}" alt="{alt}" {loading}>'
             "</picture>"
         )
 
@@ -84,7 +100,23 @@ def rewrite(html: str) -> str:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--inline", metavar="OUT.html",
+                    help="미리보기용: 이미지를 base64 로 인라인한 단일 파일을 쓴다")
+    args = ap.parse_args()
+
     html = SRC.read_text(encoding="utf-8")
+
+    if args.inline:
+        dest = pathlib.Path(args.inline)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        body = rewrite(html, inline=True)
+        dest.write_text(body, encoding="utf-8")
+        print(f"  {dest}  {len(body.encode()) // 1024}KB (이미지 인라인)")
+        print("  ! 미리보기에서는 폼이 제출되지 않는다 — Artifact CSP 의 "
+              "form-action 이 막는다(2026-08-03 에 겪은 것과 같은 제약).")
+        return
+
     body = rewrite(html)
 
     MEDIA_OUT.mkdir(parents=True, exist_ok=True)
