@@ -20,9 +20,12 @@
   "assets": {
     "directory": "./dist",
     // SPA 폴백 — React Navigation 은 파일 기반 라우터가 아니라 진입점이
-    // index.html 하나뿐이다. 이 옵션이 public/_redirects 의 `/*  /index.html
-    // 200` 규칙과 같은 역할을 한다(둘 다 있어도 충돌하지 않는다 — 방어선을
-    // 하나 더 두는 셈).
+    // index.html 하나뿐이다.
+    // ⚠️ public/_redirects 에 같은 역할의 `/*  /index.html  200` 규칙을
+    // 같이 넣지 말 것 — 두 메커니즘이 겹치면 Cloudflare가 배포 시점에
+    // "Invalid _redirects configuration: Infinite loop detected"(code 100324)
+    // 로 배포를 거부한다. 실제로 겪었다(2026-08-12, 빌드 457185d).
+    // SPA 폴백은 반드시 이 옵션 하나로만 처리한다.
     "not_found_handling": "single-page-application"
   }
 }
