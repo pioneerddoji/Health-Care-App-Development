@@ -3,6 +3,7 @@
 // 저장되어 앱을 재시작해도 유지된다. (혼자 실사용 가능한 로컬 모드)
 import { demoStorage } from '../lib/demoStorage';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
+import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
   RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier,
@@ -178,11 +179,13 @@ const base: Repo = {
     return { profile: guardian };
   },
 
-  async signInWithKakao(): Promise<AuthOutcome> {
-    // 데모: 카카오 OAuth를 시뮬레이션 — 고정 데모 계정으로 로그인.
+  async signInWithSocial(provider: SocialProvider): Promise<AuthOutcome> {
+    // 데모: 소셜 OAuth를 시뮬레이션 — 공급자별 고정 데모 계정으로 로그인.
     // 첫 진입이면 실서버(신규 프로필 생성)와 동일하게 빈 상태 + free + 동의 화면 경유.
-    const KAKAO_EMAIL = 'kakao@carenote.app';
-    const isNewUser = accountEmail !== KAKAO_EMAIL;
+    // 공급자마다 계정을 나눠야 "카카오로 들어갔다가 구글로 들어오면 남의 기록이
+    // 보이는" 상황이 데모에서도 재현되지 않는다.
+    const email = `${provider}@carenote.app`;
+    const isNewUser = accountEmail !== email;
     if (isNewUser) {
       data.children = []; data.records = []; data.growth = [];
       data.medications = []; data.vaccinations = []; data.checkups = [];
@@ -190,8 +193,13 @@ const base: Repo = {
       subscription = { tier: 'free' };
       settings = {};
       accountPassword = null;
-      accountEmail = KAKAO_EMAIL;
-      guardian = { ...SAMPLE_GUARDIAN, name: '카카오 보호자', relationship: '보호자', phone: undefined };
+      accountEmail = email;
+      guardian = {
+        ...SAMPLE_GUARDIAN,
+        name: `${SOCIAL_PROVIDERS[provider].short} 보호자`,
+        relationship: '보호자',
+        phone: undefined,
+      };
     }
     return { profile: guardian!, isNewUser };
   },

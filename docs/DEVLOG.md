@@ -1065,3 +1065,64 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 - Supabase Providers → Kakao 입력 + **Redirect URLs 에 웹·앱 주소 모두 등록**
   (이게 빠지면 인증은 되는데 앱으로 못 돌아온다)
 - `EXPO_PUBLIC_KAKAO_LOGIN=on` + `expo export --clear`
+
+---
+
+## 2026-08-06 — 소셜 로그인 일반화(카카오+구글) + Cloudflare Pages 배포 준비
+
+**왜 이 순서인가 (방향 재검토)**
+- 카카오를 켜려는데 **로그인할 앱이 어디에도 배포돼 있지 않다**는 것을 뒤늦게
+  발견했다. `dist-web/` 은 gitignore 이고, GitHub Pages 는 `docs/` 의 정적
+  마케팅 페이지만 서빙한다. Supabase·Kakao 설정을 완벽히 해도 시도할 화면이
+  없었다 — 설정보다 배포처 결정이 먼저였다.
+- 사용자는 로컬 개발 환경이 없고(이 컨테이너에서만 작업), 이 컨테이너에서는
+  사용자의 Supabase 로 **egress 가 막혀** 검증도 대신 못 한다. 그래서 "로컬 PC
+  없이 push 만으로 배포되는 경로"가 필요했다.
+
+**한 일 1 — 소셜 로그인 일반화 + 구글 추가**
+- `signInWithKakao()` → `signInWithSocial(provider)` 로 일반화.
+  공급자 정의는 `socialAuth.ts` 의 `SOCIAL_PROVIDERS` 한 곳에 모았다
+  (라벨·짧은 이름·버튼 색). 화면은 `enabledSocialProviders()` 로 목록을 받아
+  버튼을 그리므로, 공급자를 늘려도 **목록 한 줄 + env 플래그**가 전부다.
+- 구글 추가. 카카오와 OAuth 흐름이 완전히 같아 코드 중복이 30줄 가까이 생길
+  뻔했다. **iOS 출시 때 Apple 로그인도 붙여야 하므로**(심사지침 4.8 — 서드파티
+  소셜 로그인을 제공하면 Apple 로그인 병행 필수) 지금 일반화하는 게 맞다.
+- 프로필 이름 폴백을 넓혔다: 카카오는 `nickname`, 구글은 `full_name`/`name`
+  으로 온다. 아무것도 안 주면 '보호자'.
+- mock 저장소도 **공급자별로 계정을 분리**했다(`kakao@` / `google@`). 같은
+  데모 계정을 공유하면 "카카오로 들어갔다 구글로 들어오면 남의 기록이 보이는"
+  상황을 데모가 못 잡는다. e2e 에 전환 테스트를 넣었다.
+- env 플래그는 **공급자별로 독립**이다(`EXPO_PUBLIC_KAKAO_LOGIN` /
+  `EXPO_PUBLIC_GOOGLE_LOGIN`). 하나만 먼저 켤 수 있다.
+- 주의로 남김: Metro 는 `process.env.EXPO_PUBLIC_*` 를 **정적 치환**하므로
+  `process.env[key]` 동적 접근이 통하지 않는다. `rawFlag()` 에서 공급자별로
+  하나씩 적어 둔 이유다.
+
+**한 일 2 — Cloudflare Pages 배포 준비**
+- `npm run build:web` (= `expo export --platform web --output-dir dist`) 추가.
+  출력 폴더를 호스팅 관례인 `dist` 로 통일했다.
+- `public/_headers` — X-Frame-Options DENY, nosniff, Referrer-Policy,
+  Permissions-Policy, HSTS + 정적 자산 영구 캐시 / index.html no-cache.
+  **CSP 는 일부러 뺐다** — Supabase(REST/Realtime/Storage 서명 URL)·소셜
+  로그인 팝업·data URI 가 얽혀 잘못 쓰면 앱이 조용히 깨진다. 실배포에서 실제
+  요청 목록을 본 뒤 `connect-src` 를 좁히는 순서가 맞다.
+- `public/_redirects` — SPA 폴백.
+- `public/` 내용이 빌드 출력 루트로 복사되는 것을 실제 빌드로 확인했다.
+- **Vercel 대신 Cloudflare 인 이유**: Vercel Hobby 는 Fair Use 지침상
+  비상업·개인용 전용이고 금지 예시에 "결제 처리"가 있다. 구독을 붙일 제품이라
+  결제를 켜는 순간 위반이 된다. Cloudflare Pages 무료 티어는 상업적 이용 허용.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- `npm run test:e2e` **PASS 137 / FAIL 0** (기존 133 + 소셜 4건).
+- `npm run test:gating` **PASS 41 / FAIL 0** (기존 36 + 플래그 5건 —
+  공급자별 독립 on/off, 설정 전 실서버 빌드에 버튼 0개).
+- `npm run build:web` 성공 → `dist/` 에 `_headers`·`_redirects` 복사 확인.
+- 브라우저에서 두 버튼 노출 확인, **각각 클릭 → mock 로그인 → 동의 화면 진입**
+  까지 확인, pageerror 0.
+
+**다음 (사용자 작업, docs/06 B-3 → docs/09 §2-2-1 순서)**
+1. Cloudflare Pages 저장소 연결 + 환경변수(소셜 플래그는 비워 둔 채) → 배포 주소 확보
+2. Supabase Redirect URLs 에 그 주소 등록
+3. Kakao / Google 콘솔 설정 → Supabase Providers 입력
+4. 환경변수 `on` → 재배포 → 실제 로그인 왕복 확인

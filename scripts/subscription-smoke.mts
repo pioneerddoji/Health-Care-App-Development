@@ -5,7 +5,7 @@ import {
   initBilling, purchaseWithStore, restorePurchases,
 } from '../src/services/billing';
 import { resolveSmsMode } from '../src/services/smsAuth';
-import { resolveKakaoLogin } from '../src/services/socialAuth';
+import { resolveSocialLogin, enabledSocialProviders } from '../src/services/socialAuth';
 import type { PaidTier } from '../src/types';
 
 const childInput = (name: string) => ({
@@ -85,12 +85,19 @@ process.env.EXPO_PUBLIC_SMS_MODE = 'live';
 ok(resolveSmsMode('supabase') === 'live', 'env로 live 전환 가능(공급자 연동 후)');
 delete process.env.EXPO_PUBLIC_SMS_MODE;
 
-// 카카오 로그인 노출 플래그: provider 설정 전 실서버 빌드는 버튼 숨김
+// 소셜 로그인 노출 플래그: provider 설정 전 실서버 빌드는 버튼 숨김
 delete process.env.EXPO_PUBLIC_KAKAO_LOGIN;
-ok(resolveKakaoLogin('mock') === true, '기본 카카오(mock)=on');
-ok(resolveKakaoLogin('supabase') === false, '기본 카카오(supabase)=off');
+delete process.env.EXPO_PUBLIC_GOOGLE_LOGIN;
+for (const p of ['kakao', 'google'] as const) {
+  ok(resolveSocialLogin(p, 'mock') === true, `기본 ${p}(mock)=on`);
+  ok(resolveSocialLogin(p, 'supabase') === false, `기본 ${p}(supabase)=off`);
+}
+ok(enabledSocialProviders('supabase').length === 0,
+  '설정 전 실서버 빌드에는 소셜 버튼이 하나도 안 나온다');
 process.env.EXPO_PUBLIC_KAKAO_LOGIN = 'on';
-ok(resolveKakaoLogin('supabase') === true, 'env로 on 전환 가능(provider 설정 후)');
+ok(resolveSocialLogin('kakao', 'supabase') === true, 'env로 카카오만 on 전환 가능');
+ok(resolveSocialLogin('google', 'supabase') === false, '구글은 여전히 off (공급자별 독립)');
+ok(enabledSocialProviders('supabase').join() === 'kakao', '켠 공급자만 노출된다');
 delete process.env.EXPO_PUBLIC_KAKAO_LOGIN;
 
 // 결제 SDK 미탑재 환경(Expo Go/웹/Node): 명확한 안내 오류 + initBilling은 조용한 no-op

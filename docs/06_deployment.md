@@ -37,6 +37,45 @@
 6. [ ] 운영 설정 되돌리기: Confirm email 켜기 + 커스텀 SMTP(가입 메일 발신자) 연결,
    테스트 계정(verify-*) 삭제, 백업(PITR) 활성화 검토(Pro 플랜)
 
+### B-3. 웹앱 배포 — Cloudflare Pages (약 15분, 로컬 PC 불필요)
+
+왜 Cloudflare 인가
+- **무료 티어에서 상업적 이용이 허용**된다. Vercel Hobby 는 Fair Use 지침상
+  비상업·개인용 전용이며 "결제 처리"가 금지 예시에 있다 — 구독을 붙일 제품이라
+  결제를 켜는 순간 위반이 된다.
+- 대역폭 무제한, 서울 PoP 있음, 카드 등록 불필요.
+- 루트(`/`)로 서빙하므로 Expo 빌드의 절대경로(`/_expo/static/...`)가 그대로
+  맞는다. GitHub Pages 서브경로였다면 `app.json` 에 `experiments.baseUrl` 을
+  넣어야 했다.
+- **키가 저장소에 들어가지 않는다** — 환경변수는 대시보드에서 관리한다.
+
+절차
+1. [ ] Cloudflare 대시보드 → **Workers & Pages → Create → Pages →
+   Connect to Git** → 이 저장소 선택
+2. [ ] 빌드 설정
+   - Framework preset: **None**
+   - Build command: `npm run build:web`
+   - Build output directory: `dist`
+3. [ ] 환경변수 (Settings → Environment variables, Production)
+   ```
+   NODE_VERSION                    20
+   EXPO_PUBLIC_SUPABASE_URL        https://<ref>.supabase.co
+   EXPO_PUBLIC_SUPABASE_ANON_KEY   sb_publishable_...
+   EXPO_PUBLIC_KAKAO_LOGIN         (공급자 설정 전에는 비워 둘 것)
+   EXPO_PUBLIC_GOOGLE_LOGIN        (공급자 설정 전에는 비워 둘 것)
+   ```
+   ⚠️ `NODE_VERSION` 을 빠뜨리면 Expo 빌드가 실패한다.
+   ⚠️ 소셜 플래그는 **공급자 설정을 마친 뒤에** `on` 으로. 비워 두면
+   supabase 모드에서 버튼이 자동으로 숨겨진다(`socialAuth.ts`).
+4. [ ] 배포 완료 후 나온 주소(`https://<프로젝트>.pages.dev`)를
+   **Supabase → Authentication → URL Configuration → Redirect URLs** 에 추가
+5. [ ] 소셜 공급자 설정(docs/09 §2-2-1) → 환경변수 `on` → **재배포**
+
+응답 헤더·SPA 폴백은 `public/_headers`, `public/_redirects` 가 빌드 출력
+루트로 복사되어 자동 적용된다. **CSP 는 일부러 넣지 않았다** — Supabase·소셜
+팝업·data URI 가 얽혀 잘못 쓰면 앱이 조용히 깨진다. 실배포에서 실제 요청을
+확인한 뒤 `connect-src` 를 좁히는 순서가 맞다.
+
 ### B-2. 앱 자산·식별자 확정 (첫 업로드 전 필수)
 1. [ ] **번들 ID 확정** — 현재 `app.carenote.mvp`는 자리표시. 소유한 도메인 역순으로
    변경(`app.json`의 `ios.bundleIdentifier`, `android.package`).

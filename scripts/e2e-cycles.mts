@@ -192,14 +192,20 @@ ok(JSON.stringify(s2.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '병
   ok((await repo.loadAll()).children.some((c) => c.id === 'child-1'), '새 데모 이메일 → 샘플 로드');
 }
 
-// ── 카카오 로그인 (mock 시뮬레이션) — 계정 전환이라 맨 끝에서 실행 ──
-const k1 = await repo.signInWithKakao();
-ok(!!k1.profile && k1.isNewUser === true, '카카오 첫 로그인 = 신규(동의 화면 경유)');
-const kAll = await repo.loadAll();
-ok(kAll.children.length === 0 && kAll.subscription.tier === 'free',
-  '카카오 신규 계정 = 빈 상태 + free 티어');
-const k2 = await repo.signInWithKakao();
-ok(k2.isNewUser === false, '카카오 재로그인 = 기존 계정(동의 생략)');
+// ── 소셜 로그인 (mock 시뮬레이션) — 계정 전환이라 맨 끝에서 실행 ──
+for (const provider of ['kakao', 'google'] as const) {
+  const s1 = await repo.signInWithSocial(provider);
+  ok(!!s1.profile && s1.isNewUser === true, `${provider} 첫 로그인 = 신규(동의 화면 경유)`);
+  const sAll = await repo.loadAll();
+  ok(sAll.children.length === 0 && sAll.subscription.tier === 'free',
+    `${provider} 신규 계정 = 빈 상태 + free 티어`);
+  const s2 = await repo.signInWithSocial(provider);
+  ok(s2.isNewUser === false, `${provider} 재로그인 = 기존 계정(동의 생략)`);
+}
+// 공급자가 다르면 계정도 다르다 — 카카오로 들어갔다가 구글로 들어오면 신규여야 한다
+// (같은 데모 계정을 공유하면 "남의 기록이 보이는" 상황을 데모가 못 잡아낸다)
+ok((await repo.signInWithSocial('kakao')).isNewUser === true,
+  '구글 → 카카오 전환 = 다른 계정(신규)');
 
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
 if (issues.length) { console.log('특이사항:'); issues.forEach((i) => console.log(' -', i)); process.exit(1); }

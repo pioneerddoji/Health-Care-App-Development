@@ -9,6 +9,7 @@ import type {
   ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
+import type { SocialProvider } from '../services/socialAuth';
 import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
 import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
@@ -50,8 +51,8 @@ interface AppState {
 
   /** 성공 시 null, 실패 시 오류 메시지 반환 */
   signIn: (email: string, password: string) => Promise<string | null>;
-  /** 카카오 로그인 — 첫 진입이면 동의 화면으로 이어진다. 성공 시 null */
-  signInWithKakao: () => Promise<string | null>;
+  /** 소셜 로그인(카카오/구글) — 첫 진입이면 동의 화면으로 이어진다. 성공 시 null */
+  signInWithSocial: (provider: SocialProvider) => Promise<string | null>;
   /** 성공 시 null, 이메일 확인 필요 시 'confirm', 실패 시 오류 메시지 */
   signUp: (input: SignUpInput) => Promise<string | null>;
   signOut: () => Promise<void>;
@@ -187,8 +188,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       return null;
     },
 
-    signInWithKakao: async () => {
-      const out = await repo.signInWithKakao();
+    signInWithSocial: async (provider) => {
+      const out = await repo.signInWithSocial(provider);
       if (out.error) return out.error;
       setGuardian(out.profile ?? null);
       setConsented(!out.isNewUser); // 첫 진입은 동의 화면을 거친다

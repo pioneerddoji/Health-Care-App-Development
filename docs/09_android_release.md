@@ -60,10 +60,43 @@
 - [ ] `npm run verify:supabase` **전부 PASS** 확인 → 실기기에서 supabase 모드 스모크.
 - [ ] 운영 설정: Confirm email 켜기 + 커스텀 SMTP, PITR 백업(Pro 플랜) 검토.
 
-### 2-2-1. 카카오 로그인 켜기 (코드는 완료 — 계정 설정만 남음)
+### 2-2-1. 소셜 로그인 켜기 (카카오·구글 — 코드는 완료, 계정 설정만 남음)
 
-앱 코드는 `ca04b87`에서 이미 끝났다. 아래는 **계정 측 작업 전부**이며, 순서대로
-하면 된다. 웹과 앱의 리다이렉트 주소가 다르므로 **둘 다 등록해야 한다.**
+앱 코드는 끝났다. 공급자는 `src/services/socialAuth.ts`의 `SOCIAL_PROVIDERS`
+목록으로 관리되며, 모두 **Supabase OAuth를 경유**한다. 공급자를 늘려도 앱
+코드는 목록 한 줄 + env 플래그가 전부다.
+
+**⛔ 선행 조건: 웹앱이 배포된 주소가 있어야 한다.** Supabase의 Redirect URLs에
+그 주소를 넣어야 로그인 후 앱으로 돌아온다. 배포 절차는
+`docs/06_deployment.md` B-3(Cloudflare Pages) 참조.
+
+아래는 **계정 측 작업 전부**이며, 순서대로 하면 된다.
+
+#### 공통 — Supabase Redirect URLs (한 번만)
+
+Supabase → Authentication → **URL Configuration → Redirect URLs** 에 아래를 모두 추가.
+여기가 빠지면 **인증은 되는데 앱으로 못 돌아온다**(웹은 팝업이 안 닫히고 멈춘다).
+
+```
+carenote://                       앱(네이티브) — app.json 의 scheme
+https://<배포주소>/                웹(운영) — Cloudflare Pages 주소
+http://localhost:8081/            웹(로컬 개발, 쓰는 포트에 맞춰)
+```
+
+#### 구글
+
+- [ ] Google Cloud Console → 프로젝트 생성 → **API 및 서비스 → OAuth 동의 화면**
+      구성(External / 앱 이름 / 지원 이메일 / 개인정보처리방침 URL)
+- [ ] **사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 웹 애플리케이션**
+- [ ] **승인된 리디렉션 URI**:
+      `https://<프로젝트ref>.supabase.co/auth/v1/callback`
+- [ ] 클라이언트 ID / 클라이언트 보안 비밀 복사
+- [ ] Supabase → Authentication → Providers → **Google** 활성화 + 위 두 값 입력
+- [ ] 빌드 env `EXPO_PUBLIC_GOOGLE_LOGIN=on`
+
+#### 카카오
+
+아래 절차대로. 웹과 앱의 리다이렉트 주소가 다르므로 **둘 다 등록해야 한다.**
 
 **① Kakao Developers** (https://developers.kakao.com)
 - [ ] 애플리케이션 추가하기 → 앱 이름 `케어노트`
@@ -81,11 +114,7 @@
 **② Supabase 대시보드**
 - [ ] Authentication → Providers → **Kakao** 활성화
 - [ ] REST API 키 → `Kakao Client ID`, Client Secret → `Kakao Client Secret`
-- [ ] Authentication → URL Configuration → **Redirect URLs** 에 아래를 모두 추가
-      (여기가 빠지면 인증은 되는데 앱으로 못 돌아온다):
-      - 앱(네이티브): `carenote://` — app.json 의 scheme
-      - 웹(운영): 웹앱을 올릴 실제 주소 (예: `https://<도메인>/`)
-      - 웹(로컬 테스트): `http://localhost:8099/` 등 실제로 쓰는 포트
+- [ ] Redirect URLs 는 위 "공통" 항목에서 이미 했다면 생략
 
 **③ 빌드 환경변수**
 - [ ] `EXPO_PUBLIC_KAKAO_LOGIN=on`

@@ -7,6 +7,7 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
+    "build:web": "expo export --platform web --output-dir dist",
     "typecheck": "tsc --noEmit",
     "verify:supabase": "node supabase/tests/verify_connection.mjs",
     "test:e2e": "tsx scripts/e2e-cycles.mts",

@@ -8,6 +8,7 @@ import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
 import { consentPlanFor } from '../lib/recipient';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
+import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
@@ -273,21 +274,31 @@ export const supabaseRepo: Repo = {
     return { profile };
   },
 
-  async signInWithKakao(): Promise<AuthOutcome> {
-    // Supabase OAuth: 브라우저에서 카카오 인증 → redirect URL의 토큰으로 세션 수립.
-    // 선행 설정(Kakao Developers 앱 + Supabase Kakao provider)은 socialAuth.ts 주석 참조.
-    const redirectTo = makeRedirectUri(); // app.json scheme(carenote) / Expo Go는 exp://
+  async signInWithSocial(provider: SocialProvider): Promise<AuthOutcome> {
+    // Supabase OAuth: 브라우저(웹은 팝업)에서 공급자 인증 → redirect URL의
+    // 토큰으로 세션 수립. 공급자가 바뀌어도 흐름은 같아서 provider 만 갈아 끼운다.
+    // 선행 설정(공급자 콘솔 + Supabase Providers + Redirect URLs)은 docs/09 §2-2-1.
+    //
+    // ⚠️ 이 경로는 **implicit 흐름**(URL 에 access_token 이 실려 옴)을 전제한다.
+    //    supabase-js 의 기본값이라 지금은 맞지만, 클라이언트를 `flowType: 'pkce'`
+    //    로 바꾸면 code 만 오므로 exchangeCodeForSession() 으로 교체해야 한다.
+    const label = SOCIAL_PROVIDERS[provider].short;
+    const redirectTo = makeRedirectUri(); // 웹: 현재 origin / 앱: carenote:// (app.json scheme)
     const { data, error } = await sb().auth.signInWithOAuth({
-      provider: 'kakao',
+      provider,
       options: { redirectTo, skipBrowserRedirect: true },
     });
     if (error) return { error: error.message };
+
+    // 웹에서는 팝업이 열린다. 팝업이 우리 주소로 돌아오면 그 안에서 앱 번들이
+    // 다시 로드되고, App.tsx 의 WebBrowser.maybeCompleteAuthSession() 이
+    // 부모 창에 결과를 넘겨 준다 — 그 호출이 없으면 여기서 영원히 기다린다.
     const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (res.type !== 'success') return { error: '카카오 로그인이 취소되었습니다.' };
+    if (res.type !== 'success') return { error: `${label} 로그인이 취소되었습니다.` };
     const { params, errorCode } = QueryParams.getQueryParams(res.url);
     if (errorCode) return { error: errorCode };
     if (!params.access_token || !params.refresh_token) {
-      return { error: '카카오 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.' };
+      return { error: `${label} 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.` };
     }
     const { data: sess, error: sErr } = await sb().auth.setSession({
       access_token: params.access_token, refresh_token: params.refresh_token,
@@ -297,9 +308,15 @@ export const supabaseRepo: Repo = {
     let profile = await fetchProfile(sess.user.id);
     const isNewUser = !profile;
     if (!profile) {
-      // 첫 카카오 로그인 — 닉네임으로 프로필 생성, 이후 동의 화면을 거친다
+      // 첫 소셜 로그인 — 공급자가 준 이름으로 프로필 생성, 이후 동의 화면을 거친다.
+      // 카카오는 nickname, 구글은 full_name/name 으로 온다. 이름을 아예 안 주는
+      // 경우(카카오 동의항목 미설정 등)도 있어 '보호자'로 떨어뜨린다.
       const meta = sess.user.user_metadata as Record<string, unknown> | null;
-      const name = (meta?.name as string) ?? (meta?.nickname as string) ?? '보호자';
+      const name =
+        (meta?.name as string) ??
+        (meta?.full_name as string) ??
+        (meta?.nickname as string) ??
+        '보호자';
       profile = { id: sess.user.id, name, relationship: '보호자' };
       const { error: pErr } = await sb().from('profiles').upsert({
         id: profile.id, name: profile.name, relationship: profile.relationship,
