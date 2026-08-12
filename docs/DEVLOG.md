@@ -1126,3 +1126,34 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 2. Supabase Redirect URLs 에 그 주소 등록
 3. Kakao / Google 콘솔 설정 → Supabase Providers 입력
 4. 환경변수 `on` → 재배포 → 실제 로그인 왕복 확인
+
+---
+
+## 2026-08-12 — Cloudflare 배포 흐름이 Workers로 바뀌어 wrangler.jsonc 추가
+
+**무슨 일이었나**
+- 사용자가 Cloudflare 대시보드에서 B-3 절차대로 진행했는데 화면이 문서와
+  달랐다 — "Pages → Connect to Git" 이 아니라 **"Create a Worker"** 흐름이었고,
+  Deploy command 가 `npx wrangler deploy` 로 채워져 있었다. Deploy를 눌러도
+  넘어가지 않았다.
+- 원인: Cloudflare가 2026년부터 신규 정적 사이트를 Workers(정적 자산 서빙)
+  흐름으로 유도한다. 이 흐름은 **저장소에 `wrangler.jsonc`(또는 `.toml`) 가
+  있어야** `wrangler deploy` 가 무엇을 어디로 배포할지 안다. 파일이 없으니
+  배포 대상이 없어 진행이 안 됐다 — 사용자 실수가 아니라 문서가 구 UI 기준
+  이었다.
+
+**한 일**
+- `wrangler.jsonc` 신설: `assets.directory: "./dist"`,
+  `assets.not_found_handling: "single-page-application"`.
+- `docs/06_deployment.md` B-3 를 새 흐름 기준으로 갱신 — 버튼 경로, Build/Deploy
+  명령, 배포 후 나오는 주소 형식(`*.pages.dev` → `*.workers.dev`).
+- **`public/_headers`·`public/_redirects` 는 그대로 둔다** — 검색 결과로
+  확인: Workers 정적 자산이 두 파일을 네이티브로 지원하고, 자산 디렉터리에
+  있기만 하면 별도 설정 없이 적용된다. `not_found_handling` 과
+  `_redirects` 의 SPA 폴백이 같은 역할을 중복으로 하게 됐지만 충돌은 없다.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- `npm run build:web` 재실행 → `dist/_headers`, `dist/_redirects` 여전히
+  자동 복사되는 것 확인 (wrangler.jsonc 추가가 기존 정적 파일 복사 경로에
+  영향 없음).

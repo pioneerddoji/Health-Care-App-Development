@@ -1,0 +1,23 @@
+// Cloudflare Workers(정적 자산 서빙) 설정.
+//
+// 왜 필요한가 — Cloudflare가 2026년부터 신규 정적 사이트를 "Create a Worker"
+// 흐름으로 유도한다. 이 흐름의 Deploy 명령(`npx wrangler deploy`)은 이 파일이
+// 있어야 무엇을 어디로 배포할지 알 수 있다. 파일이 없으면 Deploy 버튼을 눌러도
+// 대상이 없어 진행되지 않는다 — 옛 "Cloudflare Pages" 전용 흐름과 다른 점이다.
+//
+// assets.directory 는 `npm run build:web` 산출물(dist/)을 가리킨다.
+// `public/_headers`·`public/_redirects` 는 Expo 빌드가 자동으로 dist/ 로
+// 복사하므로 이 설정에서 따로 지정할 필요가 없다 — 위치만 맞으면 그대로
+// 적용된다(Workers 정적 자산이 두 파일을 네이티브로 지원).
+{
+  "name": "carenote",
+  "compatibility_date": "2026-08-01",
+  "assets": {
+    "directory": "./dist",
+    // SPA 폴백 — React Navigation 은 파일 기반 라우터가 아니라 진입점이
+    // index.html 하나뿐이다. 이 옵션이 public/_redirects 의 `/*  /index.html
+    // 200` 규칙과 같은 역할을 한다(둘 다 있어도 충돌하지 않는다 — 방어선을
+    // 하나 더 두는 셈).
+    "not_found_handling": "single-page-application"
+  }
+}
