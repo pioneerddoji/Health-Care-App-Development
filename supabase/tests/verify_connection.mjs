@@ -5,7 +5,7 @@
 //   2) Authentication → Email Provider에서 "Confirm email" 끄기 (검증 후 다시 켜도 됨)
 //   3) (선택) supabase functions deploy share-report --no-verify-jwt
 //
-// 실행 (kidcare 디렉터리에서):
+// 실행 (carenote 디렉터리에서):
 //   SUPABASE_URL=https://xxxx.supabase.co SUPABASE_ANON_KEY=eyJ... npm run verify:supabase
 //
 // 하는 일: 2계정 가입 → 아이/동의/기록 → 사진 업로드+서명URL → RLS 격리 →

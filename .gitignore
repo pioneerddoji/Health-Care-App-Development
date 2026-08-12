@@ -1,5 +1,8 @@
 node_modules/
 .expo/
+# 빌드 산출물 (gitignore 는 인라인 주석을 지원하지 않는다 — 줄을 나눠 쓸 것)
+# dist/     : npm run build:web — Cloudflare Pages 가 굽는다
+# dist-web/ : 로컬 확인용 수동 export
 dist/
 dist-web/
 *.log

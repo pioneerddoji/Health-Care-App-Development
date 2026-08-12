@@ -19,10 +19,10 @@ const WEBHOOK_TOKEN = Deno.env.get('RC_WEBHOOK_TOKEN');
 
 // src/services/billing.ts의 PRODUCT_IDS와 반드시 일치 (월간/연간 → 같은 티어)
 const PRODUCT_TO_TIER: Record<string, 'standard' | 'family'> = {
-  'kidcare.standard.monthly': 'standard',
-  'kidcare.standard.yearly': 'standard',
-  'kidcare.family.monthly': 'family',
-  'kidcare.family.yearly': 'family',
+  'carenote.standard.monthly': 'standard',
+  'carenote.standard.yearly': 'standard',
+  'carenote.family.monthly': 'family',
+  'carenote.family.yearly': 'family',
 };
 
 // RevenueCat 이벤트 타입 → subscriptions.status

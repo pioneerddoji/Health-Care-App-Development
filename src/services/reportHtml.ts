@@ -156,7 +156,7 @@ export const buildReportHtml = (input: ReportInput): string => {
   .page-break { page-break-before: always; }
 </style>
 
-<h1>아이 건강 기록 레포트</h1>
+<h1>건강 기록 레포트</h1>
 <div class="sub">
   ${esc(child.name)} (${child.sex === 'female' ? '여' : '남'}, ${koreanAge(child.birthDate)},
   생년월일 ${formatKorean(child.birthDate)})

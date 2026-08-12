@@ -9,6 +9,8 @@ import {
 } from '../src/services/records';
 import { buildReportHtml } from '../src/services/reportHtml';
 import { today, daysAgo } from '../src/lib/date';
+import { consentPlanFor, showsChildFeatures } from '../src/lib/recipient';
+import { recordTypesFor } from '../src/constants/recordTypes';
 
 let pass = 0, fail = 0;
 const issues: string[] = [];
@@ -127,6 +129,83 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   ok(endLinks === baseline.links, `C${cycle} 삭제 후 공유링크 잔존 없음`, `잔존 ${endLinks}`);
   ok(!(child.id in end.roles) || end.roles[child.id] === undefined, `C${cycle} 삭제 후 역할 정리`);
 }
+
+// ── 사용자별 설정 (saveSettings 병합 저장 / loadAll 반영) ──
+const s1 = await repo.saveSettings({ dashboardOrder: ['sleep', 'temp'] });
+ok(JSON.stringify(s1.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '설정 저장(dashboardOrder)');
+ok(JSON.stringify((await repo.loadAll()).settings.dashboardOrder) === JSON.stringify(['sleep', 'temp']),
+  'loadAll에 설정 반영');
+const s2 = await repo.saveSettings({});          // 빈 patch — 기존 값 유지(병합 저장)
+ok(JSON.stringify(s2.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '병합 저장(기존 키 유지)');
+
+// ── 전연령 확대: 대상자 유형 + 동의 분기 ──
+{
+  const y = (yearsAgo: number) => {
+    const d = new Date(); d.setFullYear(d.getFullYear() - yearsAgo);
+    return d.toISOString().slice(0, 10);
+  };
+  // 동의 근거는 라벨이 아니라 만 나이로 갈린다
+  ok(consentPlanFor({ birthDate: y(5), recipientType: 'child' }).basis === 'child_under14',
+    '만 5세 → 법정대리인 동의');
+  ok(consentPlanFor({ birthDate: y(16), recipientType: 'child' }).basis === 'minor',
+    '만 16세 → 미성년 동의');
+  ok(consentPlanFor({ birthDate: y(40), recipientType: 'adult', isSelf: true }).basis === 'adult_self',
+    '성인 본인 → 본인 동의');
+  ok(consentPlanFor({ birthDate: y(70), recipientType: 'adult' }).basis === 'adult_delegated',
+    '성인 타인 → 위임 동의');
+  // 성인 라벨이라도 만 나이가 미성년이면 미성년 기준이 우선
+  ok(consentPlanFor({ birthDate: y(10), recipientType: 'adult', isSelf: true }).basis === 'child_under14',
+    '나이가 라벨보다 우선(성인 라벨 + 만 10세)');
+  // sensitive_health는 모든 경로에 포함 — RLS 기록 게이트이므로 불변
+  ok(([y(5), y(16), y(40), y(70)] as const).every((b) =>
+    consentPlanFor({ birthDate: b, recipientType: 'adult', isSelf: true }).types.includes('sensitive_health')),
+    '모든 동의 경로에 sensitive_health 포함(RLS 게이트)');
+
+  // 연령 전제 기록 유형(학교/기관)은 성인에게 노출되지 않는다
+  ok(recordTypesFor(true).some((t) => t.type === 'school'), '아이: 학교/기관 유형 노출');
+  ok(!recordTypesFor(false).some((t) => t.type === 'school'), '성인: 학교/기관 유형 숨김');
+  ok(recordTypesFor(false).length === recordTypesFor(true).length - 1, '성인은 소아 전용 1종만 제외');
+
+  // 성인 대상자 등록 → 유형이 보존된다
+  const adult = await repo.createChild({
+    name: '김아버지', birthDate: y(68), sex: 'male', recipientType: 'adult',
+    isPreterm: false, allergies: [], chronicConditions: [], surgeries: [], hospitalizations: [],
+  });
+  ok(adult.recipientType === 'adult', '성인 대상자 등록 — 유형 보존');
+  ok(!showsChildFeatures(adult), '성인 대상자 — 소아 기능 숨김 판정');
+  const withAdult = await repo.loadAll();
+  ok(withAdult.children.some((c) => c.id === adult.id && c.recipientType === 'adult'),
+    '재조회 시에도 성인 유형 유지');
+  await repo.deleteChildAndData(adult.id);
+}
+
+// ── 앱 이름 변경: 구 데모 이메일 하위호환 ──
+// (저장 키 이관은 AsyncStorage가 필요해 Playwright persistence-test에서 검증한다)
+{
+  const legacy = await repo.signIn('demo@kidcare.app', 'anything');
+  ok(!legacy.error, '구 데모 이메일(demo@kidcare.app)로 로그인 가능');
+  const legacyAll = await repo.loadAll();
+  ok(legacyAll.children.some((c) => c.id === 'child-1'), '구 데모 이메일 → 샘플 로드');
+  ok(legacyAll.subscription.tier === 'standard', '구 데모 이메일 → standard 체험 티어');
+  const current = await repo.signIn('demo@carenote.app', 'anything');
+  ok(!current.error, '새 데모 이메일(demo@carenote.app)로 로그인 가능');
+  ok((await repo.loadAll()).children.some((c) => c.id === 'child-1'), '새 데모 이메일 → 샘플 로드');
+}
+
+// ── 소셜 로그인 (mock 시뮬레이션) — 계정 전환이라 맨 끝에서 실행 ──
+for (const provider of ['kakao', 'google'] as const) {
+  const s1 = await repo.signInWithSocial(provider);
+  ok(!!s1.profile && s1.isNewUser === true, `${provider} 첫 로그인 = 신규(동의 화면 경유)`);
+  const sAll = await repo.loadAll();
+  ok(sAll.children.length === 0 && sAll.subscription.tier === 'free',
+    `${provider} 신규 계정 = 빈 상태 + free 티어`);
+  const s2 = await repo.signInWithSocial(provider);
+  ok(s2.isNewUser === false, `${provider} 재로그인 = 기존 계정(동의 생략)`);
+}
+// 공급자가 다르면 계정도 다르다 — 카카오로 들어갔다가 구글로 들어오면 신규여야 한다
+// (같은 데모 계정을 공유하면 "남의 기록이 보이는" 상황을 데모가 못 잡아낸다)
+ok((await repo.signInWithSocial('kakao')).isNewUser === true,
+  '구글 → 카카오 전환 = 다른 계정(신규)');
 
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
 if (issues.length) { console.log('특이사항:'); issues.forEach((i) => console.log(' -', i)); process.exit(1); }

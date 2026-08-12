@@ -1,4 +1,4 @@
-# 아이케어 (kidcare) — 아이 건강 관리 앱
+# 케어노트 (carenote) — 아이 건강 관리 앱
 
 한국 보호자를 위한 **0–18세 소아청소년 건강 기록 앱**. 일자별 건강·행동·식사·수면·증상을
 기록하고 → 건강관리 영역으로 분류 → 기간별로 시각화 → **병원 제출용 PDF 레포트**를 발행한다.
@@ -46,7 +46,7 @@ npm install
 npm start          # Expo Go에서 QR 스캔
 ```
 
-- 별도 설정 없이 **로컬 데모 모드**로 동작한다. `demo@kidcare.app`로 로그인하면 샘플
+- 별도 설정 없이 **로컬 데모 모드**로 동작한다. `demo@carenote.app`로 로그인하면 샘플
   데이터(아이 2명 + 14일 기록)가 로드되고, 일반 가입은 빈 상태 + 무료 티어로 시작한다.
 - 변경 사항은 **기기에 저장되어 앱을 재시작해도 유지**된다(자동 로그인).
 
@@ -60,7 +60,7 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 ```
 
 1. [supabase.com](https://supabase.com) 프로젝트 생성
-2. SQL Editor에서 `supabase/schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` 순서 실행
+2. SQL Editor에서 `supabase/schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` 순서 실행
 3. 공유 링크 Edge Function 배포: `supabase functions deploy share-report --no-verify-jwt --project-ref <ref>`
 4. `SUPABASE_URL=... SUPABASE_ANON_KEY=... npm run verify:supabase`로 가입→기록→Storage→RLS→공유 링크→삭제 자동 검증
 

@@ -1,7 +1,7 @@
 -- RLS 통합 테스트 — 로컬 PostgreSQL에서 Supabase 환경(auth/storage)을 셈으로 만들어
--- schema.sql + schema_stage3.sql을 적용하고 2계정 권한 시나리오를 검증한다.
+-- schema.sql부터 schema_settings.sql까지 전부 적용하고 2계정 권한 시나리오를 검증한다.
 --
--- 실행 (이 디렉터리 kidcare/supabase/tests 에서 — \i 경로 기준):
+-- 실행 (이 디렉터리 carenote/supabase/tests 에서 — \i 경로 기준):
 --   initdb로 임시 클러스터를 만든 뒤:
 --   psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f rls_test.sql
 --   출력에서 FAIL이 없으면 통과. (매 실행마다 새 DB 필요)
@@ -24,6 +24,8 @@ create role authenticated;
 \i ../schema.sql
 \i ../schema_stage3.sql
 \i ../schema_subscriptions.sql
+\i ../schema_settings.sql
+\i ../schema_recipients.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -136,7 +138,31 @@ select expect_error($q$insert into daily_records(child_id, author_id, record_dat
 select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 재동의');
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '재동의 후 기록 허용');
 
+-- ── 사용자별 설정 (user_settings) — 본인 행만 읽기/쓰기 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into user_settings(user_id, settings) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{"dashboardOrder":["sleep","temp"]}'::jsonb)$q$, 'A 설정 저장');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select case when (select count(*) from user_settings) = 0 then 'PASS 타인 설정 비노출' else 'FAIL B가 타인 설정을 봄' end;
+select expect_error($q$insert into user_settings(user_id, settings) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{}'::jsonb)$q$, '타인 user_id로 설정 쓰기 차단');
+select expect_rows($q$update user_settings set settings = '{}'::jsonb where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'$q$, 0, '타인 설정 수정 무효');
+
+-- ── 전연령 확대: 성인 대상자도 동일한 동의 게이트가 걸린다 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into children(id, name, birth_date, sex, recipient_type) values ('44444444-4444-4444-4444-444444444444', '아버지', '1955-03-02', 'male', 'adult')$q$, '성인 대상자 생성');
+select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 'owner')$q$, '성인 대상자 owner 연결');
+select expect_error($q$insert into children(id, name, birth_date, sex, recipient_type) values ('55555555-5555-5555-5555-555555555555', '잘못된유형', '2000-01-01', 'male', 'pet')$q$, '허용되지 않은 recipient_type 차단');
+-- 동의 없이는 성인 대상자도 기록 불가 (has_sensitive_consent 게이트 불변)
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 동의 전 기록 차단');
+select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'adult_delegated'), ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, '성인 위임 동의 + 민감정보 동의 기록');
+select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 동의 후 기록 허용');
+-- 위임 동의만 철회해도 민감정보 동의가 살아 있으면 기록은 계속된다(게이트는 sensitive_health 하나)
+select expect_rows($q$update consents set revoked_at = now() where child_id = '44444444-4444-4444-4444-444444444444' and type = 'sensitive_health' and revoked_at is null$q$, 1, '성인 대상자 민감정보 동의 철회');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 철회 후 기록 차단');
+select case when (select count(*) from children where recipient_type = 'child') = 2 then 'PASS 기존 행은 child 기본값 유지' else 'FAIL recipient_type 기본값' end;
+
 -- ── owner의 아이 삭제 cascade ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A(owner) 아이 삭제');
-select case when (select count(*) from daily_records) = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
+-- 삭제한 대상자의 기록만 사라져야 한다 (다른 대상자의 기록은 남아 있어야 정상)
+select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
+select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;

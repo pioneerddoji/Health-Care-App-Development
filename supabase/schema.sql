@@ -1,4 +1,4 @@
--- kidcare: 아이 건강 관리 앱 스키마 (Supabase PostgreSQL)
+-- carenote: 아이 건강 관리 앱 스키마 (Supabase PostgreSQL)
 -- 적용: supabase db push 또는 SQL Editor에서 실행
 
 create extension if not exists "pgcrypto";

@@ -4,7 +4,7 @@ React Native + Expo + TypeScript 기준. 화면(screens) / 도메인 로직(serv
 백엔드(Supabase)를 붙이기 전에도 샘플 데이터로 전체 플로우가 동작하도록 구성한다.
 
 ```
-kidcare/
+carenote/
 ├── app.json                  # Expo 앱 설정 (이름, 스킴, 권한)
 ├── package.json
 ├── tsconfig.json
