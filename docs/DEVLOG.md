@@ -1014,3 +1014,54 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
   넘으면 제출이 조용히 막힌다. 페이지에 "안 되면 메일로" 대체 경로는 넣어
   뒀지만, 게시 전 유료 전환이나 대체 수단을 준비해 둘 것.
 - GitHub Pages Settings → Pages → Source 미설정 — 지금은 저장소 안에만 있다.
+
+---
+
+## 2026-08-06 — 카카오 로그인 켜기 준비: 웹 OAuth 팝업 완결 처리
+
+**한 일**
+- 카카오 로그인을 실제로 켜기로 하고, 켜기 전에 코드 경로를 점검했다.
+  네이티브 경로는 정상이었지만 **웹에서는 절대 로그인되지 않는 상태**였다.
+- `App.tsx` 모듈 스코프에 `WebBrowser.maybeCompleteAuthSession()` 추가.
+- `docs/09` 에 §2-2-1 신설 — 카카오 설정 절차 전문(계정 작업 ①~④).
+
+**왜 웹에서 안 됐나**
+- 웹 소셜 로그인은 팝업으로 돈다. 팝업이 인증을 마치고 우리 주소로 돌아오면
+  **팝업 안에서 앱 번들이 다시 로드**되는데, 이때 부모 창에 `postMessage` 로
+  결과를 넘겨 주는 것이 `maybeCompleteAuthSession()` 이다. 이 호출이 없으면
+  부모의 `openAuthSessionAsync()` 가 영원히 기다리고, 사용자가 팝업을 닫으면
+  `dismiss` 로 떨어져 **"카카오 로그인이 취소되었습니다"** 가 뜬다.
+  Kakao·Supabase 설정을 아무리 정확히 해도 웹에서는 로그인이 안 됐을 것이다.
+- 라이브러리 구현으로 확인한 사실:
+  - `ExpoWebBrowser.web.js` 의 `maybeCompleteAuthSession` 이
+    `parent.postMessage({url, expoSender}, ...)` 로 결과를 넘긴다.
+  - 네이티브에는 이 API 자체가 없고 래퍼가
+    `if (ExponentWebBrowser.maybeCompleteAuthSession)` 로 감싸므로 **무해**하다.
+    그래서 플랫폼 분기 없이 모듈 스코프에서 한 번 호출한다.
+  - `normalizeUrl()` 이 origin+pathname 만 쓰므로 해시(`#access_token=...`)가
+    붙어도 리다이렉트 일치 검사를 통과한다 → `skipRedirectCheck` 불필요.
+
+**점검했지만 문제 없던 것 (기록해 둔다)**
+- `flowType` 미지정이라 PKCE 로 동작해 `access_token` 대신 `code` 가 오는 것
+  아닌가 의심했으나, 설치된 `@supabase/auth-js@2.110.2` 의 기본값이
+  `implicit` 임을 소스에서 확인했다. 현재 코드의
+  `QueryParams.getQueryParams(res.url)` → `setSession()` 경로가 맞다.
+  **다만 나중에 `flowType: 'pkce'` 로 바꾸면 이 경로가 통째로 깨진다** —
+  그때는 `exchangeCodeForSession()` 으로 바꿔야 한다.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- 웹 재빌드(`--clear`) 후 번들에 호출 포함 확인, 로드 시 콘솔 에러 0.
+- 브라우저에서 카카오 버튼 노출 → 클릭 → mock 로그인 성공 →
+  **신규 사용자라 동의 화면으로 이어지는 것까지 확인**(설계대로).
+- 노출 게이트 4종 실행 확인:
+  `(미지정, mock)=노출 / (미지정, supabase)=숨김 / (on, supabase)=노출 /
+   (off, mock)=숨김` — 설정 전 운영 빌드에 깨진 버튼이 나가지 않는다.
+- **실제 OAuth 왕복은 Kakao·Supabase 계정 설정 후에만 검증 가능** — 그 절차와
+  확인 방법을 docs/09 §2-2-1 ④에 적어 뒀다.
+
+**다음 (사용자 계정 작업)**
+- Kakao Developers 앱 생성 → REST API 키·Client Secret
+- Supabase Providers → Kakao 입력 + **Redirect URLs 에 웹·앱 주소 모두 등록**
+  (이게 빠지면 인증은 되는데 앱으로 못 돌아온다)
+- `EXPO_PUBLIC_KAKAO_LOGIN=on` + `expo export --clear`

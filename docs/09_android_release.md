@@ -56,11 +56,53 @@
 - [ ] schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql →
   schema_recipients.sql 순서 실행.
 - [ ] Edge Function 배포(`share-report`, `--no-verify-jwt`).
-- [ ] (선택) 카카오 로그인: Kakao Developers 앱 생성 → Redirect URI
-  `https://<ref>.supabase.co/auth/v1/callback` 등록 → Supabase Providers →
-  Kakao에 REST API 키/Secret 입력 → 빌드 env `EXPO_PUBLIC_KAKAO_LOGIN=on`.
+- [ ] (선택) 카카오 로그인 — **절차 전문은 §2-2-1**.
 - [ ] `npm run verify:supabase` **전부 PASS** 확인 → 실기기에서 supabase 모드 스모크.
 - [ ] 운영 설정: Confirm email 켜기 + 커스텀 SMTP, PITR 백업(Pro 플랜) 검토.
+
+### 2-2-1. 카카오 로그인 켜기 (코드는 완료 — 계정 설정만 남음)
+
+앱 코드는 `ca04b87`에서 이미 끝났다. 아래는 **계정 측 작업 전부**이며, 순서대로
+하면 된다. 웹과 앱의 리다이렉트 주소가 다르므로 **둘 다 등록해야 한다.**
+
+**① Kakao Developers** (https://developers.kakao.com)
+- [ ] 애플리케이션 추가하기 → 앱 이름 `케어노트`
+- [ ] **앱 키 → REST API 키** 복사 (Supabase에 넣을 값)
+- [ ] 카카오 로그인 → **활성화 ON**
+- [ ] 카카오 로그인 → **Redirect URI** 등록:
+      `https://<프로젝트ref>.supabase.co/auth/v1/callback`
+      (여기는 Supabase 주소 하나만. 우리 앱 주소가 아니다 — 카카오는 항상
+       Supabase로 돌려보내고, 그다음 Supabase가 우리 앱으로 넘긴다)
+- [ ] 보안 → **Client Secret 생성 + 사용함(ON)** → 코드 복사
+- [ ] 동의항목 → **닉네임**(필수 아님으로도 충분).
+      ⚠️ **이메일을 필수 동의로 받으려면 비즈앱 전환·심사가 필요**하다.
+      우리 코드는 이메일 없이도 동작한다(닉네임 없으면 '보호자'로 프로필 생성).
+
+**② Supabase 대시보드**
+- [ ] Authentication → Providers → **Kakao** 활성화
+- [ ] REST API 키 → `Kakao Client ID`, Client Secret → `Kakao Client Secret`
+- [ ] Authentication → URL Configuration → **Redirect URLs** 에 아래를 모두 추가
+      (여기가 빠지면 인증은 되는데 앱으로 못 돌아온다):
+      - 앱(네이티브): `carenote://` — app.json 의 scheme
+      - 웹(운영): 웹앱을 올릴 실제 주소 (예: `https://<도메인>/`)
+      - 웹(로컬 테스트): `http://localhost:8099/` 등 실제로 쓰는 포트
+
+**③ 빌드 환경변수**
+- [ ] `EXPO_PUBLIC_KAKAO_LOGIN=on`
+      (미지정이면 supabase 모드에서 **버튼이 자동으로 숨겨진다** — 설정 전에
+       깨진 버튼이 노출되지 않게 하는 안전장치다. `socialAuth.ts`)
+- [ ] ⚠️ `EXPO_PUBLIC_*` 변경 후에는 `npx expo export --clear` — Metro 캐시가
+      옛 값을 물고 있다.
+
+**④ 확인 (설정 후 반드시)**
+- [ ] **웹**에서 팝업이 뜨고 → 카카오 인증 → **팝업이 스스로 닫히며** 로그인될 것.
+      팝업이 안 닫히고 멈추면 리다이렉트 URL이 ②의 목록과 다른 것이다.
+      (팝업이 부모 창에 결과를 넘기는 처리는 `App.tsx`의
+       `WebBrowser.maybeCompleteAuthSession()` — 2026-08-06에 추가)
+- [ ] **첫 로그인은 반드시 동의 화면으로 이어질 것** — 카카오는 생년월일을 주지
+      않으므로 대상자 등록·동의는 앱 안에서 따로 받는다. 이 흐름이 건너뛰어지면
+      RLS가 기록 INSERT를 막는다(`sensitive_health` 게이트).
+- [ ] 실기기에서 OAuth 왕복 1회 확인.
 
 ### 2-3. 개인정보처리방침·약관 (법률)
 - [ ] ⛔ `docs/privacy_policy.html`을 실 도메인에 호스팅(GitHub Pages/Vercel 가능)
