@@ -63,8 +63,12 @@ Workers"(Git 연동) 흐름으로 유도한다.** 예전 "Pages → Connect to G
    - Build command: `npm run build:web`
    - Deploy command: `npx wrangler deploy` (기본값 그대로 — `wrangler.jsonc`
      가 나머지를 정한다)
-3. [ ] 환경변수 (Settings → Variables and Secrets, 배포 전에 미리 넣거나
-   최초 배포 후 추가하고 재배포)
+3. [ ] 환경변수(빌드 시점 값 — **`Settings → Build` 페이지 안**의
+   "Variables and secrets" 섹션, `API token` 카드 바로 아래에 있다).
+   ⚠️ 최상위 `Settings → Variables and secrets`(사이드바 맨 위 항목)가
+   **아니다** — 그건 Worker 런타임용이고, 이 Worker는 정적 자산만 서빙해서
+   "Variables cannot be added to a Worker that only has static assets."
+   라며 막힌다. 반드시 **Build 섹션 안의** 것을 써야 한다.
    ```
    NODE_VERSION                    20
    EXPO_PUBLIC_SUPABASE_URL        https://<ref>.supabase.co
@@ -75,15 +79,24 @@ Workers"(Git 연동) 흐름으로 유도한다.** 예전 "Pages → Connect to G
    ⚠️ `NODE_VERSION` 을 빠뜨리면 Expo 빌드가 실패한다.
    ⚠️ 소셜 플래그는 **공급자 설정을 마친 뒤에** `on` 으로. 비워 두면
    supabase 모드에서 버튼이 자동으로 숨겨진다(`socialAuth.ts`).
-4. [ ] 배포 완료 후 나온 주소(`https://<프로젝트>.<계정>.workers.dev`)를
+4. [ ] 환경변수 저장 후 **재빌드를 트리거**해야 반영된다 — 값이 실행 중
+   읽히는 게 아니라 `npm run build:web` 시점에 번들에 박히기 때문이다.
+   ⚠️ **Deployments 탭의 "New deployment"를 쓰지 말 것** — 그건 로컬 폴더를
+   손으로 올리는 수동 업로드(Upload static files)이지 Git 재빌드가 아니다.
+   빌드를 다시 돌리려면 지켜보는 브랜치(Production branch)에 **새 커밋을
+   push**해야 한다.
+5. [ ] 배포 완료 후 나온 주소(`https://<프로젝트>.<계정>.workers.dev`)를
    **Supabase → Authentication → URL Configuration → Redirect URLs** 에 추가
-5. [ ] 소셜 공급자 설정(docs/09 §2-2-1) → 환경변수 `on` → **재배포**
+6. [ ] 소셜 공급자 설정(docs/09 §2-2-1) → 환경변수 `on` → 커밋 push로 재빌드
 
 응답 헤더·SPA 폴백은 `public/_headers`, `public/_redirects` 가 빌드 출력
 루트(`dist/`)로 복사되어 자동 적용된다 — Workers 정적 자산이 두 파일을
 네이티브로 지원하므로 `wrangler.jsonc` 에 따로 설정할 필요가 없다.
-`not_found_handling: "single-page-application"` 이 `_redirects` 의 SPA
-폴백 규칙과 같은 역할을 중복으로 한다(방어선을 하나 더 두는 셈, 충돌 없음).
+⚠️ **`_redirects` 에 SPA 폴백 규칙(`/*  /index.html  200`)을 넣지 말 것** —
+`wrangler.jsonc` 의 `not_found_handling: "single-page-application"` 과
+같은 일을 이중으로 하면 Cloudflare가 배포 시점에 "Invalid _redirects
+configuration: Infinite loop detected"(code 100324)로 배포를 거부한다.
+실제로 겪었다(2026-08-12). SPA 폴백은 `not_found_handling` 하나로만 처리한다.
 **CSP 는 일부러 넣지 않았다** — Supabase·소셜 팝업·data URI 가 얽혀 잘못 쓰면
 앱이 조용히 깨진다. 실배포에서 실제 요청을 확인한 뒤 `connect-src` 를 좁히는
 순서가 맞다.
