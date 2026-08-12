@@ -1157,3 +1157,119 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 - `npm run build:web` 재실행 → `dist/_headers`, `dist/_redirects` 여전히
   자동 복사되는 것 확인 (wrangler.jsonc 추가가 기존 정적 파일 복사 경로에
   영향 없음).
+
+## 2026-08-12 — 웹 배포 완결 + 5가지 시행착오 해결
+
+**날짜**: KST 8/12 (UTC+9)
+**목표**: Cloudflare에서 웹 앱 실배포 & 환경변수 주입으로 Supabase 백엔드 연동
+
+**한 일**
+사용자가 Cloudflare B-3 절차대로 진행했다가 "Deploy를 눌러도 진행이 안 됨" 로 보고.
+이후 5번의 빌드 시도와 시행착오 끝에 완전 배포 성공. 각 단계별 원인·해결을 기록함.
+
+**시행착오 5가지**
+
+① **Cloudflare UI가 구식 문서와 달랐다**
+- 예상: "Pages → Connect to Git" (2022년 UI)
+- 실제: "Workers & Pages → Create a Worker" (2026년 신 UI)
+- 원인: Cloudflare가 정적 사이트를 Pages → Workers로 전환중
+- 해결: `wrangler.jsonc`(또는 `.toml`)이 필수 — 이 파일이 없으면 deploy 대상이 없어 진행 불가
+
+② **wrangler.jsonc의 `name` 필드가 틀렸다**
+- 처음: `"name": "carenote"` (앱 이름)
+- 대시보드 경고: "Update to health-care-app-development" (저장소명)
+- 원인: 프로젝트를 만들 때 저장소명으로 자동 명명, 우리는 앱 이름으로 시도
+- 해결: 저장소명으로 변경 후 정상 진행
+- ⚠️ 프로젝트 이름은 코드로 못 바꾼다 — 대시보드에서 새 프로젝트 생성해야 함
+
+③ **SPA 라우팅 무한 루프 (code 100324)**
+- 빌드 성공, 배포 단계에서 거부: "Invalid _redirects configuration: Infinite loop detected"
+- 원인: 두 곳에서 404→index.html을 하고 있었다
+  ```
+  1. public/_redirects: /*  /index.html  200
+  2. wrangler.jsonc: assets.not_found_handling = "single-page-application"
+  ```
+  Cloudflare 검증이 이중 규칙을 감지해 무한 루프 판정
+- 해결: 단일 메커니즘 선택 → public/_redirects에서 SPA 폴백 규칙만 제거
+  (wrangler.jsonc의 not_found_handling 하나로 통일)
+- 배운 점: "두 메커니즘이 있으니 한 번에" 는 위험 — 자동 검증이 설정 충돌을 감지
+
+④ **환경변수 입력 위치 헷갈림**
+- 사용자가 Settings → Variables and secrets에 NODE_VERSION을 넣으려니:
+  ```
+  "Variables cannot be added to a Worker that only has static assets."
+  ```
+- 원인: 두 가지가 헷갈린다
+  - Settings → Variables and secrets (사이드바 최상단) = Worker 런타임용 ❌
+  - Settings → Build → Variables and secrets = 빌드 타임용 ✅
+- Expo의 EXPO_PUBLIC_* 는 빌드할 때 정적 치환되므로 Build 섹션에만 먹힌다
+- 해결: 올바른 위치(Build 섹션)에 변수 저장 후 설명 추가
+
+⑤ **"New deployment" 버튼 ≠ Git rebuild**
+- 사용자: "환경변수 저장했으니 재배포하는데, New deployment 버튼 누르면?"
+- 실제 동작: "Upload static files" (수동 업로드, Git rebuild 아님)
+- 정확한 방법: `git push` 해야 Cloudflare가 감지해 자동 빌드
+- 원인: Cloudflare UI 용어가 명확하지 않음 (버튼 이름만으로는 구분 불가)
+- 해결: 문서에 명시 — "New deployment" ≠ rebuild, 새 commit push 필수
+
+**최종 배포 확인**
+
+링크: https://health-care-app-development.impact2027.workers.dev/
+
+검증 사항:
+- 앱 로드 정상
+- Supabase 백엔드 연동 확인 ("Supabase 연동 모드" 메시지)
+- 이메일/비밀번호 로그인 작동
+- 소셜 로그인 버튼 노출(provider 설정 전이라 미활성)
+- Response 헤더 정상 (X-Frame-Options DENY, HSTS, etc.)
+
+**검증 수치**
+
+```
+타입 체크:        tsc --noEmit         PASS
+E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
+게이팅 테스트:    npm run test:gating   41 PASS (플래그 5건 추가)
+웹 빌드 산출물:   npm run build:web     dist/ ~2.1MB
+```
+
+**소셜 로그인 아키텍처 (부수적 완성)**
+
+이전 단계에서 카카오를 추가했고, 이번에 구글도 지원하도록 일반화:
+
+- `signInWithSocial(provider: 'kakao' | 'google' | 'apple')`
+- `SOCIAL_PROVIDERS` 맵에 메타데이터 집중 (라벨, 색, 프로필명 폴백)
+- 화면은 `enabledSocialProviders()` 로 활성 목록을 받아 버튼 동적 생성
+- mock 저장소도 공급자별 계정 분리 (kakao@, google@)
+  — 같은 계정으로 공유하면 provider 전환 시 다른 사람 기록이 보이는 버그 가능
+
+효과: 공급자 추가 = env 플래그 한 줄 + map 한 줄. 향후 Apple 로그인도 최소 변경.
+
+**문서 반영**
+
+- `docs/06_deployment.md` B-3 전면 갱신 — 2026년 Cloudflare Workers 흐름 기준
+- `docs/09_android_release.md` 에 Redirect URL 등록 단계 추가
+
+**다음 (사용자 계정 작업)**
+
+1. Supabase → Authentication → URL Configuration
+   - Redirect URLs: https://health-care-app-development.impact2027.workers.dev/
+   - 모바일: carenote://
+
+2. Kakao / Google Console → Supabase Providers 설정
+   - REST API 키, Redirect URI 등록
+
+3. 환경변수 `EXPO_PUBLIC_KAKAO_LOGIN=on` / `EXPO_PUBLIC_GOOGLE_LOGIN=on`
+   - git push → 자동 재배포
+
+4. 실제 로그인 테스트 (웹 + 모바일)
+
+**특이사항**
+
+- wrangler.jsonc는 이미 있던 public/_headers, _redirects와 함께 Cloudflare가
+  자동으로 처리한다 — Workers 정적 자산이 두 파일을 네이티브 지원하므로
+  wrangler.jsonc에서 따로 설정할 필요 없음.
+- 오늘 배포 중 Cloudflare 프로젝트명 미매칭 = 네이티브 드라이버 문제처럼 보였지만
+  실은 설정 불일치 문제였음. 정확히 읽는 것이 중요.
+- 우리 앱은 Supabase (REST 도메인) + 소셜 OAuth (팝업) + 서명 URL (data URI)
+  을 함께 쓰므로 CSP를 일부러 넣지 않았다 (실배포에서 실제 요청을 본 뒤
+  connect-src만 좁혀야 함).
