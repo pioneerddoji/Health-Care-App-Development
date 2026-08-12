@@ -10,7 +10,12 @@
 // 복사하므로 이 설정에서 따로 지정할 필요가 없다 — 위치만 맞으면 그대로
 // 적용된다(Workers 정적 자산이 두 파일을 네이티브로 지원).
 {
-  "name": "carenote",
+  // Cloudflare 프로젝트 이름과 반드시 일치해야 한다(Workers & Pages 대시보드에
+  // 표시된 이름). 처음에 앱 슬러그(carenote)로 잘못 넣었다가 대시보드가
+  // "health-care-app-development" 를 기대한다고 경고해 바로잡았다 — 저장소
+  // 이름을 그대로 프로젝트명으로 쓴 것으로 보인다. 이름을 바꾸려면 코드가
+  // 아니라 Cloudflare 대시보드에서 새 프로젝트를 만들어야 한다.
+  "name": "health-care-app-development",
   "compatibility_date": "2026-08-01",
   "assets": {
     "directory": "./dist",
