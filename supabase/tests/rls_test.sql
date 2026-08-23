@@ -199,19 +199,43 @@ select case when (select token_hash ~ '^[0-9a-f]{64}$' from share_links limit 1)
 select case when (select (create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)->>'token')
                          ~ '^[0-9a-f]{64}$')
   then 'PASS 발행 token은 256-bit 난수' else 'FAIL 발행 token 형식' end;
-select case when (select consume_share_link_token(token_hash) is not null from share_links order by created_at limit 1)
-  then 'PASS 유효 token hash는 한 번 소비 가능' else 'FAIL 유효 token hash 접근' end;
-select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at limit 1)
+select case when
+  has_function_privilege('service_role', 'consume_share_link_token(text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'consume_share_link_token(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'consume_share_link_token(text)', 'EXECUTE')
+  then 'PASS consume RPC는 service_role 전용' else 'FAIL consume RPC 권한 범위' end;
+select expect_error($q$select consume_share_link_token(repeat('a', 64))$q$, 'authenticated 직접 consume RPC 우회 차단');
+select set_config('test.share_token_hash', (select token_hash from share_links order by created_at limit 1), false);
+select set_config('test.expired_share_token_hash', (select token_hash from share_links order by created_at offset 1 limit 1), false);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.share_token_hash')) is not null
+  then 'PASS service_role 유효 token hash는 한 번 소비 가능' else 'FAIL service_role 유효 token hash 접근' end;
+select case when consume_share_link_token(current_setting('test.share_token_hash')) is null
   then 'PASS 동시 replay/rate-limit 차단' else 'FAIL replay 허용' end;
 select case when consume_share_link_token(repeat('0', 64)) is null
   then 'PASS 변조 token hash 차단' else 'FAIL 변조 token hash 허용' end;
+-- 동시 거절 20회도 링크당 분당 1개 표본만 남겨 write/retention 증폭을 막는다.
+select count(*) from generate_series(1, 20) cross join lateral (
+  select consume_share_link_token(current_setting('test.share_token_hash') || right(generate_series::text, 0))
+) ignored;
 reset role;
+select case when (select count(*) from share_link_access_audit where outcome = 'rate_limited') = 1
+  then 'PASS 거절 audit은 링크별 분당 1개 표본으로 제한' else 'FAIL 거절 audit write amplification' end;
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+values ((select id from share_links order by created_at limit 1), 'granted', now() - interval '31 days');
+set role service_role;
+select case when purge_share_link_access_audit(interval '30 days') >= 1
+  then 'PASS service_role 감사 보존 purge 실행' else 'FAIL 감사 보존 purge 미실행' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS 만료 audit 보존 purge 확인' else 'FAIL 만료 audit 보존' end;
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.expired_share_token_hash')) is null
+  then 'PASS 만료 token hash 차단' else 'FAIL 만료 token hash 허용' end;
 set role authenticated;
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at offset 1 limit 1)
-  then 'PASS 만료 token hash 차단' else 'FAIL 만료 token hash 허용' end;
 
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from reports) = 1 then 'PASS B(viewer) 레포트 메타 열람 가능' else 'FAIL' end;
@@ -222,8 +246,11 @@ select expect_error($q$select create_secure_share_link('99999999-9999-9999-9999-
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_rows($q$update share_links set revoked_at = now()$q$, 0, 'A 직접 공유 링크 회수 차단(RPC 전용)');
 select expect_ok($q$select revoke_secure_share_link((select id from share_links order by created_at limit 1))$q$, 'A(owner) 공유 링크 회수 RPC');
-select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at limit 1)
+select set_config('test.revoked_share_token_hash', (select token_hash from share_links order by created_at limit 1), false);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.revoked_share_token_hash')) is null
   then 'PASS 회수 후 Edge token 소비 차단' else 'FAIL 회수 뒤 token 재사용' end;
+set role authenticated;
 
 -- ── B 스스로 나가기 / C(외부인) 완전 차단 ──
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'); -- 이하 B 본인 시점으로 복귀
@@ -234,12 +261,32 @@ select case when (select count(*) from children) + (select count(*) from daily_r
 
 -- ── 동의 철회/재동의 (5단계) ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+-- 소비 시점 재검사: trigger/RPC를 우회한 기존 활성 링크도 동의 부재에서는 열리지 않는다.
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '소비 시 동의 재검사용 공유 링크 발행');
+select set_config('test.consent_recheck_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
+reset role;
+update consents set revoked_at = now()
+  where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.consent_recheck_share_token_hash')) is null
+  then 'PASS 소비 시 민감정보 동의 재검사 차단' else 'FAIL 소비 시 동의 우회' end;
+set role authenticated;
+select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, '소비 재검사 후 재동의');
+-- 철회 직전 발행한 링크는 정상 RPC 경로에서 즉시 cascade 회수되어야 한다.
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '철회 cascade 공격 회귀용 공유 링크 발행');
+select set_config('test.consent_revoked_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
 select expect_ok($q$select revoke_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health')$q$, 'A 민감정보 동의 철회');
+select case when (select revoked_at is not null from share_links where token_hash = current_setting('test.consent_revoked_share_token_hash'))
+  then 'PASS 동의 철회는 활성 공유 링크를 cascade 회수' else 'FAIL 동의 철회 cascade 누락' end;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.consent_revoked_share_token_hash')) is null
+  then 'PASS 동의 철회 cascade 후 service_role consume 차단' else 'FAIL 동의 철회 뒤 공유 링크 재사용' end;
+set role authenticated;
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '철회 후 기록 차단');
-select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'A 재동의');
-select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111' and document_type = 'sensitive_health') = 2
+select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'A 최종 재동의');
+select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111' and document_type = 'sensitive_health') = 3
   then 'PASS 재동의는 별도 민감정보 증빙 보존' else 'FAIL 재동의 증빙 누락' end;
-select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111') = 3
+select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111') = 4
   then 'PASS 철회 전 증빙은 재동의 후에도 보존' else 'FAIL 철회 증빙 보존' end;
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '재동의 후 기록 허용');
 
@@ -299,4 +346,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=104
+\echo RLS_SUITE_COMPLETE expected=115

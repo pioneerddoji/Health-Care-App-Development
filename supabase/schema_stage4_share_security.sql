@@ -25,6 +25,8 @@ create index if not exists share_links_active_lookup on share_links(token_hash)
 alter table share_links add column if not exists last_access_at timestamptz;
 alter table share_links add column if not exists access_count integer not null default 0
   check (access_count >= 0);
+-- 거절 폭주를 감사 행/갱신 폭주로 바꾸지 않는다. 링크별 분당 1회만 표본을 남긴다.
+alter table share_links add column if not exists rate_limit_audit_at timestamptz;
 
 -- 원문 token, IP, User-Agent, 수신자 식별자는 보존하지 않는다.
 create table if not exists share_link_access_audit (
@@ -36,6 +38,32 @@ create table if not exists share_link_access_audit (
 create index if not exists share_link_access_audit_retention
   on share_link_access_audit(occurred_at);
 alter table share_link_access_audit enable row level security;
+
+-- 최소 보존: service_role의 예약 작업만 오래된 비식별 접근 표본을 지운다.
+create or replace function purge_share_link_access_audit(
+  p_retention interval default interval '30 days',
+  p_batch_size integer default 1000
+) returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  deleted_count integer;
+begin
+  if p_retention < interval '1 day' or p_retention > interval '90 days'
+     or p_batch_size not between 1 and 1000 then
+    raise exception '허용되지 않는 감사 보존 기간입니다' using errcode = '22023';
+  end if;
+  -- 예약 작업이 반복 호출한다. 한 트랜잭션을 1,000행으로 제한해 WAL/잠금 폭주를 피한다.
+  delete from share_link_access_audit
+  where id in (
+    select id from share_link_access_audit
+    where occurred_at < clock_timestamp() - p_retention
+    order by id
+    limit p_batch_size
+  );
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
 
 -- 기본 스키마의 for-all 정책은 원문/해시를 임의 삽입하거나 만료·회수를 되돌릴 수 있다.
 drop policy if exists "share links by owner" on share_links;
@@ -109,7 +137,8 @@ declare
 begin
   if p_token_hash !~ '^[0-9a-f]{64}$' then return null; end if;
 
-  select l.id, l.revoked_at, l.expires_at, l.last_access_at, r.storage_path
+  select l.id, l.revoked_at, l.expires_at, l.last_access_at, l.rate_limit_audit_at,
+         r.storage_path, has_sensitive_consent(r.child_id) as has_sensitive_consent
   into v_link
   from share_links l
   join reports r on r.id = l.report_id
@@ -118,12 +147,18 @@ begin
   for update of l;
 
   if not found or v_link.revoked_at is not null or v_link.expires_at <= now()
+     or not v_link.has_sensitive_consent
      or v_link.storage_path is null then
     return null;
   end if;
 
   if v_link.last_access_at > clock_timestamp() - interval '1 second' then
-    insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'rate_limited');
+    -- 링크당 분당 한 번만 표본 INSERT한다. 그 외 거절은 추가 DB write를 만들지 않는다.
+    if v_link.rate_limit_audit_at is null
+       or v_link.rate_limit_audit_at <= clock_timestamp() - interval '1 minute' then
+      update share_links set rate_limit_audit_at = clock_timestamp() where id = v_link.id;
+      insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'rate_limited');
+    end if;
     return null;
   end if;
 
@@ -135,12 +170,13 @@ begin
 end;
 $$;
 
--- anonymous REST RPC는 차단한다. consume은 no-JWT Edge Function이 service_role로
--- 호출하며, authenticated 권한은 fresh RLS 회귀 테스트와 앱의 수신자 없는 동일 계약을
--- 위해서만 부여한다. 고엔트로피 token hash 없이는 유용한 결과를 얻을 수 없다.
+-- anonymous/authenticated REST RPC는 모두 차단한다. consume/purge는 no-JWT Edge
+-- Function 또는 예약 보존 작업의 service_role만 호출한다.
 revoke all on function create_secure_share_link(uuid, integer) from public;
 revoke all on function revoke_secure_share_link(uuid) from public;
 revoke all on function consume_share_link_token(text) from public;
+revoke all on function purge_share_link_access_audit(interval, integer) from public;
 grant execute on function create_secure_share_link(uuid, integer) to authenticated;
 grant execute on function revoke_secure_share_link(uuid) to authenticated;
-grant execute on function consume_share_link_token(text) to authenticated, service_role;
+grant execute on function consume_share_link_token(text) to service_role;
+grant execute on function purge_share_link_access_audit(interval, integer) to service_role;
