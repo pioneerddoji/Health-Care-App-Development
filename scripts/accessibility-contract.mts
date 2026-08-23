@@ -53,6 +53,18 @@ const harness = (clock: AccessibilityFocusClock, focused: number[]) => {
 {
   const clock = fakeClock();
   const focused: number[] = [];
+  const { lifecycle, visibility } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.open();
+  lifecycle.onModalShow();
+  ok(visibility.join(',') === 'true' && clock.pending() === 1, 'DateField duplicate open keeps one visible modal and schedules one focus target');
+  clock.flush();
+  ok(focused.join(',') === '101', 'DateField duplicate open delivers one focus target after modal onShow');
+}
+
+{
+  const clock = fakeClock();
+  const focused: number[] = [];
   const { lifecycle } = harness(clock, focused);
   lifecycle.open();
   lifecycle.setDoneTarget(ref(null));

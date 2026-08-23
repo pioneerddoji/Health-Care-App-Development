@@ -2185,3 +2185,18 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - TDD RED: 아직 없는 `createDateFieldModalLifecycle` export를 import한 fixture가 예상대로 `SyntaxError: ... does not provide an export`로 실패했다. GREEN: clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, accessibility **PASS 9 / FAIL 0**, Expo web export **896 modules**, `git diff --check` 통과.
 - exact head Actions run `32672160748`은 Workers build를 포함한 8/8 check가 success이며 `rls-test`도 success다. 이 runner에는 `deno`가 없어 local Deno check를 실행하지 못했고, public GitHub API는 authenticated job-log 다운로드를 403으로 막아 PG16 completion marker 원문은 local에서 재확인하지 못했다. Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-24 — PR #19 DateField 중복 modal open 회귀 고정
+
+**한 일**
+- DateField 실제 lifecycle harness에 `open(); open(); onModalShow();` fixture를 추가했다. duplicate open은 modal visibility state setter를 한 번만 호출하고, done target focus는 한 번만 예약·전달해야 한다.
+
+**결정과 이유**
+- 기존 back-to-back 검증은 open→close→open만 다뤄, `if (open) return` guard가 사라져도 false-green이었다. 같은 modal이 열린 상태에서 다시 trigger가 호출되는 경계를 독립 fixture로 고정했다.
+- 건강정보·token·URL query는 fixture 출력에 포함하지 않았으며, TalkBack/VoiceOver 발화·탐색과 OS picker focus trap은 계속 실기기 `needs-device`/캡틴 승인 gate다.
+
+**검증**
+- Red-capability: guard를 임시로 제거했을 때 새 fixture가 `ACCESSIBILITY_CONTRACT PASS=10 FAIL=1`과 duplicate-open assertion으로 예상대로 실패했다. guard 복원 뒤 GREEN: `npm run test:accessibility` **PASS 11 / FAIL 0**, `npm run test:native-preflight` **PASS 13 / FAIL 0**, `npm run typecheck`, `git diff --check` 통과.
+- 이번 최소 수정은 기존 Draft PR #19 branch에만 반영한다. 이후 전체 clean regression·exact-head CI 재검증은 push 뒤 수행하며, Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.
