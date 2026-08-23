@@ -213,7 +213,7 @@ const base: Repo = {
   },
 
   async resetPassword(email: string, phone: string, newPassword: string): Promise<void> {
-    if (!guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
+    if (email !== accountEmail || !guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
       throw new Error('가입 시 등록한 연락처와 일치하지 않습니다.');
     }
     accountPassword = newPassword;
@@ -221,6 +221,38 @@ const base: Repo = {
 
   async requestPasswordResetEmail(): Promise<void> {
     // 데모: 실제 메일 발송 없음 — 성공으로 처리 (실서버는 supabase가 발송)
+  },
+
+  async completePasswordRecovery(newPassword: string): Promise<void> {
+    accountPassword = newPassword;
+    guardian = null;
+  },
+
+  subscribePasswordRecovery() { return () => {}; },
+  async processAuthLink() {},
+  async getAccountAuthMethods(): Promise<('email' | SocialProvider)[]> {
+    if (accountPassword) return ['email'];
+    if (accountEmail?.startsWith('kakao@')) return ['kakao'];
+    if (accountEmail?.startsWith('google@')) return ['google'];
+    return ['email'];
+  },
+
+  async deleteAccount({ password, socialProvider }): Promise<import('./accountDeletion').AccountDeletionResult> {
+    const expectedSocial = accountEmail?.startsWith('kakao@') ? 'kakao'
+      : accountEmail?.startsWith('google@') ? 'google' : undefined;
+    if (expectedSocial ? socialProvider !== expectedSocial : (!accountPassword || password !== accountPassword)) {
+      throw new Error('현재 비밀번호가 일치하지 않습니다.');
+    }
+    guardian = null;
+    accountPassword = null;
+    accountEmail = null;
+    data.children = []; data.records = []; data.growth = [];
+    data.medications = []; data.vaccinations = []; data.checkups = [];
+    guardians = []; reports = []; shareLinks = [];
+    for (const id of Object.keys(sensitiveConsent)) delete sensitiveConsent[id];
+    subscription = { tier: 'free' };
+    settings = {};
+    return { status: 'deleted', deletedUserId: 'mock-user' };
   },
 
   async signOut() { guardian = null; },
@@ -404,7 +436,7 @@ const base: Repo = {
 
 // 모든 메서드를 감싸: 호출 전 기기 저장본 하이드레이션, 변이 성공 후 자동 저장.
 // 읽기 메서드(loadAll 등)는 저장을 건너뛴다.
-const READ_ONLY = new Set(['loadAll', 'restoreSession', 'listGuardians', 'listShareLinks']);
+const READ_ONLY = new Set(['loadAll', 'restoreSession', 'listGuardians', 'listShareLinks', 'getAccountAuthMethods']);
 
 export const memoryRepo: Repo = {
   mode: 'mock',
@@ -418,5 +450,7 @@ export const memoryRepo: Repo = {
         if (!READ_ONLY.has(k)) persist();
         return result;
       }]),
-  ) as Omit<Repo, 'mode'>),
+  ) as unknown as Omit<Repo, 'mode'>),
+  // 구독은 동기 계약이어야 하므로 async 영속화 프록시를 통과시키지 않는다.
+  subscribePasswordRecovery: base.subscribePasswordRecovery,
 };

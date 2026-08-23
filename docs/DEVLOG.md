@@ -1297,3 +1297,69 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 가입 프로필 보존·복구·탈퇴 라이프사이클 UX (이번 커밋)
+
+**한 일**
+- 이메일 가입 시 보호자 이름·관계·연락처를 Supabase Auth `user_metadata`에 함께 저장하고,
+  이메일 확인 뒤 첫 로그인에서 해당 값을 `profiles` 행으로 완성하도록 했다. 확인 메일 때문에
+  가입 프로필이 이메일 앞부분/기본 관계로 덮이는 문제를 막는다.
+- 비밀번호 재설정 redirect의 recovery 세션을 웹에서 수신하고, 새 비밀번호 설정 화면에서
+  `updateUser` 후 즉시 sign-out 하도록 저장소·Context·Gate를 확장했다.
+- repo에 재인증 기반 `deleteAccount` 계약을 추가하고, 데모에서는 모든 계정·대상자·기록·동의·
+  공유 상태를 제거한다. 설정에 확인 문구와 계정별 재인증 방법을 요구하는 탈퇴 UI 및 실패 상태를
+  추가했다. 운영 Supabase 경로는 클라이언트 관리자 키 없이 `delete-account` Edge Function을
+  호출하며, 함수 미배포·네트워크 실패도 성공처럼 표시하지 않는다.
+
+**Ratchet round-1 보완**
+- 웹 hash 판정 대신 Supabase `PASSWORD_RECOVERY` 이벤트와 RN `Linking`의 웹/native URL을
+  repo→Context 공통 계약으로 연결했다. `carenote://` access/refresh token을 세션으로 교환하고,
+  만료·불완전 링크는 복구 화면의 live-region 오류로 안내한다.
+- 복구 완료의 `signOut()` 오류를 숨기지 않고 성공 UI를 차단한다. 입력/버튼 busy 상태로 중복
+  제출을 막고, 인라인 오류를 스크린리더에 알린 뒤 안전하게 재시도할 수 있게 했다.
+- `delete-account` Edge Function 계약과 typed 완전/부분 실패 응답을 추가했다. 이메일은 비밀번호,
+  Kakao/Google 전용 계정은 같은 공급자로 재인증하며 다른 소셜 계정 충돌을 차단한다. 서버가
+  완전 삭제를 확인한 경우에만 로컬 세션/Context를 정리하고, 부분 실패는 세션을 유지한다.
+
+**결정과 이유**
+- 연락처 등 민감한 프로필 값은 로그나 화면 상태의 임시 pending 객체가 아니라 Auth metadata로
+  제한 저장해 이메일 확인 후에도 신뢰 가능한 첫 세션에서만 profile을 만들도록 했다.
+- 실제 OAuth 설정/실사용자 삭제는 이 작업에서 수행하지 않았다. 서비스 롤은 Edge Function
+  환경에만 두며 클라이언트에는 노출하지 않는다. 함수는 소유 대상자의 Storage를 먼저 지운 뒤
+  Auth 삭제(cascade)를 수행하고 실패 단계를 typed 응답으로 돌려준다.
+
+**검증**
+- `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 162 / FAIL 0** — metadata→profile, PASSWORD_RECOVERY/native URL,
+  만료·불완전 링크, signOut 실패, 소셜 취소/미설정/계정 충돌·재인증 삭제, 삭제 성공/실패/부분 실패,
+  세션·로컬 정리 및 busy 중복 제출 회귀를 직접 test double로 추가.
+- `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과. `git diff --check` 통과.
+
+**다음**
+- 운영 Supabase에는 `delete-account`를 **아직 배포하지 않았다**. 실제 recovery URL의 Supabase
+  allow-list, native 실기기, Kakao/Google OAuth, 실사용자 삭제는 별도 안전 검증이 남아 있다.
+
+---
+
+## 2026-08-23 — Ratchet round-3: 공유 대상자 탈퇴 FK 안전성
+
+**한 일 / 정책**
+- 탈퇴자는 본인이 소유한 대상자와 descendant를 삭제하되, 타인이 소유한 공유 대상자는 보존한다.
+  공유 대상자에서 탈퇴자가 작성한 `daily_records`/`reports`와 해당 정확한 Storage 경로만 완전 삭제하며,
+  작성자를 다른 보호자에게 재귀속하지 않는다.
+- `guardian_child.invited_by`는 작성자 기록이 아닌 nullable 초대 출처 메타데이터이므로 `NULL`로
+  안전하게 해제하고 FK도 `ON DELETE SET NULL`로 명시했다. DB 단계 뒤 `author_id`/`created_by`/
+  `invited_by` 참조가 0인지 확인한 뒤에만 Auth를 삭제한다.
+
+**검증**
+- Deno contract: 공유 대상자 보존·작성 data/Storage 삭제, DB 실패 시 Auth/session 보존·재시도,
+  잔여 profile FK 차단을 검증한다.
+- PostgreSQL 16 RLS fixture에 A-owned descendant, B-owned shared 대상자, A/B 작성 record/report/
+  Storage, A 초대 출처를 추가하고 보존/삭제/FK/Auth/실패 재시도를 검증한다. CI marker:
+  `RLS_PG16_ACCOUNT_DELETION_FIXTURE=enabled`.
+
+**운영 범위**
+- migration·운영 배포·실사용자 삭제·OAuth·main 병합은 수행하지 않았다.

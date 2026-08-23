@@ -22,7 +22,9 @@ export const supabase: SupabaseClient | null =
           storage: sessionStorage,
           autoRefreshToken: true,
           persistSession: true,
-          detectSessionInUrl: false,
+          // 재설정 링크의 recovery 세션을 웹에서 수신한다. OAuth는 supabaseRepo가
+          // openAuthSessionAsync 결과를 명시적으로 setSession 하므로 이 옵션과 충돌하지 않는다.
+          detectSessionInUrl: true,
         },
       })
     : null;

@@ -8,7 +8,9 @@ import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
 import { consentPlanFor } from '../lib/recipient';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
-import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
+import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from './socialAuth';
+import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
+import { parseDeletionResponse, runAccountDeletion } from './accountDeletion';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
@@ -23,6 +25,7 @@ const sb = () => {
 const RECORD_BUCKET = 'record-files';
 const REPORTS_BUCKET = 'reports';
 const SIGNED_URL_TTL = 60 * 60 * 24; // 24시간
+const recoveryListeners = new Set<(error?: string) => void>();
 
 // ── base64 → bytes (RN에는 atob/Buffer가 없음) ──────────────────
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -247,7 +250,13 @@ export const supabaseRepo: Repo = {
   mode: 'supabase',
 
   async signUp(input: SignUpInput): Promise<AuthOutcome> {
-    const { data, error } = await sb().auth.signUp({ email: input.email, password: input.password });
+    // 이메일 확인이 켜져 세션이 즉시 없더라도 user_metadata는 Auth에 보존된다.
+    // 첫 세션에서 아래 signIn이 이를 profiles 행으로 안전하게 완성한다.
+    const { data, error } = await sb().auth.signUp({
+      email: input.email,
+      password: input.password,
+      options: { data: { name: input.name, relationship: input.relationship, phone: input.phone ?? null } },
+    });
     if (error) return { error: error.message };
     if (!data.session || !data.user) return { needsEmailConfirm: true };
     const profile: Profile = {
@@ -265,11 +274,13 @@ export const supabaseRepo: Repo = {
     if (error) return { error: error.message };
     let profile = await fetchProfile(data.user.id);
     if (!profile) {
-      // 이메일 확인 후 첫 로그인 등 프로필이 아직 없는 경우
-      profile = { id: data.user.id, name: email.split('@')[0], relationship: '보호자' };
-      await sb().from('profiles').upsert({
-        id: profile.id, name: profile.name, relationship: profile.relationship,
+      // 이메일 확인 후 첫 로그인: 가입 당시 Auth metadata를 사용한다. 이메일 앞부분으로
+      // 덮어쓰면 이름·관계·연락처가 유실되므로, 값이 없을 때만 보수적 기본값을 쓴다.
+      profile = metadataProfile(data.user, email);
+      const { error: pErr } = await sb().from('profiles').upsert({
+        id: profile.id, name: profile.name, relationship: profile.relationship, phone: profile.phone ?? null,
       });
+      if (pErr) return { error: pErr.message };
     }
     return { profile };
   },
@@ -283,20 +294,20 @@ export const supabaseRepo: Repo = {
     //    supabase-js 의 기본값이라 지금은 맞지만, 클라이언트를 `flowType: 'pkce'`
     //    로 바꾸면 code 만 오므로 exchangeCodeForSession() 으로 교체해야 한다.
     const label = SOCIAL_PROVIDERS[provider].short;
-    const redirectTo = makeRedirectUri(); // 웹: 현재 origin / 앱: carenote:// (app.json scheme)
+    const redirectTo = makeRedirectUri({ scheme: 'carenote' }); // 웹: 현재 origin / 앱: carenote://
     const { data, error } = await sb().auth.signInWithOAuth({
       provider,
       options: { redirectTo, skipBrowserRedirect: true },
     });
-    if (error) return { error: error.message };
+    if (error) return { error: socialAuthFailureMessage(label, { errorCode: error.code, message: error.message }) };
 
     // 웹에서는 팝업이 열린다. 팝업이 우리 주소로 돌아오면 그 안에서 앱 번들이
     // 다시 로드되고, App.tsx 의 WebBrowser.maybeCompleteAuthSession() 이
     // 부모 창에 결과를 넘겨 준다 — 그 호출이 없으면 여기서 영원히 기다린다.
     const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-    if (res.type !== 'success') return { error: `${label} 로그인이 취소되었습니다.` };
+    if (res.type !== 'success') return { error: socialAuthFailureMessage(label, { type: res.type }) };
     const { params, errorCode } = QueryParams.getQueryParams(res.url);
-    if (errorCode) return { error: errorCode };
+    if (errorCode) return { error: socialAuthFailureMessage(label, { errorCode }) };
     if (!params.access_token || !params.refresh_token) {
       return { error: `${label} 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.` };
     }
@@ -327,7 +338,8 @@ export const supabaseRepo: Repo = {
   },
 
   async signOut() {
-    await sb().auth.signOut();
+    const { error } = await sb().auth.signOut();
+    throwIf(error);
   },
 
   async findEmailByPhone(): Promise<string | null> {
@@ -343,10 +355,105 @@ export const supabaseRepo: Repo = {
   },
 
   async requestPasswordResetEmail(email: string): Promise<void> {
-    // 재설정 링크의 도착지(redirectTo)는 Supabase 대시보드의 Site URL 설정을 따른다
-    // — 운영 프로젝트에서 재설정 웹 페이지 호스팅 후 URL 지정 필요 (docs/09 §2-3)
-    const { error } = await sb().auth.resetPasswordForEmail(email);
+    // 웹은 현재 origin, native는 app.json scheme(carenote://)로 되돌아오며,
+    // 두 주소 모두 운영 Supabase Redirect URLs allow-list에 등록해야 한다.
+    const { error } = await sb().auth.resetPasswordForEmail(email, {
+      redirectTo: makeRedirectUri({ scheme: 'carenote' }),
+    });
     throwIf(error);
+  },
+
+  async completePasswordRecovery(newPassword: string): Promise<void> {
+    await completeRecoveryWithClient({
+      updatePassword: async (password) => {
+        const { error } = await sb().auth.updateUser({ password });
+        throwIf(error);
+      },
+      signOut: async () => {
+        const { error } = await sb().auth.signOut();
+        throwIf(error);
+      },
+    }, newPassword);
+  },
+
+  subscribePasswordRecovery(listener) {
+    recoveryListeners.add(listener);
+    const { data } = sb().auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') listener();
+    });
+    return () => { recoveryListeners.delete(listener); data.subscription.unsubscribe(); };
+  },
+
+  async processAuthLink(url: string): Promise<void> {
+    let emittedError: string | undefined;
+    const outcome = await processRecoveryUrl({
+      setSession: async (tokens) => { const { error } = await sb().auth.setSession(tokens); throwIf(error); },
+      // onAuthStateChange가 setSession을 SIGNED_IN으로 분류할 수 있는 네이티브에서도
+      // 링크의 type=recovery를 잃지 않도록 명시 이벤트를 보완한다.
+      notifyRecovery: () => {},
+    }, url);
+    if (outcome.status === 'error') emittedError = outcome.message;
+    if (outcome.status !== 'ignored') {
+      // 공통 이벤트는 별도의 짧은 구독으로 전달한다.
+      recoveryListeners.forEach((listener) => listener(emittedError));
+    }
+  },
+
+  async getAccountAuthMethods(): Promise<('email' | SocialProvider)[]> {
+    const { data } = await sb().auth.getUser();
+    if (!data.user) throw new Error('다시 로그인해 주세요.');
+    const providers = new Set<string>([
+      ...(Array.isArray(data.user.app_metadata?.providers) ? data.user.app_metadata.providers : []),
+      ...(data.user.identities ?? []).map((identity) => identity.provider),
+    ]);
+    const methods: ('email' | SocialProvider)[] = [];
+    if (providers.has('email')) methods.push('email');
+    if (providers.has('kakao')) methods.push('kakao');
+    if (providers.has('google')) methods.push('google');
+    return methods.length ? methods : (data.user.email ? ['email'] : []);
+  },
+
+  async deleteAccount({ password, socialProvider }) {
+    const methods = await supabaseRepo.getAccountAuthMethods();
+    return runAccountDeletion({
+      reauthenticate: async () => {
+        const { data } = await sb().auth.getUser();
+        if (!data.user) throw new Error('다시 로그인해 주세요.');
+        const originalUserId = data.user.id;
+        if (socialProvider) {
+          if (!methods.includes(socialProvider)) throw new Error('이 계정에 연결되지 않은 로그인 방법입니다.');
+          await reauthenticateSocialPreservingSession({
+            getSession: async () => (await sb().auth.getSession()).data.session,
+            beginSocial: async () => {
+              const outcome = await supabaseRepo.signInWithSocial(socialProvider);
+              return { userId: outcome.profile?.id, error: outcome.error };
+            },
+            restoreSession: async (session) => {
+              const { error } = await sb().auth.setSession({
+                access_token: session.access_token, refresh_token: session.refresh_token,
+              });
+              throwIf(error);
+            },
+          }, originalUserId);
+          return;
+        }
+        if (!methods.includes('email') || !data.user.email) {
+          throw new Error('카카오 또는 구글로 다시 인증해 주세요.');
+        }
+        if (!password) throw new Error('현재 비밀번호를 입력해 주세요.');
+        const { error } = await sb().auth.signInWithPassword({ email: data.user.email, password });
+        if (error) throw new Error('현재 비밀번호가 일치하지 않습니다.');
+      },
+      invoke: async () => {
+        const { data, error } = await sb().functions.invoke('delete-account', { body: { confirmation: 'delete-my-account' } });
+        if (error) throw new Error(`계정 삭제 서버 요청 실패: ${error.message}`);
+        return parseDeletionResponse(data);
+      },
+      clearSession: async () => {
+        const { error } = await sb().auth.signOut({ scope: 'local' });
+        throwIf(error);
+      },
+    });
   },
 
   async restoreSession(): Promise<Profile | null> {

@@ -7,6 +7,7 @@ import type {
 } from '../types';
 import { isMockMode } from '../lib/supabase';
 import type { SocialProvider } from './socialAuth';
+import type { AccountDeletionResult } from './accountDeletion';
 import { memoryRepo } from './memoryRepo';
 import { supabaseRepo } from './supabaseRepo';
 
@@ -64,6 +65,15 @@ export interface Repo {
   /** 비밀번호 재설정 메일 발송 — 문자 인증이 꺼진 빌드(smsMode='off')의 대체 경로.
    *  계정 존재 여부를 노출하지 않기 위해 미가입 이메일도 성공으로 처리한다 */
   requestPasswordResetEmail(email: string): Promise<void>;
+  /** 복구 링크가 만든 제한 세션에서 새 비밀번호를 설정하고 세션을 정리한다. */
+  completePasswordRecovery(newPassword: string): Promise<void>;
+  /** Supabase PASSWORD_RECOVERY 이벤트와 네이티브 deep link를 공통 상태로 전달한다. */
+  subscribePasswordRecovery(listener: (error?: string) => void): () => void;
+  processAuthLink(url: string): Promise<void>;
+  /** 현재 계정에서 실제로 사용할 수 있는 재인증 방법. */
+  getAccountAuthMethods(): Promise<('email' | SocialProvider)[]>;
+  /** 재인증 뒤 Edge Function이 반환한 완전/부분 삭제 결과. */
+  deleteAccount(input: { password?: string; socialProvider?: SocialProvider }): Promise<AccountDeletionResult>;
 
   /** 로그인한 보호자가 접근 가능한 전체 데이터 로드 */
   loadAll(): Promise<AllData>;
