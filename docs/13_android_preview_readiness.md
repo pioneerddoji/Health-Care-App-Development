@@ -1,6 +1,6 @@
 # Android 내부 preview 재현성·스토어 진입 증거
 
-> 기준일: 2026-08-23. 이 문서는 Android preview APK를 실제로 생성·배포하거나 스토어에 업로드한 기록이 아니다. P0 통합 Draft PR #9의 불변 head에서 수행한 **비밀 없는 사전검사와 재현 검증**을 보관한다.
+> 기준일: 2026-08-24 KST. 이 문서는 Android preview APK를 실제로 생성·배포하거나 스토어에 업로드한 기록이 아니다. P0/P1 통합 Draft PR #9의 승인된 current head에서 수행한 **비밀 없는 사전검사와 재현 검증**을 보관한다.
 
 ## 1. 승인된 기준점
 
@@ -8,12 +8,12 @@
 |---|---|---|
 | 기준 Draft PR | [#9](https://github.com/pioneerddoji/Health-Care-App-Development/pull/9), open/draft | GitHub REST API |
 | base | `chore/git-development-workflow` @ `24a485870f4d3f4d8469c6da9bf04bc013338828` | GitHub REST API + `git merge-base --is-ancestor` |
-| head | `fix/p0-integrate-approved-stacks` @ `4094286315b9495ac77ce12ccab751fe92d0ac35` | GitHub REST API + `git ls-remote` |
+| head | `fix/p0-integrate-approved-stacks` @ `ab6ff8751b6cad89e8d67d494118ceb6dacc9f25` | GitHub REST API + `git ls-remote` |
 | Android evidence branch | `test/p1-android-preview-readiness` | fast-forward only to the above head; arbitrary `main` merge 없음 |
 
-GitHub REST API로 위 head의 현재 check-run 6개를 대조했으며 `Workers Builds`, `e2e-tests`, `gating-tests`, `edge-contracts`, `typecheck`, `rls-test`가 모두 `completed/success`였다. 이 문서의 후속 로컬 검증도 동일 SHA의 clean checkout에서 실행했다.
+GitHub REST API로 위 head의 현재 check-run 6개를 대조했으며 `Workers Builds`, `e2e-tests`, `gating-tests`, `edge-contracts`, `typecheck`, `rls-test`가 모두 `completed/success`였다. P1 수정 뒤의 별도 ratchet 재검토도 이 exact SHA에서 승인됐다. 이 문서의 후속 로컬 검증은 위 head를 조상으로 하는 evidence branch에서 lockfile 기반 clean install 후 실행했다.
 
-> **독립 승인 보류:** ratchet의 changes-request 뒤 반영된 현재 head에는 새 ratchet 재검토 승인 evidence가 아직 없다. 별도 재검토 카드가 queue된 상태이므로, 이 문서는 안전한 정적/로컬 증거일 뿐 Android credential·비용·업로드 경계를 여는 승인 근거가 아니다.
+> **경계 유지:** current head의 독립 ratchet 재검토는 통과했지만, 이 문서는 여전히 안전한 정적/로컬 증거일 뿐이다. 아래 캡틴 승인 게이트 전에는 Android credential·비용·업로드 경계를 열지 않는다.
 
 ## 2. clean checkout 재현 결과
 
@@ -22,12 +22,12 @@ GitHub REST API로 위 head의 현재 check-run 6개를 대조했으며 `Workers
 | 검증 | 결과 |
 |---|---|
 | `npx tsc --noEmit` | 통과 |
-| `npm run test:e2e` | `PASS 171 / FAIL 0` |
+| `npm run test:e2e` | `PASS 174 / FAIL 0` |
 | `npm run test:gating` | `PASS 41 / FAIL 0` |
-| `npx expo export --platform web --output-dir dist-web` | 통과; web bundle 876 modules, output `dist-web` |
+| `npx expo export --platform web --output-dir dist-web` | 통과; web bundle 891 modules, output `dist-web` |
 | `git diff --check` | 통과 |
 
-로컬 runner에는 `deno`와 `psql`이 없고 Docker daemon도 실행 중이 아니므로 Deno Edge contract와 fresh PostgreSQL 16 RLS를 이 환경에서 재실행하지 못했다. 대신 동일 immutable head의 GitHub `edge-contracts`와 `rls-test` check-run 성공을 API로 대조했다. PR #9 handoff의 해당 CI 증거는 Edge contracts `PASS 10 / FAIL 0`, RLS `PASS 172/172, FAIL 0, COMPLETION 1`이며, CI 정의는 `.github/workflows/ci.yml:60-66`과 `:86-99`에서 기대값 `172`·완료 marker를 fail-closed로 확인한다.
+`npx --yes deno`로 share-report/billing-webhook/delete-account contracts **PASS 11 / FAIL 0** 및 세 Edge Function `deno check`를 로컬 재실행했다. 이 runner에는 `psql`이 없고 Docker daemon도 실행 중이 아니므로 fresh PostgreSQL 16 RLS는 재실행하지 못했다. 대신 동일 immutable head의 GitHub `rls-test` check-run 성공을 API로 대조했다. PR #9 handoff의 해당 CI 증거는 RLS `PASS 172/172, FAIL 0, COMPLETION 1`이며, CI 정의는 `.github/workflows/ci.yml:86-99`에서 기대값 `172`·완료 marker를 fail-closed로 확인한다.
 
 ## 3. Android preview 사전검사
 
@@ -48,7 +48,7 @@ GitHub REST API로 위 head의 현재 check-run 6개를 대조했으며 `Workers
 아래 항목이 모두 승인·완료될 때까지 production AAB, Play Console 업로드, `eas submit`, EAS credential/secret 생성은 금지한다.
 
 1. 최종 Android package/bundle ID 확정 (`app.carenote.mvp` 자리표시 교체) 및 첫 업로드 불변성 승인.
-2. 현재 head에 대한 독립 ratchet 재검토 PASS. 이 선행 승인이 없으면 Android credential·비용·업로드 작업을 시작하지 않는다.
+2. 현재 head에 대한 독립 ratchet 재검토 PASS는 확보됐다. 단, 이 항목만으로 Android credential·비용·업로드 작업을 시작할 수 없으며 나머지 게이트도 모두 필요하다.
 3. Expo/EAS 및 Google Play 계정, 서명·Play App Signing 정책의 계정 소유자 승인. 현재는 EAS 인증 정보가 없다.
 4. 실제 운영 Supabase 연결·migration·Edge Function 배포와 `npm run verify:supabase` 전부 PASS. 이 작업에서는 운영 연결·migration을 수행하지 않았다.
 5. 개인정보처리방침·이용약관 법률 검토, 외부 계정 삭제 URL 호스팅, Data safety/Health apps/대상 연령 선언 및 스토어 메타데이터 승인.

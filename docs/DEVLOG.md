@@ -1563,3 +1563,25 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - 별도 ratchet 재검토 PASS 및 캡틴이 bundle ID, 계정/credential 정책, 운영 Supabase, 법률/스토어 metadata, 브랜딩 자산을 승인한 뒤에만 별도 카드에서 내부 preview APK와 실기기 체크리스트를 수행한다. production AAB·스토어 업로드·main 병합은 계속 금지한다.
+
+---
+
+## 2026-08-24 — Android preview evidence를 P1 승인 current head로 재현·갱신
+
+**한 일**
+- Android evidence branch를 P1 통합 Draft PR #9의 승인된 current head `ab6ff8751b6cad89e8d67d494118ceb6dacc9f25` 위로 rebase했다. 기존 Android 증거 문서와 upstream P1 DEVLOG 엔트리의 충돌은 두 기록을 모두 보존하도록 해소했다.
+- GitHub REST API로 Draft PR #9의 base/head/SHA와 6개 current-head check-run을 재대조했고, P1 수정에 대한 별도 ratchet 재검토 승인도 확인했다.
+- lockfile 기반 `npm ci` 뒤 TypeScript·E2E·구독 게이팅·전체 Edge contracts/check·Expo web export를 최신 head에서 재실행하고, 공개 Expo config와 EAS preview profile을 비밀 없이 검토했다.
+- EAS Android preview local/non-interactive preflight는 `EXPO_TOKEN`을 제거한 상태로 실행했으며 Expo 계정/토큰 요구 시점에 즉시 종료했다. credential, keystore, 외부 build, APK, 업로드는 생성하지 않았다.
+
+**결정과 이유**
+- P1 수정 후 independent approval과 current-head CI가 확보되어 기존 static evidence의 기준점을 업데이트했다. 다만 bundle ID, 계정/서명, 운영 Supabase, 법률·스토어 metadata 등 캡틴 승인 게이트는 별개이므로 preview APK·비용·업로드 경계는 계속 닫는다.
+- local fresh PostgreSQL 16은 `psql` 부재 및 Docker daemon 비가용으로 실행하지 않고, fail-closed `rls-test`의 current-head GitHub 성공 및 `PASS 172/172, FAIL 0, COMPLETION 1` handoff를 근거로 보존했다.
+
+**검증**
+- `npm ci`, `npx tsc --noEmit`, `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 11 / FAIL 0**, delete-account/billing-webhook/share-report `deno check` 통과, `npx expo export --platform web --output-dir dist-web` 통과 (891 modules), `git diff --check` 통과.
+- GitHub REST API: PR #9 OPEN/DRAFT, base `chore/git-development-workflow`, head `fix/p0-integrate-approved-stacks` @ `ab6ff8751b6cad89e8d67d494118ceb6dacc9f25`; Workers Builds/e2e/gating/edge-contracts/rls/typecheck 모두 `completed/success`.
+
+**다음**
+- 이 evidence branch의 remote checkpoint/Draft PR current-head CI를 확보한 뒤 독립 Android review 카드가 검토한다. reviewer 승인과 모든 캡틴 게이트가 충족되기 전 production AAB·store upload·credential/secret 생성·main 병합은 금지한다.
