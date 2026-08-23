@@ -234,6 +234,9 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(true); // 기존 계정은 가입 시 동의 완료
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      // sign-out invalidation 이후에는 새 인증의 bootstrap 성공 전까지 foreground
+      // refresh를 열지 않는다. rearm은 다음 AppState resume부터만 적용된다.
+      lifecycleRef.current?.rearm();
       return null;
     },
 
@@ -244,6 +247,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(!out.isNewUser); // 첫 진입은 동의 화면을 거친다
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 
@@ -255,6 +259,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(false); // 신규 가입은 동의 화면을 거친다
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 

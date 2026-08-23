@@ -157,6 +157,38 @@ const activeClient = (overrides: Partial<ResumeClient> = {}): ResumeClient => ({
  }
 
  {
+ let releaseOldSession!: () => void;
+ let restores = 0;
+ const oldSessionPending = new Promise<void>((resolve) => { releaseOldSession = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   restoreSession: async () => {
+     restores++;
+     if (restores === 1) await oldSessionPending;
+     return profile;
+   },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.start();
+ await flush();
+ lifecycle.invalidate();
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ releaseOldSession();
+ await flush(); await flush();
+ lifecycle.rearm();
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ await flush();
+ ok(restores === 2 && states.join(',') === 'pending,invalidated,pending,confirmed', 're-arm after a successful new authentication keeps old-session resume blocked and restores later foreground refresh');
+ lifecycle.dispose();
+ }
+
+ {
  let denied = true;
  const states: string[] = [];
  const lifecycle = new AppResumeLifecycle(activeClient({

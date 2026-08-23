@@ -110,6 +110,18 @@ export class AppResumeLifecycle {
     this.callbacks.onInvalidated();
   }
 
+  /**
+   * 새 인증이 데이터 bootstrap까지 성공한 뒤에만 다음 foreground refresh를 허용한다.
+   * invalidate 이전 generation은 계속 폐기하므로 sign-out/recovery 대기 중 이전 세션을
+   * 재확인할 수 없고, 이 메서드는 자체 refresh를 시작하지 않는다.
+   */
+  rearm(): void {
+    if (this.disposed) return;
+    this.invalidated = false;
+    this.generation++;
+    this.refreshQueued = false;
+  }
+
   private async refresh(): Promise<void> {
     const generation = this.generation;
     this.refreshing = true;

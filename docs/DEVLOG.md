@@ -2101,3 +2101,33 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   PostgreSQL 16 RLS suite는 local 성공으로 주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store,
   signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data, 외부 메시지,
   DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 새 인증 뒤 AppState lifecycle 재가동 보완
+
+**한 일**
+- `AppResumeLifecycle.rearm()`을 추가했다. `invalidate()`는 이전 generation과 queued refresh를 계속
+  폐기하며, `rearm()`은 자체 refresh 없이 새 generation에서 이후 foreground resume만 다시 허용한다.
+- 이메일·소셜 로그인과 이메일 확인 불필요 가입은 `repo` 인증과 `loadAll()` data bootstrap이 모두 성공한 뒤에만
+  lifecycle을 re-arm한다. 따라서 sign-out/recovery 대기 중에는 과거 세션 확인이 막히고, 새 인증 뒤에는
+  AppProvider 재마운트 없이 일반 background→active refresh가 복구된다.
+- lifecycle contract에 invalidate → old-session resume 차단 → 새 인증 re-arm → 이후 resume confirm의
+  결정론 fixture를 추가했다.
+
+**결정과 이유**
+- AppProvider는 프로세스 동안 유지되므로 terminal invalidation만 두면 로그아웃 뒤 새 로그인도 lifecycle을
+  영구적으로 잃는다. re-arm 경계를 인증 결과만이 아니라 데이터 bootstrap 성공 뒤로 늦춰, 대기 중인
+  sign-out의 이전 세션을 새 generation으로 확인하는 race를 열지 않는다.
+- password-recovery 완료는 복구 세션을 종료하고 재로그인을 요구하는 흐름이므로 re-arm하지 않는다.
+
+**검증**
+- TDD RED: `rearm` 부재에서 새 fixture가 `TypeError: lifecycle.rearm is not a function`으로 실패했다.
+  GREEN: `npm run test:app-resume-lifecycle` **PASS 14 / FAIL 0**, `npm run typecheck`, analytics
+  **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**, native preflight **PASS 12 / FAIL 0**, Expo web export **PASS 894 modules**,
+  Edge Deno contracts **PASS 10 / FAIL 0**와 세 Edge Function `deno check`, `git diff --check` 통과.
+- `npm ci`는 성공했다(기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건).
+  이 runner에는 `psql`이 없고 Docker daemon 연결도 불가하여 fresh PostgreSQL 16 RLS suite는 local 성공으로
+  주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영
+  연결, production migration/data, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
