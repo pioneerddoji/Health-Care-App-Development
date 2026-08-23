@@ -1,0 +1,7 @@
+export const recoverySubmitDisabled = (state: {
+  busy: boolean; password: string; confirm: string; error: boolean; mismatch: boolean;
+}): boolean => state.busy || !state.password || !state.confirm || state.error || state.mismatch;
+
+export const deletionSubmitDisabled = (state: {
+  busy: boolean; phrase: string; methodReady: boolean;
+}): boolean => state.busy || state.phrase !== '탈퇴합니다' || !state.methodReady;

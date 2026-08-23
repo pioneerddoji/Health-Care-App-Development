@@ -3,6 +3,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from 'react';
+import { Linking } from 'react-native';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
@@ -10,6 +11,7 @@ import type {
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
 import type { SocialProvider } from '../services/socialAuth';
+import type { AccountDeletionResult } from '../services/accountDeletion';
 import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
 import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
@@ -61,7 +63,10 @@ interface AppState {
   resetPassword: (email: string, phone: string, newPassword: string) => Promise<void>;
   requestPasswordResetEmail: (email: string) => Promise<void>;
   completePasswordRecovery: (newPassword: string) => Promise<void>;
-  deleteAccount: (input: { password: string }) => Promise<void>;
+  recoveryRequest: { active: boolean; error?: string };
+  dismissRecovery: () => void;
+  getAccountAuthMethods: () => Promise<('email' | SocialProvider)[]>;
+  deleteAccount: (input: { password?: string; socialProvider?: SocialProvider }) => Promise<AccountDeletionResult>;
 
   selectChild: (id: string) => void;
   createChild: (input: ChildInput) => Promise<Child>;
@@ -106,6 +111,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [sensitiveConsent, setSensitiveConsent] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription>({ tier: 'free' });
   const [settings, setSettings] = useState<UserSettings>({});
+  const [recoveryRequest, setRecoveryRequest] = useState<{ active: boolean; error?: string }>({ active: false });
 
   const loadAll = useCallback(async () => {
     const all = await repo.loadAll();
@@ -139,6 +145,19 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       }
     })();
   }, [loadAll]);
+
+  useEffect(() => {
+    const unsubscribe = repo.subscribePasswordRecovery((error) =>
+      setRecoveryRequest({ active: true, error }));
+    const handleUrl = ({ url }: { url: string }) => {
+      repo.processAuthLink(url).catch((error) => setRecoveryRequest({
+        active: true, error: error instanceof Error ? error.message : String(error),
+      }));
+    };
+    const subscription = Linking.addEventListener('url', handleUrl);
+    Linking.getInitialURL().then((url) => { if (url) handleUrl({ url }); }).catch(() => {});
+    return () => { unsubscribe(); subscription.remove(); };
+  }, []);
 
   const value = useMemo<AppState>(() => ({
     mode: repo.mode,
@@ -229,12 +248,19 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     completePasswordRecovery: async (newPassword) => {
       await repo.completePasswordRecovery(newPassword);
       setGuardian(null); setConsented(false);
+      setRecoveryRequest({ active: false });
     },
+    recoveryRequest,
+    dismissRecovery: () => setRecoveryRequest({ active: false }),
+    getAccountAuthMethods: () => repo.getAccountAuthMethods(),
     deleteAccount: async (input) => {
-      await repo.deleteAccount(input);
-      setGuardian(null); setConsented(false);
-      setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
-      setVaccinations([]); setCheckups([]); setSelectedChildId(null); setSettings({});
+      const result = await repo.deleteAccount(input);
+      if (result.status === 'deleted') {
+        setGuardian(null); setConsented(false);
+        setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+        setVaccinations([]); setCheckups([]); setSelectedChildId(null); setSettings({});
+      }
+      return result;
     },
 
     selectChild: setSelectedChildId,
@@ -334,7 +360,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
        vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription,
-       settings, loadAll]);
+       settings, recoveryRequest, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;
 };

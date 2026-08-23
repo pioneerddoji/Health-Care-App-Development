@@ -9,6 +9,8 @@ import { Screen, Card, Button, Row, Muted, Section, Chip, Field, tokens } from '
 import { formatShort } from '../../lib/date';
 import { TIER_META } from '../../constants/subscription';
 import type { ChildGuardian, ShareLinkInfo } from '../../types';
+import { SOCIAL_PROVIDERS, type SocialProvider } from '../../services/socialAuth';
+import { deletionSubmitDisabled } from '../../services/authUxState';
 
 const ROLE_LABEL = { owner: '소유자', editor: '편집자', viewer: '열람자' } as const;
 
@@ -29,7 +31,7 @@ export const SettingsScreen = () => {
     roleOf, listGuardians, inviteGuardian, updateGuardianRole, removeGuardian,
     listShareLinks, revokeShareLink,
     consentActive, revokeSensitiveConsent, grantSensitiveConsent,
-    subscription, ent, deleteAccount,
+    subscription, ent, deleteAccount, getAccountAuthMethods,
   } = useApp();
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -42,6 +44,8 @@ export const SettingsScreen = () => {
   const [deletePhrase, setDeletePhrase] = useState('');
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteMethods, setDeleteMethods] = useState<('email' | SocialProvider)[]>([]);
+  const [deleteError, setDeleteError] = useState('');
 
   const isOwner = selectedChild ? roleOf(selectedChild.id) === 'owner' : false;
   const coGuardianCount = guardians.filter((g) => g.role !== 'owner').length;
@@ -137,15 +141,26 @@ export const SettingsScreen = () => {
     );
   };
 
-  const removeAccount = async () => {
+  const openAccountDeletion = async () => {
+    setDeleteAccountOpen(true); setDeleteError('');
+    try { setDeleteMethods(await getAccountAuthMethods()); }
+    catch (e) { setDeleteError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const removeAccount = async (socialProvider?: SocialProvider) => {
     if (deletePhrase !== '탈퇴합니다') return;
+    if (deleteBusy) return;
     setDeleteBusy(true);
+    setDeleteError('');
     try {
-      await deleteAccount({ password: deletePassword });
-      Alert.alert('탈퇴 완료', '계정과 이 계정의 대상자 데이터 삭제가 완료되었습니다.');
+      const result = await deleteAccount({ password: deletePassword || undefined, socialProvider });
+      if (result.status === 'deleted') {
+        Alert.alert('탈퇴 완료', '계정과 이 계정의 대상자 데이터 삭제가 완료되었습니다.');
+      } else {
+        setDeleteError(`일부 삭제 단계가 완료되지 않았습니다 (${result.failed.map((f) => `${f.step}: ${f.message}`).join(', ')}). 세션은 유지했습니다. 안전하게 다시 시도해 주세요.`);
+      }
     } catch (e) {
-      // 서버 계약 미배포·네트워크 오류도 세션을 지운 것으로 오인하지 않도록 명시한다.
-      alertError(e);
+      setDeleteError(e instanceof Error ? e.message : String(e));
     } finally { setDeleteBusy(false); }
   };
 
@@ -307,20 +322,27 @@ export const SettingsScreen = () => {
         <Section title="계정 탈퇴">
           <Card>
             <Text style={[styles.body, { color: tokens.danger }]}>계정과 모든 대상자·건강 기록·사진·레포트가 영구 삭제됩니다.</Text>
-            <Muted>삭제 전 현재 비밀번호로 재인증합니다. 진행 중 일부 단계가 실패하면 완료로 표시하지 않고 오류를 안내합니다.</Muted>
+            <Muted>삭제 전 이메일 계정은 현재 비밀번호, 소셜 전용 계정은 해당 공급자로 재인증합니다. 일부 단계가 실패하면 세션을 유지하고 재시도할 수 있습니다.</Muted>
             {!deleteAccountOpen ? (
-              <Button label="계정 탈퇴 진행" variant="danger" onPress={() => setDeleteAccountOpen(true)} />
+              <Button label="계정 탈퇴 진행" variant="danger" onPress={openAccountDeletion} />
             ) : (
               <>
                 <Field label="확인 문구" value={deletePhrase} onChangeText={setDeletePhrase}
                   placeholder="탈퇴합니다" autoCapitalize="none" />
-                <Field label="현재 비밀번호" value={deletePassword} onChangeText={setDeletePassword}
-                  secureTextEntry />
+                {deleteMethods.includes('email') && <Field label="계정 삭제 재인증용 현재 비밀번호"
+                  value={deletePassword} onChangeText={setDeletePassword} secureTextEntry editable={!deleteBusy} />}
+                {deleteError ? <Text accessible accessibilityRole="alert" accessibilityLiveRegion="assertive"
+                  style={styles.deleteError}>{deleteError}</Text> : null}
                 <Button label={deleteBusy ? '삭제 요청 중…' : '계정과 데이터 영구 삭제'} variant="danger"
-                  onPress={removeAccount}
-                  disabled={deleteBusy || deletePhrase !== '탈퇴합니다' || !deletePassword} />
+                  onPress={() => removeAccount()}
+                  disabled={deletionSubmitDisabled({ busy: deleteBusy, phrase: deletePhrase,
+                    methodReady: deleteMethods.includes('email') && !!deletePassword })} />
+                {deleteMethods.filter((m): m is SocialProvider => m !== 'email').map((provider) =>
+                  <Button key={provider} label={`${SOCIAL_PROVIDERS[provider].short}로 재인증 후 영구 삭제`}
+                    variant="danger" onPress={() => removeAccount(provider)}
+                    disabled={deletionSubmitDisabled({ busy: deleteBusy, phrase: deletePhrase, methodReady: true })} />)}
                 <Button label="취소" variant="ghost" onPress={() => {
-                  setDeleteAccountOpen(false); setDeletePhrase(''); setDeletePassword('');
+                  setDeleteAccountOpen(false); setDeletePhrase(''); setDeletePassword(''); setDeleteError('');
                 }} disabled={deleteBusy} />
               </>
             )}
@@ -348,4 +370,5 @@ const styles = StyleSheet.create({
   linkRow: {
     paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: tokens.border,
   },
+  deleteError: { color: tokens.danger, fontSize: 13, marginVertical: 8 },
 });

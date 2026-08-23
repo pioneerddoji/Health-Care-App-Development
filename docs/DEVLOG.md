@@ -1309,23 +1309,35 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - 비밀번호 재설정 redirect의 recovery 세션을 웹에서 수신하고, 새 비밀번호 설정 화면에서
   `updateUser` 후 즉시 sign-out 하도록 저장소·Context·Gate를 확장했다.
 - repo에 재인증 기반 `deleteAccount` 계약을 추가하고, 데모에서는 모든 계정·대상자·기록·동의·
-  공유 상태를 제거한다. 설정에 확인 문구+현재 비밀번호를 요구하는 계정 탈퇴 UI와 실패 상태를
-  추가했다. 운영 Supabase 경로는 관리자 키/클라이언트 Auth 삭제를 하지 않고, 서버 계약이
-  배포되기 전에는 명시적으로 중단한다.
+  공유 상태를 제거한다. 설정에 확인 문구와 계정별 재인증 방법을 요구하는 탈퇴 UI 및 실패 상태를
+  추가했다. 운영 Supabase 경로는 클라이언트 관리자 키 없이 `delete-account` Edge Function을
+  호출하며, 함수 미배포·네트워크 실패도 성공처럼 표시하지 않는다.
+
+**Ratchet round-1 보완**
+- 웹 hash 판정 대신 Supabase `PASSWORD_RECOVERY` 이벤트와 RN `Linking`의 웹/native URL을
+  repo→Context 공통 계약으로 연결했다. `carenote://` access/refresh token을 세션으로 교환하고,
+  만료·불완전 링크는 복구 화면의 live-region 오류로 안내한다.
+- 복구 완료의 `signOut()` 오류를 숨기지 않고 성공 UI를 차단한다. 입력/버튼 busy 상태로 중복
+  제출을 막고, 인라인 오류를 스크린리더에 알린 뒤 안전하게 재시도할 수 있게 했다.
+- `delete-account` Edge Function 계약과 typed 완전/부분 실패 응답을 추가했다. 이메일은 비밀번호,
+  Kakao/Google 전용 계정은 같은 공급자로 재인증하며 다른 소셜 계정 충돌을 차단한다. 서버가
+  완전 삭제를 확인한 경우에만 로컬 세션/Context를 정리하고, 부분 실패는 세션을 유지한다.
 
 **결정과 이유**
 - 연락처 등 민감한 프로필 값은 로그나 화면 상태의 임시 pending 객체가 아니라 Auth metadata로
   제한 저장해 이메일 확인 후에도 신뢰 가능한 첫 세션에서만 profile을 만들도록 했다.
-- 실제 OAuth 설정/실사용자 삭제는 이 작업에서 수행하지 않았다. 계정 삭제는 서비스 롤 backend
-  계약이 필요하므로 클라이언트는 재인증까지만 수행하고, 미배포 상태를 성공처럼 표시하지 않는다.
+- 실제 OAuth 설정/실사용자 삭제는 이 작업에서 수행하지 않았다. 서비스 롤은 Edge Function
+  환경에만 두며 클라이언트에는 노출하지 않는다. 함수는 소유 대상자의 Storage를 먼저 지운 뒤
+  Auth 삭제(cascade)를 수행하고 실패 단계를 typed 응답으로 돌려준다.
 
 **검증**
 - `npm run typecheck` 통과.
-- `npm run test:e2e` **PASS 141 / FAIL 0** — 가입 프로필 보존, 복구 비밀번호 로그인,
-  탈퇴 후 세션 및 로컬 대상자 데이터 제거 회귀를 추가.
+- `npm run test:e2e` **PASS 162 / FAIL 0** — metadata→profile, PASSWORD_RECOVERY/native URL,
+  만료·불완전 링크, signOut 실패, 소셜 취소/미설정/계정 충돌·재인증 삭제, 삭제 성공/실패/부분 실패,
+  세션·로컬 정리 및 busy 중복 제출 회귀를 직접 test double로 추가.
 - `npm run test:gating` **PASS 41 / FAIL 0**.
-- `npx expo export --platform web --output-dir dist-web` 통과.
+- `npm run build:web` 통과. `git diff --check` 통과.
 
 **다음**
-- 운영 Supabase에 계정 삭제 Edge Function/서비스 롤 계약을 별도 배포하고, 실제 recovery
-  redirect URL(웹·`carenote://`) 및 카카오·Google provider 콘솔을 실계정으로 점검한다.
+- 운영 Supabase에는 `delete-account`를 **아직 배포하지 않았다**. 실제 recovery URL의 Supabase
+  allow-list, native 실기기, Kakao/Google OAuth, 실사용자 삭제는 별도 안전 검증이 남아 있다.

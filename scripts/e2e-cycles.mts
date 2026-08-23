@@ -11,6 +11,14 @@ import { buildReportHtml } from '../src/services/reportHtml';
 import { today, daysAgo } from '../src/lib/date';
 import { consentPlanFor, showsChildFeatures } from '../src/lib/recipient';
 import { recordTypesFor } from '../src/constants/recordTypes';
+import {
+  completeRecoveryWithClient, metadataProfile, processRecoveryUrl,
+} from '../src/services/authLifecycle';
+import {
+  parseDeletionResponse, runAccountDeletion,
+} from '../src/services/accountDeletion';
+import { socialAuthFailureMessage } from '../src/services/socialAuth';
+import { deletionSubmitDisabled, recoverySubmitDisabled } from '../src/services/authUxState';
 
 let pass = 0, fail = 0;
 const issues: string[] = [];
@@ -206,6 +214,86 @@ for (const provider of ['kakao', 'google'] as const) {
 // (같은 데모 계정을 공유하면 "남의 기록이 보이는" 상황을 데모가 못 잡아낸다)
 ok((await repo.signInWithSocial('kakao')).isNewUser === true,
   '구글 → 카카오 전환 = 다른 계정(신규)');
+ok((await repo.getAccountAuthMethods()).includes('kakao'), '소셜 전용 계정 재인증 방법 감지');
+let wrongSocialBlocked = false;
+try { await repo.deleteAccount({ socialProvider: 'google' }); } catch { wrongSocialBlocked = true; }
+ok(wrongSocialBlocked, '다른 소셜 공급자로 계정 삭제 차단');
+await repo.deleteAccount({ socialProvider: 'kakao' });
+ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세션 정리');
+
+// ── 인증 계약 직접 테스트: 외부 SDK 대신 주입 가능한 최소 test double 사용 ──
+{
+  const profile = metadataProfile({ id: 'u1', user_metadata: {
+    name: '메타이름', relationship: '할머니', phone: '01099998888',
+  } }, 'fallback@example.com');
+  ok(profile.name === '메타이름' && profile.relationship === '할머니'
+    && profile.phone === '01099998888', 'metadata → profile 완성 직접 테스트');
+
+  let signedOut = false;
+  await completeRecoveryWithClient({
+    updatePassword: async () => {}, signOut: async () => { signedOut = true; },
+  }, 'Changed123!');
+  ok(signedOut, '복구 완료 뒤 세션 signOut 직접 테스트');
+  let signOutFailure = '';
+  try {
+    await completeRecoveryWithClient({
+      updatePassword: async () => {}, signOut: async () => { throw new Error('signout-down'); },
+    }, 'Changed123!');
+  } catch (e) { signOutFailure = e instanceof Error ? e.message : String(e); }
+  ok(signOutFailure.includes('signout-down'), '복구 signOut 실패 전파');
+
+  let recoveryEvent = false;
+  const recoveryClient = { setSession: async () => {}, notifyRecovery: () => { recoveryEvent = true; } };
+  const nativeRecovery = await processRecoveryUrl(
+    recoveryClient, 'carenote://#access_token=a&refresh_token=r&type=recovery');
+  ok(nativeRecovery.status === 'ready' && recoveryEvent, 'PASSWORD_RECOVERY 네이티브 라우팅');
+  const expired = await processRecoveryUrl(recoveryClient,
+    'carenote://#error=access_denied&error_description=Email+link+is+invalid+or+has+expired&type=recovery');
+  ok(expired.status === 'error' && expired.message.includes('만료'), '만료 recovery 링크 오류 안내');
+  const invalid = await processRecoveryUrl(recoveryClient, 'carenote://#type=recovery&access_token=a');
+  ok(invalid.status === 'error' && invalid.message.length > 0, '불완전 recovery 링크 오류 안내');
+
+  ok(socialAuthFailureMessage('카카오', { type: 'cancel' }).includes('취소'), '소셜 로그인 취소 안내');
+  ok(socialAuthFailureMessage('구글', { errorCode: 'provider_not_enabled' }).includes('설정'),
+    '소셜 provider 미설정 안내');
+  ok(socialAuthFailureMessage('구글', { errorCode: 'identity_already_exists' }).includes('이미'),
+    '소셜 계정 충돌 안내');
+
+  const deleted = parseDeletionResponse({ status: 'deleted', deletedUserId: 'u1' });
+  ok(deleted.status === 'deleted', '계정 삭제 성공 응답 파싱');
+  let deletionFailure = '';
+  try { parseDeletionResponse({ status: 'wat' }); } catch (e) {
+    deletionFailure = e instanceof Error ? e.message : String(e);
+  }
+  ok(!!deletionFailure, '계정 삭제 잘못된 서버 응답 실패');
+  const partial = parseDeletionResponse({
+    status: 'partial', completed: ['storage'], failed: [{ step: 'auth', message: 'down' }], retryable: true,
+  });
+  ok(partial.status === 'partial' && partial.failed[0].step === 'auth', '계정 삭제 부분 실패 보존');
+  let invoked = false, cleared = false;
+  await runAccountDeletion({
+    reauthenticate: async () => {},
+    invoke: async () => { invoked = true; return { status: 'deleted', deletedUserId: 'u1' }; },
+    clearSession: async () => { cleared = true; },
+  });
+  ok(invoked && cleared, '삭제 성공 뒤 세션/로컬 cleanup 호출');
+  cleared = false;
+  const partialRun = await runAccountDeletion({
+    reauthenticate: async () => {},
+    invoke: async () => ({ status: 'partial', completed: ['database'],
+      failed: [{ step: 'auth', message: 'retry' }], retryable: true }),
+    clearSession: async () => { cleared = true; },
+  });
+  ok(partialRun.status === 'partial' && !cleared, '부분 실패 시 세션 유지(안전 재시도)');
+  ok(recoverySubmitDisabled({ busy: true, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),
+    '복구 busy 상태 중복 제출 차단');
+  ok(!recoverySubmitDisabled({ busy: false, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),
+    '복구 유효 입력 제출 허용');
+  ok(deletionSubmitDisabled({ busy: true, phrase: '탈퇴합니다', methodReady: true }),
+    '탈퇴 busy 상태 중복 제출 차단');
+  ok(deletionSubmitDisabled({ busy: false, phrase: '다름', methodReady: true }),
+    '탈퇴 확인 문구 불일치 제출 차단');
+}
 
 // ── P0 인증 라이프사이클: 이메일 확인 뒤에도 가입 프로필이 보존되고,
 // 복구 완료는 세션을 정리하며, 계정 삭제는 로컬 민감 데이터를 남기지 않는다 ──
