@@ -1884,3 +1884,59 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
   **PASS 893 modules**, `git diff --check` 통과. Docker daemon와 `psql`이 없어 fresh PostgreSQL
   16 RLS fixture는 로컬 실행하지 못했으며, push 뒤 exact current-head CI/PG16 marker를 확인한다.
+
+---
+
+## 2026-08-24 — P1 내부 베타 후보 exact-head evidence manifest·승인 게이트
+
+**한 일**
+- Draft PR #16의 독립 current-head APPROVE 판단이 기록된 exact SHA
+  `0c7661d4ff97a8d1de1602d6be21c4af90f7776e`에서 clean evidence branch를 fast-forward하고,
+  `docs/17_internal_beta_readiness_evidence.md`에 PR #15/#16 base/head, review URL, 원격 SHA,
+  check-run, 로컬 재현 명령과 결과를 고정했다.
+- 격리 HOME에서 보호된 GitHub credential helper를 조회 전용으로 사용했다. token/secret을 출력·복사하지
+  않았으며 PR API/refs와 review, exact-head check-run만 대조했다.
+- 캡틴 승인 필요 항목(P0-04 외부 코호트/보상, P0-05 가격·소비자보호 문구, P0-06 이름 테스트/사례비)을
+  실행하지 않고 명시적 gate로 분리했다. 외부 telemetry/실사용자 데이터도 수집하지 않았다.
+
+**결정과 이유**
+- local `psql`과 Docker daemon이 없을 때 fresh PG16을 실행했다고 주장하지 않도록, exact-head GitHub
+  `rls-test` job log의 PostgreSQL 16.15 marker `PASS 181/181, FAIL 0, COMPLETION 1`을 원격 근거로
+  분리했다. 다음 SHA에는 이 증거를 재사용하지 않고 다시 대조한다.
+- 이 단계는 문서화·내부 QA만 수행한다. 운영 migration/data access, OAuth·결제·SMS, DNS/secrets,
+  EAS/Play build·업로드, production/store 배포, main 병합은 계속 범위 밖이다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW
+  **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  **PASS 850 modules**, `git diff --check` 통과.
+- GitHub API: exact-head CI six jobs 모두 `completed/success`; GitHub fresh PostgreSQL 16.15 log:
+  `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS PASS=181/181 FAIL=0 COMPLETION=1`.
+- 기존 dependency risk는 `npm ci` audit **24건**(moderate 11, high 13)과 pending esbuild install
+  script 1건이며 자동 fix/승인·lockfile 변경은 하지 않았다.
+
+---
+
+## 2026-08-24 — PR #17 evidence manifest current-head CI 참조 정정
+
+**한 일**
+- 매니페스트의 원격 CI 증거를 두 기준점으로 명시적으로 분리했다. 승인된 구현 SHA
+  `0c7661d4ff97a8d1de1602d6be21c4af90f7776e`는 CI run `32663538256` 및 fresh PG16
+  `rls-test` job `97253234652`(PostgreSQL 16.15 marker)로 유지했다.
+- 문서 전용 Draft PR #17의 exact current head
+  `fe94a9b28f207992c1df54a6b42bad5baad84e1e`는 별도의 successful CI run
+  `32664079278`, fresh PG16 `rls-test` job `97254656303`, 여섯 required jobs 및 Workers Builds로 기록했다.
+
+**결정과 이유**
+- PR #16 implementation CI를 PR #17 current-head CI라고 표기하면 문서 commit의 정확한
+  검증 근거가 사라진다. 구현 검증과 문서 current-head 검증은 서로 대체하지 않으며,
+  이후 어느 head라도 바뀌면 새 SHA에서 다시 대조한다.
+
+**검증**
+- `git ls-remote`로 PR #17 remote head가 `fe94a9b28f207992c1df54a6b42bad5baad84e1e`임을,
+  `git merge-base --is-ancestor`로 승인 implementation SHA가 그 조상임을 확인했다.
+- GitHub API에서 PR #17 exact head, run `32664079278`, job `97254656303` 및 기존 구현 run/job을
+  재대조했다. 로컬 `psql`/Docker 부재는 계속 문서에 명시했으며 local fresh PG16 실행을 주장하지 않았다.
+- 운영 migration/data access, telemetry, 사용자/외부 cohort·보상·고객 접촉, OAuth·결제·SMS,
+  DNS/secrets, production/store 배포 및 `main` 병합은 수행하지 않았다.
