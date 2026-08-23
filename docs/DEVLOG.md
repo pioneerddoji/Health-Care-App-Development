@@ -2000,3 +2000,39 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   대조한다.
 - Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
   production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 AppState foreground resume fail-closed 계약
+
+**한 일**
+- `AppResumeLifecycle`을 추가해 `background`/`inactive`에서 `active`로 돌아올 때 저장 세션,
+  서버 데이터 재로드, 알림 권한 상태가 모두 끝난 뒤에만 UI 성공 상태를 확정하도록 했다. 세션 없음,
+  offline/rejected/partial refresh는 로컬 보호자·건강 데이터 상태를 비우고 로그인 gate로 fail-closed한다.
+- AppContext는 AppState/Linking listener를 한 lifecycle 소유자로 묶어 cleanup 시 unmount callback을
+  막고, URL은 `carenote://`만 허용한다. malformed/non-app/중복 URL은 무시하며 URL query/token을
+  로그나 오류 UI에 넣지 않는다; 처리 거부는 고정된 재설정 안내만 노출한다.
+- clock, AppState, Linking, permission/repo test double 기반 `test:app-resume-lifecycle` contract를
+  추가했다. foreground, duplicate active, malformed/duplicate/rejected URL, offline/partial refresh,
+  back-to-back transition, unmount cleanup을 결정론적으로 검사한다.
+
+**결정과 이유**
+- foreground 이벤트에서 이전 화면을 먼저 성공으로 보이면 stale auth/permission/data가 false-green이
+  된다. 재검증 중 `booting` gate를 먼저 올리고, server data와 OS permission 확인이 모두 성공한 경우에만
+  상태를 확정한다.
+- URL 원문이나 query를 dedupe/logging에 보관하지 않고 짧은 수명의 fingerprint만 사용한다. 실기기
+  Android/iOS lifecycle 성공은 여전히 이 정적/fixture 검증으로 주장하지 않으며 `needs-device` 및
+  캡틴 승인 gate를 유지한다. 롤백은 이 커밋을 revert한다.
+
+**검증**
+- TDD RED: lifecycle module 부재에서 새 contract가 `ERR_MODULE_NOT_FOUND`로 실패했고, URL reject
+  callback 추가 전에는 `PASS=6 FAIL=1`로 실패했다. GREEN: `npm run test:app-resume-lifecycle`
+  **PASS 7 / FAIL 0**.
+- clean `npm ci` 후 `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW
+  **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, native preflight
+  **PASS 11 / FAIL 0**, `git diff --check` 통과.
+- Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 894 modules**
+  통과. 이 runner에는 `psql`/실행 Docker가 없어 fresh PG16은 local로 주장하지 않고 push 뒤 exact
+  current-head CI completion marker를 확인한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
