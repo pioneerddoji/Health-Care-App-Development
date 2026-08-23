@@ -1347,11 +1347,37 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   제약을 해소하는 원격 검증 증거다.
 
 **검증**
-- 원격/로컬 HEAD: `563abe982b543fccee374b8988d1f9e5fcfe38bd` 일치, clean checkout.
+- 구현 체크포인트(불변): `563abe982b543fccee374b8988d1f9e5fcfe38bd`.
+- PR HEAD는 후속 검증·문서 커밋에 따라 이동하므로 GitHub PR의 현재 head SHA를 기준으로 확인한다.
 - Draft PR #3: `fix/p0-rls-data-integrity` → `chore/git-development-workflow`.
-- GitHub CI PASS: `typecheck`, `e2e-tests`, `gating-tests`, PostgreSQL 16 `rls-test`.
+- 당시 GitHub `rls-test` green은 `psql | tee`의 종료 상태 누락으로 SQL 조기 종료를 숨긴
+  false-green이었다. 후속 보정에서 pipefail·완료 마커·정확한 PASS 수 검증을 추가한다.
 - Cloudflare Workers build PASS.
 
 **다음**
 - 독립 라쳇 보안 리뷰에서 RPC 권한·원자성·감사 위조 공격 시나리오를 별도 clean checkout으로
   재검증한다. 운영 migration 적용과 `main` 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — RLS CI false-green 제거·공격 회귀 보강
+
+**한 일**
+- RLS CI에 `pipefail`을 적용하고 stderr까지 캡처해 `psql` 오류가 즉시 job 실패가 되도록 했다.
+  SQL 끝의 `RLS_SUITE_COMPLETE expected=68` 도달 1회, `PASS 68/68`, `FAIL 0`을 모두 검증해
+  조기 종료나 일부 실행이 green이 될 수 없게 했다.
+- Supabase 권한 모델처럼 `authenticated`에 `auth` schema USAGE를 부여하고 `anon` 역할을
+  별도로 셈했다. 신규 SECURITY DEFINER RPC 3개의 고정 search_path, authenticated 전용
+  EXECUTE grant, anon의 실제 호출 거부를 실행형 테스트로 검증한다.
+- 동일 id 네트워크 재시도의 중복 없음과, test-only guardian trigger가 children INSERT 다음에
+  실패할 때 children/관계/동의가 모두 rollback되는 실제 중간 실패를 추가했다.
+
+**결정과 이유**
+- 로그에 `FAIL` 문자열이 없다는 것만으로는 테스트 완주를 증명하지 못한다. 실행기 종료 상태,
+  명시적 마지막 마커, 예상 assertion 수를 독립적으로 모두 확인해야 한다.
+- 기존 quota 실패는 children INSERT 전에 발생하므로 트랜잭션 rollback 증거가 아니었다.
+  이번 fault injection은 다음 쓰기에서 실패시켜 PostgreSQL 함수 호출 전체 원자성을 직접 검증한다.
+
+**검증**
+- 이 엔트리의 수치는 현재 PR HEAD를 로컬 및 GitHub fresh PostgreSQL 16에서 재검증한 뒤
+  PR 본문과 CI 로그 URL에 기록한다. 운영 DB에는 적용하지 않는다.
