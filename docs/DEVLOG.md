@@ -2070,3 +2070,34 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   canonical independent review로 대조한다.
 - Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
   production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 stale load·post-invalidation resume fail-closed 보완
+
+**한 일**
+- `AppResumeLifecycle`이 `loadAll`에 현재 generation guard를 전달하고, `AppContext.loadAll`이 repo 결과의
+  React state 적용 전에 그 guard를 검사하도록 바꿨다. 따라서 invalidate 뒤 늦게 끝난 `repo.loadAll()`은
+  children/records/settings 등 clear된 세션 데이터를 다시 채우지 않는다.
+- `invalidate()`는 lifecycle의 새 `start()`와 queued foreground refresh를 terminal하게 차단한다. sign-out이
+  billing 종료와 repo sign-out을 기다리는 중 발생한 background→active도 이전 세션을 restore/confirm하지 않는다.
+- 결정론 lifecycle fixture에 stale `loadAll` state-application 및 invalidate 뒤 resume 두 회귀 사례를 추가했고,
+  native gap matrix의 현재 AppState 설명을 source와 같은 static proof/needs-device 경계로 갱신했다.
+
+**결정과 이유**
+- `onConfirmed` 직전만 generation을 검사하면 `loadAll` 안의 React setter는 이미 stale 데이터를 적용할 수 있다.
+  guard를 데이터 mutation 경계로 전달해 fail-closed 상태를 유지한다.
+- auth invalidation 뒤에 lifecycle을 재시작할 합법적 경로는 없으며, sign-in은 명시적 repo 흐름으로 데이터를
+  로드한다. 그러므로 invalidate된 lifecycle은 과거 세션을 재확인하기보다 정지해야 한다.
+
+**검증**
+- TDD RED: 새 fixture 추가 직후 `APP_RESUME_LIFECYCLE PASS=11 FAIL=2`로 stale application과
+  post-invalidation resume을 재현했다. GREEN: `npm run test:app-resume-lifecycle` **PASS 13 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건),
+  `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, native preflight (negative fixtures 포함)
+  **PASS 12 / FAIL 0**, Expo web export **PASS 869 modules**, `git diff --check` 통과.
+- 이 runner에는 `deno`와 `psql`이 없고 Docker daemon 연결도 불가하여 Edge contracts/`deno check`와 fresh
+  PostgreSQL 16 RLS suite는 local 성공으로 주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store,
+  signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data, 외부 메시지,
+  DNS/secrets/cost, production/main 병합은 실행하지 않았다.

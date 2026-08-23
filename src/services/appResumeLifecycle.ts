@@ -4,7 +4,8 @@ export type NativeAppState = 'active' | 'background' | 'inactive' | 'unknown' | 
 
 export interface ResumeClient {
   restoreSession(): Promise<Profile | null>;
-  loadAll(): Promise<void>;
+  /** current-generation guard must enclose the state application, not only confirmation. */
+  loadAll(isCurrent?: () => boolean): Promise<void>;
   notificationDenied(): Promise<boolean>;
   processAuthUrl(url: string): Promise<void>;
 }
@@ -51,6 +52,7 @@ export class AppResumeLifecycle {
   private refreshing = false;
   private refreshQueued = false;
   private disposed = false;
+  private invalidated = false;
   private generation = 0;
   private readonly seenUrls = new Map<string, number>();
 
@@ -58,7 +60,7 @@ export class AppResumeLifecycle {
 
   /** 최초 boot도 foreground refresh와 같은 취소 경계를 공유한다. */
   start(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.invalidated) return;
     if (this.refreshing) {
       this.refreshQueued = true;
       return;
@@ -102,6 +104,7 @@ export class AppResumeLifecycle {
   /** sign-out/recovery가 시작되면 이전 비동기 결과를 즉시 폐기한다. */
   invalidate(): void {
     if (this.disposed) return;
+    this.invalidated = true;
     this.generation++;
     this.refreshQueued = false;
     this.callbacks.onInvalidated();
@@ -114,7 +117,7 @@ export class AppResumeLifecycle {
     try {
       const profile = await this.client.restoreSession();
       if (!profile) throw new Error('no session');
-      await this.client.loadAll();
+      await this.client.loadAll(() => this.isCurrent(generation));
       const notificationDenied = await this.client.notificationDenied();
       if (this.isCurrent(generation)) this.callbacks.onConfirmed({ profile, notificationDenied });
     } catch {

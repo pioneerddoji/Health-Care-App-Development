@@ -131,8 +131,11 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     setRoles({}); setSensitiveConsent({}); setSettings({}); setBooting(false);
   }, []);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (isCurrent?: () => boolean) => {
     const all = await repo.loadAll();
+    // Resume invalidation must guard the data mutations themselves: a late repo
+    // result must not repopulate a cleared session between lifecycle checks.
+    if (isCurrent && !isCurrent()) return;
     setChildren(all.children);
     setRecords(all.records);
     setGrowth(all.growth);

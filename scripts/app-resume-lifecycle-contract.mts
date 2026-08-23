@@ -108,6 +108,55 @@ const activeClient = (overrides: Partial<ResumeClient> = {}): ResumeClient => ({
  }
 
  {
+ let release!: () => void;
+ let applied = false;
+ const pending = new Promise<void>((resolve) => { release = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   loadAll: async (isCurrent) => {
+     await pending;
+     if (!isCurrent || isCurrent()) applied = true;
+   },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.start();
+ await flush();
+ lifecycle.invalidate();
+ release();
+ await flush();
+ ok(!applied && states.join(',') === 'pending,invalidated', 'stale loadAll data is not applied after invalidation');
+ lifecycle.dispose();
+ }
+
+ {
+ let release!: () => void;
+ let restores = 0;
+ const pending = new Promise<void>((resolve) => { release = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   restoreSession: async () => { restores++; await pending; return profile; },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.start();
+ await flush();
+ lifecycle.invalidate();
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ release();
+ await flush(); await flush();
+ ok(restores === 1 && states.join(',') === 'pending,invalidated', 'resume after invalidation cannot restore or confirm the prior session');
+ lifecycle.dispose();
+ }
+
+ {
  let denied = true;
  const states: string[] = [];
  const lifecycle = new AppResumeLifecycle(activeClient({
