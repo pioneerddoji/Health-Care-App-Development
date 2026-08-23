@@ -21,7 +21,7 @@
 - [ ] `npm run test:gating` — 결과:
 - [ ] DB/RLS 변경 시 `rls_test.sql` — 결과 또는 해당 없음:
 - [ ] UI 변경 시 웹/UI 검증 — 결과 또는 해당 없음:
-- [ ] CI 필수 상태(`typecheck`, `repository-tests`, `rls-test`) 성공
+- [ ] CI 필수 상태(`typecheck`, `e2e-tests`, `gating-tests`, `rls-test`) 성공
 
 미실행 또는 실패한 검증과 사유:
 

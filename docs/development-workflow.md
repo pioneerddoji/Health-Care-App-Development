@@ -82,13 +82,14 @@ node scripts/ui-cycles.mjs
 현재 `.github/workflows/ci.yml`은 pull request와 `main` push에서 아래 상태를 제공한다.
 
 - `typecheck`: `npm ci` 후 `npm run typecheck`
-- `repository-tests`: `npm ci` 후 `npm run test:e2e`, `npm run test:gating`
+- `e2e-tests`: `npm ci` 후 `npm run test:e2e`
+- `gating-tests`: `npm ci` 후 `npm run test:gating`
 - `rls-test`: PostgreSQL 16에서 `supabase/tests/rls_test.sql`
 
 권장 branch protection(캡틴 또는 저장소 관리자만 설정):
 
 1. `main` 직접 push 금지 및 PR 요구
-2. 위 세 상태가 성공해야 병합 가능
+2. 위 네 상태가 성공해야 병합 가능
 3. 최신 `main`을 반영한 뒤에만 병합 가능
 4. 최소 1명의 별도 리뷰어 승인 요구(구현자 자기 승인 금지)
 5. 승인 후 새 push가 있으면 기존 승인 무효화
