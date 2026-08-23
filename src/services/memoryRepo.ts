@@ -317,6 +317,11 @@ const base: Repo = {
 
   async deleteChildAndData(id: string) {
     // supabase 모드의 FK cascade와 동일하게 레포트/공유 링크/동의 상태까지 정리
+    // 이전 owner가 editor로 강등된 뒤에도 기기 캐시만 보고 삭제하면 안 된다.
+    requireOwner(id);
+    if (!data.children.some((child) => child.id === id)) {
+      throw new Error('삭제할 대상자를 찾을 수 없습니다');
+    }
     const removedRecordIds = new Set(data.records.filter((r) => r.childId === id).map((r) => r.id));
     guardians = guardians.filter((g) => g.childId !== id);
     data.children = data.children.filter((c) => c.id !== id);
