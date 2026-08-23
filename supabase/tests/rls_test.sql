@@ -23,6 +23,7 @@ create table storage.objects (id uuid primary key default gen_random_uuid(), buc
 alter table storage.objects enable row level security;
 create role authenticated;
 create role anon;
+create role service_role;
 
 \i ../schema.sql
 \i ../schema_stage3.sql
@@ -31,6 +32,7 @@ create role anon;
 \i ../schema_recipients.sql
 \i ../schema_security.sql
 \i ../schema_consent_deletion.sql
+\i ../schema_stage4_share_security.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -187,15 +189,41 @@ select expect_ok($q$insert into reports(id, child_id, created_by, period_start, 
 select expect_error($q$insert into reports(child_id, created_by, period_start, period_end) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date - 13, current_date)$q$, '레포트 created_by 위조 차단');
 select expect_error($q$update reports set created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where id = '99999999-9999-9999-9999-999999999999'$q$, '레포트 created_by 재작성 차단');
 select expect_ok($q$insert into storage.objects(bucket_id, name) values ('reports', '11111111-1111-1111-1111-111111111111/99999999-9999-9999-9999-999999999999.pdf')$q$, 'A(owner) 레포트 PDF 업로드 허용');
-select expect_ok($q$insert into share_links(id, report_id, expires_at) values ('88888888-8888-8888-8888-888888888888', '99999999-9999-9999-9999-999999999999', now() + interval '72 hours')$q$, 'A(owner) 공유 링크 생성');
+-- consume RPC는 Edge Function에 5분짜리 signed URL을 만들 경로만 반환하므로, test fixture에도
+-- 레포트 메타데이터의 storage_path를 실제 업로드 경로로 연결한다.
+select expect_ok($q$update reports set storage_path = '11111111-1111-1111-1111-111111111111/99999999-9999-9999-9999-999999999999.pdf' where id = '99999999-9999-9999-9999-999999999999'$q$, 'A 레포트 storage path 연결');
+select expect_error($q$insert into share_links(report_id, token_hash, expires_at) values ('99999999-9999-9999-9999-999999999999', repeat('a', 64), now() + interval '72 hours')$q$, 'A 직접 공유 토큰 hash 삽입 차단');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 72)$q$, 'A(owner) 보안 공유 링크 RPC 생성');
+select case when (select token_hash ~ '^[0-9a-f]{64}$' from share_links limit 1)
+  then 'PASS 원문 아닌 SHA-256 token hash만 저장' else 'FAIL token hash 형식' end;
+select case when (select (create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)->>'token')
+                         ~ '^[0-9a-f]{64}$')
+  then 'PASS 발행 token은 256-bit 난수' else 'FAIL 발행 token 형식' end;
+select case when (select consume_share_link_token(token_hash) is not null from share_links order by created_at limit 1)
+  then 'PASS 유효 token hash는 한 번 소비 가능' else 'FAIL 유효 token hash 접근' end;
+select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at limit 1)
+  then 'PASS 동시 replay/rate-limit 차단' else 'FAIL replay 허용' end;
+select case when consume_share_link_token(repeat('0', 64)) is null
+  then 'PASS 변조 token hash 차단' else 'FAIL 변조 token hash 허용' end;
+reset role;
+update share_links set expires_at = now() - interval '1 second'
+where id = (select id from share_links order by created_at offset 1 limit 1);
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at offset 1 limit 1)
+  then 'PASS 만료 token hash 차단' else 'FAIL 만료 token hash 허용' end;
 
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from reports) = 1 then 'PASS B(viewer) 레포트 메타 열람 가능' else 'FAIL' end;
 select expect_error($q$insert into reports(child_id, created_by, period_start, period_end) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, current_date)$q$, 'B(viewer) 레포트 발행 차단');
 select case when (select count(*) from share_links) = 0 then 'PASS B(viewer) 공유 링크 목록 비공개(owner/editor만)' else 'FAIL B가 공유 링크를 봄' end;
+select expect_error($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 72)$q$, 'B(viewer) 공유 링크 생성 차단');
 
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update share_links set revoked_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, 1, 'A(owner) 공유 링크 회수');
+select expect_rows($q$update share_links set revoked_at = now()$q$, 0, 'A 직접 공유 링크 회수 차단(RPC 전용)');
+select expect_ok($q$select revoke_secure_share_link((select id from share_links order by created_at limit 1))$q$, 'A(owner) 공유 링크 회수 RPC');
+select case when (select consume_share_link_token(token_hash) is null from share_links order by created_at limit 1)
+  then 'PASS 회수 후 Edge token 소비 차단' else 'FAIL 회수 뒤 token 재사용' end;
 
 -- ── B 스스로 나가기 / C(외부인) 완전 차단 ──
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'); -- 이하 B 본인 시점으로 복귀
@@ -271,4 +299,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=93
+\echo RLS_SUITE_COMPLETE expected=104

@@ -90,13 +90,19 @@ payload 키는 앱 코드와 동일한 **camelCase**로 저장한다(JSONB이므
 ### 4단계 추가 — 레포트 발행 · 만료형 공유 링크
 - `reports`: owner/editor만 발행(`select` 자체는 viewer도 가능해 앱 내 열람은 허용).
   PDF는 Storage `reports` 버킷 `child_id/report_id.pdf` 경로에 업로드.
-- `share_links`: `select/insert/update/delete` 모두 owner/editor만 — **viewer는 공유
-  링크 목록 자체를 볼 수 없다**(레포트 내용은 볼 수 있어도 재공유는 못 함).
+- `share_links`: 원문 token을 저장하지 않고 SHA-256 hash만 저장한다. 발행은
+  `create_secure_share_link(report_id, ttl)` RPC만 가능하며, owner/editor·대상 아이의
+  유효 민감정보 동의를 서버에서 재확인한다. viewer는 목록·발행·회수 모두 불가하고,
+  회수는 `revoke_secure_share_link(link_id)` RPC만 가능하다.
 - **비로그인 수신자용 실제 접근 경로는 DB 함수가 아니라 Edge Function**
   (`supabase/functions/share-report`)이다. 이유: Storage 서명 URL은 한 번 발급하면
   회수할 수 없으므로, "지금 회수" 버튼이 실제로 접근을 끊으려면 매 요청마다
-  서버에서 `expires_at`/`revoked_at`을 재검사한 뒤 **그때그때 짧은 수명(5분)의
-  서명 URL을 새로 발급**해야 한다. Edge Function이 그 검사 지점 역할을 한다.
+  서버에서 `expires_at`/`revoked_at`/대상 아이 삭제를 원자적으로 재검사한 뒤
+  **그때그때 짧은 수명(5분)의 서명 URL을 새로 발급**해야 한다. Edge Function은
+  token hash만 전달하고, 동시 replay를 행 잠금+1초 rate limit으로 차단한다. 결과는
+  존재 여부를 구별하지 않는 404로 최소화하며 원문 token·IP·User-Agent는 보존하지
+  않는다. `share_link_access_audit`에는 link id·결과·시각만 최소 기록한다.
   배포: `supabase functions deploy share-report --no-verify-jwt`
   (수신자는 로그인 세션이 없으므로 JWT 검증을 꺼야 한다).
-- 공유 URL 형태: `{SUPABASE_URL}/functions/v1/share-report?token=<share_links.token>`
+- 공유 URL 형태: `{SUPABASE_URL}/functions/v1/share-report?token=<발행 응답의 일회성 원문 token>`
+  (목록에서 token을 다시 조회하거나 재구성할 수 없다).

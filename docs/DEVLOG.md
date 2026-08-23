@@ -772,6 +772,22 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 사용자 확인 필요: Play 중복 검색, 상표 검색(CareNote는 해외 의료·요양 분야에
 동명 서비스가 있어 글로벌 확장 시 충돌 가능성), 번들 ID 최종 확정.
 
+## 2026-08-23 — P0 병원 공유 링크 보안 강화
+
+- `schema_stage4_share_security.sql`을 추가해 256-bit 난수 원문 token은 발행 RPC의
+  단 한 번의 응답으로만 반환하고, DB에는 SHA-256 hash만 저장하도록 전환했다. 기존
+  원문 token 링크는 migration 시 즉시 회수한다.
+- 발행·회수는 owner/editor 및 유효 민감정보 동의를 재검사하는 definer RPC로만
+  허용한다. Edge Function은 hash를 원자 소비하여 회수·만료·대상자 삭제를
+  확인하고, 동시 replay에는 행 잠금+1초 rate limit을 적용한 뒤 5분 URL만 발급한다.
+  원문 token/IP/User-Agent는 저장·로그하지 않고 audit은 링크 id·결과·시각만 기록한다.
+- 변조/만료/회수/replay·직접 DML·viewer 권한 우회 회귀 항목을 RLS test에 추가했고,
+  운영 연결 검증 스크립트도 새 RPC 계약으로 갱신했다.
+- 검증: `npm run typecheck` 통과, `npm run test:e2e` **110/0**, `npm run test:gating`
+  **27/0**, `npx expo export --platform web` 통과, `npx deno@2.2.2 check` 통과,
+  `git diff --check` 통과. fresh PostgreSQL 16 RLS와 실제 Supabase Edge 수신자 검증은
+  이 브랜치에서 재실행한다.
+
 ---
 
 # 앞으로 진행할 내용

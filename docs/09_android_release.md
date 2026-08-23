@@ -54,7 +54,8 @@
 - [ ] ⛔ 프로젝트 생성 — **서울 리전(ap-northeast-2)** 권장. 국외 리전이면
   개인정보처리방침에 국외 이전 항목 구체화 필요.
 - [ ] schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql →
-  schema_recipients.sql 순서 실행.
+  schema_recipients.sql → schema_security.sql → schema_consent_deletion.sql →
+  schema_stage4_share_security.sql 순서 실행.
 - [ ] Edge Function 배포(`share-report`, `--no-verify-jwt`).
 - [ ] (선택) 카카오 로그인 — **절차 전문은 §2-2-1**.
 - [ ] `npm run verify:supabase` **전부 PASS** 확인 → 실기기에서 supabase 모드 스모크.
