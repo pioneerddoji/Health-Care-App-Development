@@ -23,7 +23,7 @@ The Android and iOS SHA values are distinct. No cross-PR status is substituted f
 
 ## 3. 포트폴리오 Draft PR current-head 상태
 
-이 문서만 담은 [Draft PR #21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21)은 base `main` (`bd23179fd09af1c53522b3b4bf1fb6e08fbfac19`), head `docs/p1-preview-readiness-portfolio` (`60bb5966e79dad6e402e516d8bc0bcf0c34668c2`)로 API·ref가 일치했고, Draft/open이며 formal GitHub PR review는 없었다. head check-runs는 `typecheck` 및 `rls-test`가 completed/success였고, `Workers Builds: health-care-app-development`는 completed/**failure**였다. 따라서 PR #21은 green으로 취급하지 않으며, 이 실패를 build·upload·production 성공 또는 실패의 근거로 해석하지 않는다.
+이 문서의 최초 [Draft PR #21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21) head `60bb5966e79dad6e402e516d8bc0bcf0c34668c2`는 base `main` (`bd23179fd09af1c53522b3b4bf1fb6e08fbfac19`)과 API·ref로 일치했고, Draft/open이며 formal GitHub PR review는 없었다. 해당 최초 head의 check-runs는 `typecheck` 및 `rls-test`가 completed/success였고, `Workers Builds: health-care-app-development`는 completed/**failure**였다. 따라서 PR #21은 green으로 취급하지 않으며, 이 실패를 build·upload·production 성공 또는 실패의 근거로 해석하지 않는다. 문서가 자기 자신의 후속 커밋 SHA를 정적으로 current라고 주장하지 않도록, 수정 후 exact remote head·current-head checks·review URL은 protected-helper API/ref 재대조 결과를 포함한 Kanban handoff에 고정한다.
 
 ## 4. iOS exact-head clean reproduction
 

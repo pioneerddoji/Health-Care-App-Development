@@ -651,7 +651,7 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   API를 호출해 PR #18/#20/#21의 base/head SHA, Draft/open 상태, review endpoint와 exact-head
   check-runs를 재대조했다. #18은 `COMMENTED` 4건, #20과 #21은 formal GitHub PR review 없음으로
   유지했다.
-- 포트폴리오 Draft PR #21 exact head `60bb5966e79dad6e402e516d8bc0bcf0c34668c2`의 `typecheck`와
+- 포트폴리오 Draft PR #21 최초 문서 head `60bb5966e79dad6e402e516d8bc0bcf0c34668c2`의 `typecheck`와
   `rls-test`는 completed/success지만 `Workers Builds: health-care-app-development`는
   completed/failure임을 명시했다. 이를 green 또는 build/upload/production 결과로 과장하지 않았다.
 - 수정된 docs branch에서 `npm ci`, `npm run typecheck`, `npm run test:e2e` (110/0),
