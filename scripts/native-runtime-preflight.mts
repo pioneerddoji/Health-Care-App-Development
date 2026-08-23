@@ -64,9 +64,28 @@ ok(vaccination.includes('notificationDenied')
 
 const ui = read('src/components/ui.tsx');
 const settings = read('src/screens/settings/SettingsScreen.tsx');
+const dateFieldAccessibility = read('src/components/DateField.tsx');
+const recovery = read('src/screens/auth/RecoveryPasswordScreen.tsx');
+const focus = read('src/services/accessibilityFocus.ts');
 ok(ui.includes('accessibilityRole="button"')
+  && ui.includes('accessibilityLabel={label}')
+  && ui.includes('accessibilityState={{ disabled: !!disabled }}')
   && ui.includes('accessibilityLabel={inputProps.accessibilityLabel ?? label}')
-  && settings.includes('accessibilityLiveRegion="assertive"'), 'baseline button/input/error accessibility semantics');
+  && settings.includes('accessibilityLiveRegion="assertive"')
+  && recovery.includes('accessibilityLiveRegion="assertive"'), 'baseline button/input/error role, label, state, and live-region semantics');
+ok(dateFieldAccessibility.includes('onRequestClose={() => lifecycle.onRequestClose()}')
+  && dateFieldAccessibility.includes('onShow={() => lifecycle.onModalShow()}')
+  && dateFieldAccessibility.includes('onPress={() => lifecycle.close()}')
+  && dateFieldAccessibility.includes('lifecycle.updateAvailability({ disabled, loading, error })')
+  && dateFieldAccessibility.includes('createDateFieldModalLifecycle')
+  && dateFieldAccessibility.includes('accessibilityViewIsModal')
+  && dateFieldAccessibility.includes('<Pressable accessible={false} style={s.backdrop} onPress={() => lifecycle.close()} />')
+  && dateFieldAccessibility.includes('<View accessibilityViewIsModal style={s.sheet}>')
+  && !dateFieldAccessibility.includes('<Pressable accessibilityViewIsModal')
+  && !dateFieldAccessibility.includes('accessibilityLabel="날짜 및 시간 선택 닫기"')
+  && dateFieldAccessibility.includes('createDateFieldModalLifecycle')
+  && focus.includes('if (node !== null) setAccessibilityFocus(node)')
+  && focus.includes('dispose()'), 'picker backdrop and sheet are sibling AX subtrees with independent picker/done targets and fail-closed focus restoration');
 
 const matrix = read('docs/18_internal_beta_native_runtime_gap_matrix.md');
 ok(matrix.includes('not-proven') && matrix.includes('needs-device')

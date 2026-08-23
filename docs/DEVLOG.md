@@ -2131,3 +2131,72 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   이 runner에는 `psql`이 없고 Docker daemon 연결도 불가하여 fresh PostgreSQL 16 RLS suite는 local 성공으로
   주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영
   연결, production migration/data, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 native 접근성 state·focus 복원 계약 보강
+
+**한 일**
+- 공용 `Button`, `Chip`, `Field`에 명시적 role·label·disabled/selected state를 추가했다. 기존 웹 렌더 경로는 그대로 유지한다.
+- `DateField` native picker는 열릴 때 iOS 완료 버튼으로 focus를 넘기고, Android dismiss/back, iOS 닫기·backdrop·완료 뒤에는 trigger로 focus를 복원한다. deferred focus controller는 이전 요청을 취소하고 target이 없거나 unmount된 경우 native focus API를 호출하지 않는다.
+- Recovery password와 계정 삭제의 assertive error focus도 동일 controller로 옮겨 error 전환 뒤에만 deferred focus하며 unmount 시 pending work를 취소한다.
+- `scripts/accessibility-contract.mts`에 clock/ref test double fixture를 추가했고 native preflight와 gap matrix는 static proof/needs-device 경계를 이 계약에 맞춰 갱신했다.
+
+**결정과 이유**
+- native Modal/picker는 state 변경 직후 target node가 아직 없을 수 있고, back-to-back open/close나 unmount 뒤의 stale callback은 사라진 node로 focus를 보내면 안 된다. target을 delivery 시점에 해석하는 single-pending controller로 해당 경계를 fail-closed로 고정했다.
+- accessibility label·live-region에는 건강 기록, 토큰, URL query를 넣지 않았다. 실제 TalkBack/VoiceOver 탐색·발화와 OS picker focus trap은 여전히 실기기 승인 QA가 필요한 `needs-device` 항목이다.
+
+**검증**
+- TDD RED: 새 accessibility fixture는 `accessibilityFocus` 모듈 부재로 `ERR_MODULE_NOT_FOUND`로 실패했다. GREEN: `npm run test:accessibility` **PASS 5 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건), `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume lifecycle **PASS 14 / FAIL 0**, native preflight(negative config fixtures 포함) **PASS 13 / FAIL 0** 통과.
+- Deno share/billing/delete-account contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 814 modules**, `git diff --check` 통과. local `psql`/Docker daemon이 없어 fresh PostgreSQL 16은 push 뒤 exact current-head CI completion marker로만 확인한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data access, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-23 — P1 iOS DateField AX 조상·focus 계약 재작업
+
+**한 일**
+- iOS `DateField` modal에서 backdrop close hit-area와 sheet를 sibling으로 분리했다. backdrop은 `accessible={false}`인 절대 배치 Pressable이고, sheet는 `accessibilityViewIsModal` View이므로 `DateTimePicker`와 `선택 완료` 버튼이 accessible Pressable 조상에 묶이지 않는 독립 target이다.
+- DateField 전용 focus binding을 추가해 clock·ref resolver·native focus API를 주입 가능하게 만들고, 실제 component는 `onShow`에서 picker action을, 닫기/Android back에서는 trigger를 delivery 시점에 해석해 focus한다.
+- accessibility fixture는 modal open, target 부재, close/Android back, disabled/loading/error/hidden cancel, unmount, back-to-back open/close를 component binding clock/ref test double로 검증한다. native preflight도 nested accessible Pressable 재도입을 실패시키도록 구조 계약을 보강했다.
+
+**결정과 이유**
+- Pressable backdrop이 sheet를 감싸면 RN 기본 accessible 조상이 child picker/done target을 group/hide할 수 있어 iOS `onShow` focus가 구조적으로 보장되지 않는다. interactive sheet wrapper를 View로 바꾸고 dismiss hit-area를 sibling으로 분리해 해당 false-green 경로를 제거했다.
+- label·fixture·출력에 건강정보, token, URL query를 추가하지 않았다. web export와 AppState 계약은 변경하지 않았고, TalkBack/VoiceOver 실제 발화·OS picker focus trap·실기기 탐색은 계속 `needs-device`/캡틴 승인 gate다.
+
+**검증**
+- TDD RED: 새 DateField accessibility fixture는 `dateFieldAccessibility` 모듈 부재로 `ERR_MODULE_NOT_FOUND`를 확인했다. GREEN: `npm run test:accessibility` **PASS 6 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, `git diff --check` 통과.
+- clean `npm ci` 성공(기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건). Edge Deno contracts **PASS 11 / FAIL 0**와 share-report/billing-webhook/delete-account `deno check`, Expo web export **PASS 896 modules** 통과. local PG16/RLS와 Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #19 DateField 실제 lifecycle 접근성 계약 보강
+
+**한 일**
+- `DateField`가 실제로 사용하는 modal lifecycle을 clock·node resolver·native focus·state setter 주입 경계로 추출했다. open→`onShow`, backdrop 완료, Android `onRequestClose`, unmount가 이 경계를 통해서만 동작한다.
+- disabled/loading/error props가 modal을 fail-closed로 닫고 pending native focus를 취소하도록 연결했으며 trigger의 disabled accessibility state도 함께 노출한다.
+- 접근성 fixture를 binding 직접 호출에서 lifecycle harness로 교체해 exposed done target, target 부재, backdrop/Android back trigger 복원, disabled/loading/error, unmount, back-to-back open/close를 실행 검증한다.
+
+**결정과 이유**
+- binding 단위 fixture는 component handler wiring을 제거해도 green이 될 수 있었다. 실제 DateField가 위임하는 lifecycle 경계를 검증 대상으로 삼아, handler 연결과 stale focus 취소를 함께 회귀 고정한다.
+- TalkBack/VoiceOver 발화·탐색과 OS picker focus trap은 여전히 실기기 `needs-device`/캡틴 승인 gate이며, 건강정보·token·URL query는 label·fixture 출력에 넣지 않는다.
+
+**검증**
+- TDD RED: 아직 없는 `createDateFieldModalLifecycle` export를 import한 fixture가 예상대로 `SyntaxError: ... does not provide an export`로 실패했다. GREEN: clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, accessibility **PASS 9 / FAIL 0**, Expo web export **896 modules**, `git diff --check` 통과.
+- exact head Actions run `32672160748`은 Workers build를 포함한 8/8 check가 success이며 `rls-test`도 success다. 이 runner에는 `deno`가 없어 local Deno check를 실행하지 못했고, public GitHub API는 authenticated job-log 다운로드를 403으로 막아 PG16 completion marker 원문은 local에서 재확인하지 못했다. Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-24 — PR #19 DateField 중복 modal open 회귀 고정
+
+**한 일**
+- DateField 실제 lifecycle harness에 `open(); open(); onModalShow();` fixture를 추가했다. duplicate open은 modal visibility state setter를 한 번만 호출하고, done target focus는 한 번만 예약·전달해야 한다.
+
+**결정과 이유**
+- 기존 back-to-back 검증은 open→close→open만 다뤄, `if (open) return` guard가 사라져도 false-green이었다. 같은 modal이 열린 상태에서 다시 trigger가 호출되는 경계를 독립 fixture로 고정했다.
+- 건강정보·token·URL query는 fixture 출력에 포함하지 않았으며, TalkBack/VoiceOver 발화·탐색과 OS picker focus trap은 계속 실기기 `needs-device`/캡틴 승인 gate다.
+
+**검증**
+- Red-capability: guard를 임시로 제거했을 때 새 fixture가 `ACCESSIBILITY_CONTRACT PASS=10 FAIL=1`과 duplicate-open assertion으로 예상대로 실패했다. guard 복원 뒤 GREEN: `npm run test:accessibility` **PASS 11 / FAIL 0**, `npm run test:native-preflight` **PASS 13 / FAIL 0**, `npm run typecheck`, `git diff --check` 통과.
+- 이번 최소 수정은 기존 Draft PR #19 branch에만 반영한다. 이후 전체 clean regression·exact-head CI 재검증은 push 뒤 수행하며, Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.

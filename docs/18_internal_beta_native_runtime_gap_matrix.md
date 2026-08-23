@@ -19,7 +19,7 @@
 | 로컬 알림 | `reminders.ts`는 permission query/request, web early return, schedule/cancel을 둔다. `app.json`은 `POST_NOTIFICATIONS`와 `expo-notifications` plugin을 선언한다. | proven (static), needs-device | Android runtime prompt, Android 13 channel/notification visibility, iOS provisional/denied Settings 복귀, 백그라운드·재부팅 뒤 trigger는 미증명. | 문서/preflight revert; 예약/취소 동작 변경 없음. |
 | deep link/auth resume | `AppContext`가 `Linking.getInitialURL()` 및 URL event listener를, `App.tsx`가 web auth-session completion을 둔다. | proven (static), needs-device | cold start, foreground resume, OAuth browser round-trip, malformed/duplicate URL 및 Android intent/iOS universal-link association은 미증명. 운영 OAuth 설정도 이 범위 밖. | 문서/preflight revert; URL handler 변경 없음. |
 | app resume/lifecycle | `AppContext`가 `AppState`·Linking을 generation-guarded `AppResumeLifecycle`에 연결하고, `loadAll`의 실제 state 적용도 current-generation 경계 안에 둔다. 성공한 새 인증의 data bootstrap 뒤에만 lifecycle을 re-arm한다. | proven (static), needs-device | background→foreground에서 OS가 실제로 lifecycle event를 전달하고 stale UI/permission/notification state가 기대대로 refresh되는지는 기기 검증이 필요하다. invalidate 뒤 sign-out/recovery 완료 전 refresh·confirm은 fail-closed로 차단하며, 새 인증 성공 뒤의 이후 resume만 허용한다. | lifecycle/documentation commit revert; native runtime 변경 없음. |
-| accessibility | 공용 Button role/state, Field label, Settings/Recovery error live-region source를 확인한다. | proven (static), needs-device | TalkBack/VoiceOver 실제 탐색 순서, picker/modal focus trap, Android back 후 focus restore, 동적 알림 발화는 미증명. | 문서/preflight revert; UI semantics 변경 없음. |
+| accessibility | 공용 Button/Field role·label·state, Recovery/Settings error live-region, DateField picker의 deferred focus open/close/back source와 clock/ref fixture를 확인한다. | proven (static), needs-device | TalkBack/VoiceOver 실제 탐색 순서·발화, OS picker/modal focus trap, Android back 뒤 native focus restore는 미증명이다. static PASS는 이 계약을 OS가 수행했다는 뜻이 아니다. | 이 접근성 계약 commit을 revert한다. 기기·운영 설정은 변경하지 않는다. |
 
 ## 3. 결정론 static preflight
 
@@ -27,7 +27,7 @@
 
 1. native scheme, 사진/알림 Android 선언, `expo-notifications` plugin
 2. picker, 사진 permission, PDF/share guard, notification schedule, deep-link cold/foreground handler
-3. button/input/error의 최소 accessibility semantics
+3. button/input/error의 role·label·state·live-region 및 picker open/close/back focus 계약
 4. 이 matrix가 **not-proven**, **needs-device**, `AppState`, 승인 gate를 계속 명시하는지
 5. `scripts/fixtures/native-runtime-preflight-missing-notifications.json`의 누락 notification fixture가 반드시 실패하는지
 
