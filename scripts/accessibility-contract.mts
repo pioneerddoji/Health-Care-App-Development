@@ -1,6 +1,6 @@
 import { type AccessibilityFocusClock } from '../src/services/accessibilityFocus';
 import {
-  createDateFieldAccessibilityBindings,
+  createDateFieldModalLifecycle,
   type DateFieldAccessibilityRef,
 } from '../src/components/dateFieldAccessibility';
 
@@ -27,70 +27,117 @@ const fakeClock = (): AccessibilityFocusClock & { flush(): void; pending(): numb
 };
 
 const ref = (node: number | null): DateFieldAccessibilityRef => ({ current: node });
-const bindings = (clock: AccessibilityFocusClock, focused: number[]) => createDateFieldAccessibilityBindings({
-  clock,
-  resolveNode: (node) => typeof node === 'number' ? node : null,
-  setAccessibilityFocus: (node) => focused.push(node),
-});
+const harness = (clock: AccessibilityFocusClock, focused: number[]) => {
+  const visibility: boolean[] = [];
+  const lifecycle = createDateFieldModalLifecycle({
+    clock,
+    resolveNode: (node) => typeof node === 'number' ? node : null,
+    setAccessibilityFocus: (node) => focused.push(node),
+    setOpen: (open) => visibility.push(open),
+    triggerRef: ref(201),
+    doneRef: ref(101),
+  });
+  return { lifecycle, visibility };
+};
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(101));
+  const { lifecycle, visibility } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
   clock.flush();
-  ok(focused.join(',') === '101', 'modal onShow exposes the picker action as an independent focus target');
+  ok(visibility.join(',') === 'true' && focused.join(',') === '101', 'DateField open then modal onShow exposes the done target through its rendered lifecycle');
 }
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(null));
+  const { lifecycle } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.setDoneTarget(ref(null));
+  lifecycle.onModalShow();
   clock.flush();
-  ok(focused.length === 0, 'missing picker target fails closed without a native focus call');
+  ok(focused.length === 0, 'DateField missing done target fails closed without a native focus call');
 }
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(1));
-  focus.restoreTrigger(ref(2));
+  const { lifecycle, visibility } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.close();
   clock.flush();
-  ok(focused.join(',') === '2' && clock.pending() === 0, 'close or Android back restores only the latest trigger focus');
+  ok(visibility.join(',') === 'true,false' && focused.join(',') === '201' && clock.pending() === 0, 'DateField backdrop close restores the trigger instead of the hidden modal target');
 }
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(7));
-  focus.cancel();
+  const { lifecycle, visibility } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.updateAvailability({ disabled: true, loading: false, error: false });
   clock.flush();
-  ok(focused.length === 0, 'disabled, loading, error, or hidden modal transitions cancel pending focus');
+  ok(visibility.join(',') === 'true,false' && focused.length === 0, 'DateField disabled transition closes the modal and cancels pending focus');
 }
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(9));
-  focus.dispose();
+  const { lifecycle } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.updateAvailability({ disabled: false, loading: true, error: false });
   clock.flush();
-  ok(focused.length === 0, 'unmount disposes pending focus work before it can call native accessibility APIs');
+  ok(focused.length === 0, 'DateField loading transition cancels pending focus before native delivery');
 }
 
 {
   const clock = fakeClock();
   const focused: number[] = [];
-  const focus = bindings(clock, focused);
-  focus.focusPicker(ref(11));
-  focus.restoreTrigger(ref(12));
-  focus.cancel();
-  focus.focusPicker(ref(13));
+  const { lifecycle } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.updateAvailability({ disabled: false, loading: false, error: true });
   clock.flush();
-  ok(focused.join(',') === '13', 'back-to-back open and close transitions leave no duplicate modal focus target');
+  ok(focused.length === 0, 'DateField error transition cancels pending focus before native delivery');
+}
+
+{
+  const clock = fakeClock();
+  const focused: number[] = [];
+  const { lifecycle } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.onRequestClose();
+  clock.flush();
+  ok(focused.join(',') === '201', 'DateField Android back handler restores the trigger through the same close lifecycle');
+}
+
+{
+  const clock = fakeClock();
+  const focused: number[] = [];
+  const { lifecycle, visibility } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.close();
+  lifecycle.open();
+  lifecycle.onModalShow();
+  clock.flush();
+  ok(visibility.join(',') === 'true,false,true' && focused.join(',') === '101', 'DateField back-to-back open-close leaves one current modal focus target');
+}
+
+{
+  const clock = fakeClock();
+  const focused: number[] = [];
+  const { lifecycle } = harness(clock, focused);
+  lifecycle.open();
+  lifecycle.onModalShow();
+  lifecycle.unmount();
+  clock.flush();
+  ok(focused.length === 0, 'DateField unmount disposes pending focus work before it can call native accessibility APIs');
 }
 
 console.log(`ACCESSIBILITY_CONTRACT PASS=${pass} FAIL=${failures.length}`);

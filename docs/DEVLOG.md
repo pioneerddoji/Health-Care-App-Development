@@ -2168,3 +2168,20 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - TDD RED: 새 DateField accessibility fixture는 `dateFieldAccessibility` 모듈 부재로 `ERR_MODULE_NOT_FOUND`를 확인했다. GREEN: `npm run test:accessibility` **PASS 6 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, `git diff --check` 통과.
 - clean `npm ci` 성공(기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건). Edge Deno contracts **PASS 11 / FAIL 0**와 share-report/billing-webhook/delete-account `deno check`, Expo web export **PASS 896 modules** 통과. local PG16/RLS와 Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #19 DateField 실제 lifecycle 접근성 계약 보강
+
+**한 일**
+- `DateField`가 실제로 사용하는 modal lifecycle을 clock·node resolver·native focus·state setter 주입 경계로 추출했다. open→`onShow`, backdrop 완료, Android `onRequestClose`, unmount가 이 경계를 통해서만 동작한다.
+- disabled/loading/error props가 modal을 fail-closed로 닫고 pending native focus를 취소하도록 연결했으며 trigger의 disabled accessibility state도 함께 노출한다.
+- 접근성 fixture를 binding 직접 호출에서 lifecycle harness로 교체해 exposed done target, target 부재, backdrop/Android back trigger 복원, disabled/loading/error, unmount, back-to-back open/close를 실행 검증한다.
+
+**결정과 이유**
+- binding 단위 fixture는 component handler wiring을 제거해도 green이 될 수 있었다. 실제 DateField가 위임하는 lifecycle 경계를 검증 대상으로 삼아, handler 연결과 stale focus 취소를 함께 회귀 고정한다.
+- TalkBack/VoiceOver 발화·탐색과 OS picker focus trap은 여전히 실기기 `needs-device`/캡틴 승인 gate이며, 건강정보·token·URL query는 label·fixture 출력에 넣지 않는다.
+
+**검증**
+- TDD RED: 아직 없는 `createDateFieldModalLifecycle` export를 import한 fixture가 예상대로 `SyntaxError: ... does not provide an export`로 실패했다. GREEN: clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, accessibility **PASS 9 / FAIL 0**, Expo web export **896 modules**, `git diff --check` 통과.
+- exact head Actions run `32672160748`은 Workers build를 포함한 8/8 check가 success이며 `rls-test`도 success다. 이 runner에는 `deno`가 없어 local Deno check를 실행하지 못했고, public GitHub API는 authenticated job-log 다운로드를 403으로 막아 PG16 completion marker 원문은 local에서 재확인하지 못했다. Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.

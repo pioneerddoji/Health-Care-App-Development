@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { tokens } from './ui';
-import { createDateFieldAccessibilityBindings } from './dateFieldAccessibility';
+import { createDateFieldModalLifecycle } from './dateFieldAccessibility';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -19,26 +19,28 @@ interface Props {
   onChange: (v: string) => void;
   placeholder?: string;
   maximumDate?: Date;       // date 모드: 미래 선택 제한 등
+  disabled?: boolean;
+  loading?: boolean;
+  error?: boolean;
 }
 
-export const DateField = ({ label, mode, value, onChange, placeholder, maximumDate }: Props) => {
+export const DateField = ({
+  label, mode, value, onChange, placeholder, maximumDate, disabled = false, loading = false, error = false,
+}: Props) => {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<React.ComponentRef<typeof Pressable>>(null);
   const doneRef = useRef<React.ComponentRef<typeof Pressable>>(null);
-  const focus = useRef(createDateFieldAccessibilityBindings({
+  const lifecycle = useRef(createDateFieldModalLifecycle({
     clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
     resolveNode: (node) => findNodeHandle(node as React.ComponentRef<typeof Pressable> | null),
     setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
+    setOpen,
+    triggerRef,
+    doneRef,
   })).current;
-  useEffect(() => () => focus.dispose(), [focus]);
-  const openPicker = () => {
-    focus.cancel();
-    setOpen(true);
-  };
-  const closePicker = () => {
-    setOpen(false);
-    focus.restoreTrigger(triggerRef);
-  };
+  useEffect(() => () => lifecycle.unmount(), [lifecycle]);
+  useEffect(() => lifecycle.updateAvailability({ disabled, loading, error }), [disabled, error, lifecycle, loading]);
+  const unavailable = disabled || loading || error;
 
   // 웹: 네이티브 픽커 미지원 → 텍스트 입력 폴백 (Playwright 테스트도 이 경로 사용)
   if (Platform.OS === 'web') {
@@ -69,7 +71,7 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
   };
 
   const handlePicked = (event: DateTimePickerEvent, picked?: Date) => {
-    if (Platform.OS === 'android') closePicker();
+    if (Platform.OS === 'android') lifecycle.close();
     if (event.type === 'dismissed' || !picked) return;
     onChange(mode === 'date' ? toDateStr(picked) : toTimeStr(picked));
   };
@@ -92,8 +94,9 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
         ref={triggerRef}
         accessibilityRole="button"
         accessibilityLabel={label}
-        accessibilityState={{ expanded: open }}
-        onPress={openPicker}
+        accessibilityState={{ expanded: open, disabled: unavailable }}
+        disabled={unavailable}
+        onPress={() => lifecycle.open()}
         style={s.input}
       >
         <Text style={value ? s.value : s.placeholder}>
@@ -108,14 +111,14 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
           visible={open}
           transparent
           animationType="fade"
-          onRequestClose={closePicker}
-          onShow={() => focus.focusPicker(doneRef)}
+          onRequestClose={() => lifecycle.onRequestClose()}
+          onShow={() => lifecycle.onModalShow()}
         >
           <View style={s.modal}>
-            <Pressable accessible={false} style={s.backdrop} onPress={closePicker} />
+            <Pressable accessible={false} style={s.backdrop} onPress={() => lifecycle.close()} />
             <View accessibilityViewIsModal style={s.sheet}>
               {picker}
-              <Pressable ref={doneRef} accessibilityRole="button" accessibilityLabel="선택 완료" style={s.done} onPress={closePicker}>
+              <Pressable ref={doneRef} accessibilityRole="button" accessibilityLabel="선택 완료" style={s.done} onPress={() => lifecycle.close()}>
                 <Text style={s.doneText}>완료</Text>
               </Pressable>
             </View>
