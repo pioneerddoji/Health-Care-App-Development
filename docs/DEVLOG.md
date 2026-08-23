@@ -1381,3 +1381,43 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - 이 엔트리의 수치는 현재 PR HEAD를 로컬 및 GitHub fresh PostgreSQL 16에서 재검증한 뒤
   PR 본문과 CI 로그 URL에 기록한다. 운영 DB에는 적용하지 않는다.
+
+---
+
+## 2026-08-23 — P0 서버 동의 증빙·완전 탈퇴 backend 계약 (이번 커밋)
+
+**한 일**
+- `schema_consent_deletion.sql`에 버전형 문서 레지스트리와 계정/대상자 불변 동의 증빙을 추가했다. 새 대상자 동의는 trigger로 자동 캡처하고, 재동의·철회·계정 약관 동의는 authenticated RPC로만 수행하게 했다.
+- `request_account_deletion(dry_run)`이 `sub` 일치 및 10분 이내 `reauthenticated_at` JWT claim을 확인하고, dry-run·멱등 job·비식별 감사·partial retry 경계를 만들도록 구현했다.
+- `delete-account` Edge Function이 공유 token 회수 → Storage → 소유 관계형 데이터 → Auth 순서를 수행한다. 공동 관리 대상자는 보존하되 탈퇴 계정이 작성한 records/reports와 파일은 제거해 FK로 Auth 삭제가 막히지 않게 했다.
+- fresh PG 공격 회귀(직접 증빙 쓰기, viewer 증빙 생성, 알려지지 않은 문서 버전, 재인증 없는 요청, dry-run, 멱등성, 타인 job 비노출, claim 주체 바꿔치기, 탈퇴 뒤 쓰기 차단)를 추가하고 CI의 RLS expected count를 83으로 올렸다. 배포/claim hook/롤백은 `docs/12_consent_account_deletion.md`에 문서화했다.
+
+**결정과 이유**
+- 과거 동의의 의미를 현재 앱 라벨로 해석하지 않도록 동의 당시의 항목 배열을 snapshot으로 남긴다. 확인할 수 없는 과거 문서 버전은 임의 증빙을 만들지 않는다.
+- Storage signed URL은 이미 발급된 뒤 즉시 회수할 수 없으므로 새 URL 발행을 먼저 막는 share token 회수를 첫 단계로 둔다. 완료 job에서 user UUID를 NULL로 소거해 운영 감사가 불필요한 식별자를 장기 보관하지 않게 했다.
+
+**검증**
+- `npm ci` 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (web bundle 2.54 MB), `git diff --check` 통과.
+- 이 환경에는 `psql`/PostgreSQL 16 및 `deno`/Supabase CLI가 없어 새 `rls_test.sql` 83건과 Edge Function은 로컬 실행하지 못했다. Draft PR의 GitHub PostgreSQL 16 CI와 스테이징 dry-run에서 반드시 확인한다.
+
+**다음**
+- client UI/repo 호출을 새 동의 RPC와 탈퇴 Edge Function 계약으로 바꾸는 작업은 PR #4 충돌 방지를 위해 별도 카드에서 수행한다. 운영 migration·실사용자 삭제·secrets 설정·main 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — P0 동의/탈퇴 RLS false-green 직접 복구
+
+**한 일**
+- `record_recipient_consent`와 `record_account_consent`의 함수 인자 `document_version`을 명시적으로 분리하고 문서 테이블 별칭을 사용해 PL/pgSQL column/parameter ambiguity를 제거했다.
+- 계정 약관 증빙 UPDATE는 명시적인 실패 `WITH CHECK (false)` RLS 정책으로 append-only를 강제했다. 성인 대상자 철회 fixture는 직접 UPDATE가 아니라 권한 검증 RPC를 호출하도록 맞췄다.
+- `RLS_SUITE_COMPLETE`와 CI expected count를 모두 93으로 동기화했다. Edge Function Deno typecheck도 delete-account client 타입과 expiration webhook row를 보정해 통과시켰다.
+
+**검증**
+- GitHub Actions child run `32643540040`의 `rls-test` REST API 로그를 직접 읽어 8개 FAIL의 원인을 확인했다.
+- `npm run typecheck` 통과, `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npm run build:web` 통과, Deno Edge checks 통과, `git diff --check` 통과.
+- 이 환경에는 local PostgreSQL/psql 및 실행 중인 Docker daemon이 없어 fresh PostgreSQL 16 RLS는 실행하지 못했다. push 후 GitHub Actions의 fresh PostgreSQL 16 job을 실제 근거로 확인한다.
+
+**다음**
+- CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.

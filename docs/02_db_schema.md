@@ -82,6 +82,11 @@ payload 키는 앱 코드와 동일한 **camelCase**로 저장한다(JSONB이므
   하며 이후 수정도 trigger가 거부한다. 적용·검증·비상 롤백은
   `docs/11_rls_data_integrity.md`를 단일 기준으로 따른다.
 
+### P0 동의 증빙·계정 탈퇴 (`schema_consent_deletion.sql`)
+- `consent_documents`와 recipient/account evidence 테이블은 문서 버전·항목 snapshot·시각·주체를 서버에서 append-only로 보관한다. raw `consents` 쓰기는 RPC로 대체한다.
+- `request_account_deletion(dry_run)`은 최근 재인증 custom JWT claim을 검증하고 멱등 job만 생성한다. Storage·공유 토큰·Auth 파기는 `delete-account` Edge Function이 정해진 순서로 수행한다.
+- 적용·재인증 claim·공동 데이터 소유권·partial retry·롤백 기준은 `docs/12_consent_account_deletion.md`를 단일 기준으로 따른다.
+
 ### 4단계 추가 — 레포트 발행 · 만료형 공유 링크
 - `reports`: owner/editor만 발행(`select` 자체는 viewer도 가능해 앱 내 열람은 허용).
   PDF는 Storage `reports` 버킷 `child_id/report_id.pdf` 경로에 업로드.
