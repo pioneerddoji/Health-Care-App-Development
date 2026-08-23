@@ -162,6 +162,7 @@ create trigger guardian_removal_revokes_issued_share_links
 
 -- 기본 스키마의 for-all 정책은 원문/해시를 임의 삽입하거나 만료·회수를 되돌릴 수 있다.
 drop policy if exists "share links by owner" on share_links;
+drop policy if exists "share link metadata by editor" on share_links;
 create policy "share link metadata by editor" on share_links for select
   using (exists (
     select 1 from reports r where r.id = report_id
