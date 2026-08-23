@@ -12,13 +12,13 @@ import { today, daysAgo } from '../src/lib/date';
 import { consentPlanFor, showsChildFeatures } from '../src/lib/recipient';
 import { recordTypesFor } from '../src/constants/recordTypes';
 import {
-  completeRecoveryWithClient, metadataProfile, processRecoveryUrl,
+  completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession,
 } from '../src/services/authLifecycle';
 import {
   parseDeletionResponse, runAccountDeletion,
 } from '../src/services/accountDeletion';
 import { socialAuthFailureMessage } from '../src/services/socialAuth';
-import { deletionSubmitDisabled, recoverySubmitDisabled } from '../src/services/authUxState';
+import { deletionSubmitDisabled, focusAccessibilityError, recoverySubmitDisabled } from '../src/services/authUxState';
 
 let pass = 0, fail = 0;
 const issues: string[] = [];
@@ -259,6 +259,23 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
   ok(socialAuthFailureMessage('구글', { errorCode: 'identity_already_exists' }).includes('이미'),
     '소셜 계정 충돌 안내');
 
+  let restored = 0;
+  const originalSession = { user: { id: 'original' } };
+  for (const outcome of [
+    { error: '취소' }, { error: 'provider-down' }, { userId: 'other-user' },
+  ]) {
+    let rejected = false;
+    try {
+      await reauthenticateSocialPreservingSession({
+        getSession: async () => originalSession,
+        beginSocial: async () => outcome,
+        restoreSession: async (session) => { if (session === originalSession) restored++; },
+      }, 'original');
+    } catch { rejected = true; }
+    ok(rejected, `소셜 재인증 ${outcome.error ?? '다른 계정'} 실패 시 원래 세션 유지/복원`);
+  }
+  ok(restored === 3, '소셜 재인증 충돌·취소·실패 모두 원래 세션 복원');
+
   const deleted = parseDeletionResponse({ status: 'deleted', deletedUserId: 'u1' });
   ok(deleted.status === 'deleted', '계정 삭제 성공 응답 파싱');
   let deletionFailure = '';
@@ -289,6 +306,9 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
     '복구 busy 상태 중복 제출 차단');
   ok(!recoverySubmitDisabled({ busy: false, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),
     '복구 유효 입력 제출 허용');
+  let focusedError: number | undefined;
+  focusAccessibilityError(42, { setAccessibilityFocus: (id) => { focusedError = id; } });
+  ok(focusedError === 42, '탈퇴 재인증/부분실패/auth-method 오류의 접근성 오류 포커스 직접 테스트');
   ok(deletionSubmitDisabled({ busy: true, phrase: '탈퇴합니다', methodReady: true }),
     '탈퇴 busy 상태 중복 제출 차단');
   ok(deletionSubmitDisabled({ busy: false, phrase: '다름', methodReady: true }),

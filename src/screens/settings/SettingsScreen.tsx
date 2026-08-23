@@ -1,6 +1,6 @@
 // 설정 — 보호자 공동 관리(초대/권한/해제), 동의 내역, 데이터 삭제
-import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, StyleSheet, Alert, View, Pressable } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, ScrollView, Text, StyleSheet, Alert, View, Pressable, findNodeHandle } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
@@ -10,7 +10,7 @@ import { formatShort } from '../../lib/date';
 import { TIER_META } from '../../constants/subscription';
 import type { ChildGuardian, ShareLinkInfo } from '../../types';
 import { SOCIAL_PROVIDERS, type SocialProvider } from '../../services/socialAuth';
-import { deletionSubmitDisabled } from '../../services/authUxState';
+import { deletionSubmitDisabled, focusAccessibilityError } from '../../services/authUxState';
 
 const ROLE_LABEL = { owner: '소유자', editor: '편집자', viewer: '열람자' } as const;
 
@@ -46,6 +46,11 @@ export const SettingsScreen = () => {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteMethods, setDeleteMethods] = useState<('email' | SocialProvider)[]>([]);
   const [deleteError, setDeleteError] = useState('');
+  const deleteErrorRef = useRef<React.ComponentRef<typeof Text>>(null);
+
+  useEffect(() => {
+    if (deleteError) focusAccessibilityError(findNodeHandle(deleteErrorRef.current), AccessibilityInfo);
+  }, [deleteError]);
 
   const isOwner = selectedChild ? roleOf(selectedChild.id) === 'owner' : false;
   const coGuardianCount = guardians.filter((g) => g.role !== 'owner').length;
@@ -331,7 +336,7 @@ export const SettingsScreen = () => {
                   placeholder="탈퇴합니다" autoCapitalize="none" />
                 {deleteMethods.includes('email') && <Field label="계정 삭제 재인증용 현재 비밀번호"
                   value={deletePassword} onChangeText={setDeletePassword} secureTextEntry editable={!deleteBusy} />}
-                {deleteError ? <Text accessible accessibilityRole="alert" accessibilityLiveRegion="assertive"
+                {deleteError ? <Text ref={deleteErrorRef} accessible accessibilityRole="alert" accessibilityLiveRegion="assertive"
                   style={styles.deleteError}>{deleteError}</Text> : null}
                 <Button label={deleteBusy ? '삭제 요청 중…' : '계정과 데이터 영구 삭제'} variant="danger"
                   onPress={() => removeAccount()}

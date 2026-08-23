@@ -9,7 +9,7 @@ import { supabase, supabaseUrl } from '../lib/supabase';
 import { consentPlanFor } from '../lib/recipient';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from './socialAuth';
-import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl } from './authLifecycle';
+import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
 import { parseDeletionResponse, runAccountDeletion } from './accountDeletion';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
@@ -422,11 +422,19 @@ export const supabaseRepo: Repo = {
         const originalUserId = data.user.id;
         if (socialProvider) {
           if (!methods.includes(socialProvider)) throw new Error('이 계정에 연결되지 않은 로그인 방법입니다.');
-          const outcome = await supabaseRepo.signInWithSocial(socialProvider);
-          if (outcome.error) throw new Error(outcome.error);
-          if (outcome.profile?.id !== originalUserId) {
-            throw new Error('다른 소셜 계정으로 인증되었습니다. 원래 계정으로 다시 시도해 주세요.');
-          }
+          await reauthenticateSocialPreservingSession({
+            getSession: async () => (await sb().auth.getSession()).data.session,
+            beginSocial: async () => {
+              const outcome = await supabaseRepo.signInWithSocial(socialProvider);
+              return { userId: outcome.profile?.id, error: outcome.error };
+            },
+            restoreSession: async (session) => {
+              const { error } = await sb().auth.setSession({
+                access_token: session.access_token, refresh_token: session.refresh_token,
+              });
+              throwIf(error);
+            },
+          }, originalUserId);
           return;
         }
         if (!methods.includes('email') || !data.user.email) {

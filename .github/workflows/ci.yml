@@ -49,8 +49,10 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Type-check account deletion Edge Function
-        run: deno check supabase/functions/delete-account/index.ts
+      - name: Test and type-check account deletion Edge Function
+        run: |
+          deno test supabase/functions/delete-account/contract_test.ts
+          deno check supabase/functions/delete-account/index.ts
 
   rls-test:
     runs-on: ubuntu-latest

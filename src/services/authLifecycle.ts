@@ -30,6 +30,28 @@ export const completeRecoveryWithClient = async (
   await client.signOut();
 };
 
+export interface SocialReauthenticationClient<Session> {
+  getSession(): Promise<Session | null>;
+  beginSocial(): Promise<{ userId?: string; error?: string }>;
+  restoreSession(session: Session): Promise<void>;
+}
+
+/** Restores the original account after OAuth cancellation, failure, or account mismatch. */
+export const reauthenticateSocialPreservingSession = async <Session>(
+  client: SocialReauthenticationClient<Session>, originalUserId: string,
+): Promise<void> => {
+  const original = await client.getSession();
+  if (!original) throw new Error('다시 로그인해 주세요.');
+  try {
+    const outcome = await client.beginSocial();
+    if (outcome.error) throw new Error(outcome.error);
+    if (outcome.userId !== originalUserId) throw new Error('다른 소셜 계정으로 인증되었습니다. 원래 계정으로 다시 시도해 주세요.');
+  } catch (error) {
+    await client.restoreSession(original);
+    throw error;
+  }
+};
+
 export type RecoveryLinkOutcome =
   | { status: 'ignored' }
   | { status: 'ready' }
