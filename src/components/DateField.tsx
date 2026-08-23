@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { tokens } from './ui';
-import { createAccessibilityFocusController } from '../services/accessibilityFocus';
+import { createDateFieldAccessibilityBindings } from './dateFieldAccessibility';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -25,21 +25,19 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<React.ComponentRef<typeof Pressable>>(null);
   const doneRef = useRef<React.ComponentRef<typeof Pressable>>(null);
-  const focus = useRef(createAccessibilityFocusController({
+  const focus = useRef(createDateFieldAccessibilityBindings({
     clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
+    resolveNode: (node) => findNodeHandle(node as React.ComponentRef<typeof Pressable> | null),
     setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
   })).current;
   useEffect(() => () => focus.dispose(), [focus]);
-  const focusRef = (ref: React.RefObject<React.ComponentRef<typeof Pressable> | null>) => {
-    focus.request(() => findNodeHandle(ref.current));
-  };
   const openPicker = () => {
     focus.cancel();
     setOpen(true);
   };
   const closePicker = () => {
     setOpen(false);
-    focusRef(triggerRef);
+    focus.restoreTrigger(triggerRef);
   };
 
   // 웹: 네이티브 픽커 미지원 → 텍스트 입력 폴백 (Playwright 테스트도 이 경로 사용)
@@ -111,16 +109,17 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
           transparent
           animationType="fade"
           onRequestClose={closePicker}
-          onShow={() => focusRef(doneRef)}
+          onShow={() => focus.focusPicker(doneRef)}
         >
-          <Pressable accessibilityRole="button" accessibilityLabel="날짜 및 시간 선택 닫기" style={s.backdrop} onPress={closePicker}>
-            <Pressable accessibilityViewIsModal style={s.sheet} onPress={() => {}}>
+          <View style={s.modal}>
+            <Pressable accessible={false} style={s.backdrop} onPress={closePicker} />
+            <View accessibilityViewIsModal style={s.sheet}>
               {picker}
               <Pressable ref={doneRef} accessibilityRole="button" accessibilityLabel="선택 완료" style={s.done} onPress={closePicker}>
                 <Text style={s.doneText}>완료</Text>
               </Pressable>
-            </Pressable>
-          </Pressable>
+            </View>
+          </View>
         </Modal>
       )}
     </View>
@@ -136,9 +135,8 @@ const s = StyleSheet.create({
   },
   value: { fontSize: 15, color: tokens.ink },
   placeholder: { fontSize: 15, color: tokens.muted },
-  backdrop: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end',
-  },
+  modal: { flex: 1, justifyContent: 'flex-end' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: {
     backgroundColor: tokens.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16,
     padding: 16, paddingBottom: 32,

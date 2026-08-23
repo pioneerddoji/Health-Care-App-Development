@@ -74,11 +74,16 @@ ok(ui.includes('accessibilityRole="button"')
   && settings.includes('accessibilityLiveRegion="assertive"')
   && recovery.includes('accessibilityLiveRegion="assertive"'), 'baseline button/input/error role, label, state, and live-region semantics');
 ok(dateFieldAccessibility.includes('onRequestClose={closePicker}')
-  && dateFieldAccessibility.includes('onShow={() => focusRef(doneRef)}')
-  && dateFieldAccessibility.includes('focusRef(triggerRef)')
+  && dateFieldAccessibility.includes('onShow={() => focus.focusPicker(doneRef)}')
+  && dateFieldAccessibility.includes('focus.restoreTrigger(triggerRef)')
   && dateFieldAccessibility.includes('accessibilityViewIsModal')
+  && dateFieldAccessibility.includes('<Pressable accessible={false} style={s.backdrop} onPress={closePicker} />')
+  && dateFieldAccessibility.includes('<View accessibilityViewIsModal style={s.sheet}>')
+  && !dateFieldAccessibility.includes('<Pressable accessibilityViewIsModal')
+  && !dateFieldAccessibility.includes('accessibilityLabel="날짜 및 시간 선택 닫기"')
+  && dateFieldAccessibility.includes('createDateFieldAccessibilityBindings')
   && focus.includes('if (node !== null) setAccessibilityFocus(node)')
-  && focus.includes('dispose()'), 'picker open/back/close focus restoration is deferred and fails closed for missing or unmounted targets');
+  && focus.includes('dispose()'), 'picker backdrop and sheet are sibling AX subtrees with independent picker/done targets and fail-closed focus restoration');
 
 const matrix = read('docs/18_internal_beta_native_runtime_gap_matrix.md');
 ok(matrix.includes('not-proven') && matrix.includes('needs-device')

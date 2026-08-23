@@ -2151,3 +2151,20 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건), `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume lifecycle **PASS 14 / FAIL 0**, native preflight(negative config fixtures 포함) **PASS 13 / FAIL 0** 통과.
 - Deno share/billing/delete-account contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 814 modules**, `git diff --check` 통과. local `psql`/Docker daemon이 없어 fresh PostgreSQL 16은 push 뒤 exact current-head CI completion marker로만 확인한다.
 - Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data access, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-23 — P1 iOS DateField AX 조상·focus 계약 재작업
+
+**한 일**
+- iOS `DateField` modal에서 backdrop close hit-area와 sheet를 sibling으로 분리했다. backdrop은 `accessible={false}`인 절대 배치 Pressable이고, sheet는 `accessibilityViewIsModal` View이므로 `DateTimePicker`와 `선택 완료` 버튼이 accessible Pressable 조상에 묶이지 않는 독립 target이다.
+- DateField 전용 focus binding을 추가해 clock·ref resolver·native focus API를 주입 가능하게 만들고, 실제 component는 `onShow`에서 picker action을, 닫기/Android back에서는 trigger를 delivery 시점에 해석해 focus한다.
+- accessibility fixture는 modal open, target 부재, close/Android back, disabled/loading/error/hidden cancel, unmount, back-to-back open/close를 component binding clock/ref test double로 검증한다. native preflight도 nested accessible Pressable 재도입을 실패시키도록 구조 계약을 보강했다.
+
+**결정과 이유**
+- Pressable backdrop이 sheet를 감싸면 RN 기본 accessible 조상이 child picker/done target을 group/hide할 수 있어 iOS `onShow` focus가 구조적으로 보장되지 않는다. interactive sheet wrapper를 View로 바꾸고 dismiss hit-area를 sibling으로 분리해 해당 false-green 경로를 제거했다.
+- label·fixture·출력에 건강정보, token, URL query를 추가하지 않았다. web export와 AppState 계약은 변경하지 않았고, TalkBack/VoiceOver 실제 발화·OS picker focus trap·실기기 탐색은 계속 `needs-device`/캡틴 승인 gate다.
+
+**검증**
+- TDD RED: 새 DateField accessibility fixture는 `dateFieldAccessibility` 모듈 부재로 `ERR_MODULE_NOT_FOUND`를 확인했다. GREEN: `npm run test:accessibility` **PASS 6 / FAIL 0**, native preflight **PASS 13 / FAIL 0**, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume **PASS 14 / FAIL 0**, `git diff --check` 통과.
+- clean `npm ci` 성공(기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건). Edge Deno contracts **PASS 11 / FAIL 0**와 share-report/billing-webhook/delete-account `deno check`, Expo web export **PASS 896 modules** 통과. local PG16/RLS와 Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않았다.
