@@ -30,6 +30,7 @@ create role anon;
 \i ../schema_settings.sql
 \i ../schema_recipients.sql
 \i ../schema_security.sql
+\i ../schema_consent_deletion.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -161,6 +162,7 @@ select expect_rows($q$update guardian_child set role = 'viewer' where guardian_i
 select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'viewer')$q$, 'A가 RPC로 B를 viewer로 변경');
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, 'B(viewer) 기록 차단');
+select expect_error($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'B(viewer) 민감정보 동의 증빙 생성 차단');
 select case when (select count(*) from daily_records) = 2 then 'PASS B(viewer) 열람은 가능' else 'FAIL viewer 열람 실패' end;
 
 -- ── Storage 정책 ──
@@ -195,9 +197,9 @@ select case when (select count(*) from children) + (select count(*) from daily_r
 
 -- ── 동의 철회/재동의 (5단계) ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update consents set revoked_at = now() where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null$q$, 1, 'A 민감정보 동의 철회');
+select expect_ok($q$select revoke_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health')$q$, 'A 민감정보 동의 철회');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '철회 후 기록 차단');
-select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 재동의');
+select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'A 재동의');
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '재동의 후 기록 허용');
 
 -- ── 사용자별 설정 (user_settings) — 본인 행만 읽기/쓰기 ──
@@ -219,10 +221,36 @@ select expect_error($q$insert into daily_records(child_id, author_id, record_dat
 select case when (select count(*) from children where recipient_type = 'child') = 2 then 'PASS 기존 행은 child 기본값 유지' else 'FAIL recipient_type 기본값' end;
 
 -- ── owner의 아이 삭제 cascade ──
+-- ── 동의 증빙과 계정 삭제 요청 계약 ───────────────────────────────
+-- account deletion은 Edge Function이 실제 Storage/Auth 파기를 수행한다. 여기서는
+-- DB 신뢰 경계(재인증 claim, RLS, dry-run, 멱등 request)를 fresh PG에서 공격한다.
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_error($q$insert into account_consent_evidence(document_type, document_version, document_items, subject_id, accepted_at) values ('terms', 'v1', '[]'::jsonb, auth.uid(), now())$q$, '계정 약관 증빙 직접 INSERT 차단');
+select expect_error($q$select record_account_consent('terms', 'unknown', 'self')$q$, '알 수 없는 약관 버전 차단');
+select expect_ok($q$select record_account_consent('terms', 'v1', 'self')$q$, '계정 약관 버전·항목·시각 서버 증빙');
+select case when (select count(*) from account_consent_evidence where subject_id = auth.uid() and document_type = 'terms' and document_version = 'v1' and jsonb_array_length(document_items) > 0) = 1
+  then 'PASS 계정 약관 증빙은 문서 항목을 스냅샷한다' else 'FAIL 계정 약관 증빙 스냅샷' end;
+select expect_error($q$update account_consent_evidence set document_version = 'v2'$q$, '계정 약관 증빙 수정 차단');
+select expect_error($q$select request_account_deletion(false)$q$, '재인증 claim 없는 탈퇴 요청 차단');
+select set_config('request.jwt.claims', json_build_object('sub', auth.uid(), 'reauthenticated_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SSOF'))::text, false);
+select expect_ok($q$select request_account_deletion(true)$q$, '재인증 후 dry-run 탈퇴 계획 생성');
+select case when (select count(*) from account_deletion_jobs where user_id = auth.uid()) = 0
+  then 'PASS dry-run은 삭제 작업을 만들지 않음' else 'FAIL dry-run이 삭제 작업을 남김' end;
+select expect_ok($q$select request_account_deletion(false)$q$, '재인증 후 탈퇴 작업 생성');
+select expect_ok($q$select request_account_deletion(false)$q$, '동일 탈퇴 요청 멱등 성공');
+select case when (select count(*) from account_deletion_jobs where user_id = auth.uid() and status = 'requested') = 1
+  then 'PASS 탈퇴 재시도는 활성 작업 하나만 유지' else 'FAIL 탈퇴 작업 중복 생성' end;
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select case when (select count(*) from account_deletion_jobs) = 0
+  then 'PASS 공동 보호자는 타인 탈퇴 작업을 볼 수 없음' else 'FAIL 탈퇴 작업 정보 노출' end;
+select expect_error($q$select request_account_deletion(false)$q$, '재인증 claim의 다른 계정 재사용 차단');
+
+-- ── owner의 아이 삭제 cascade ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', auth.uid(), current_date, 'note')$q$, '탈퇴 요청 후 새 건강 기록 차단');
 select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A(owner) 아이 삭제');
 -- 삭제한 대상자의 기록만 사라져야 한다 (다른 대상자의 기록은 남아 있어야 정상)
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=68
+\echo RLS_SUITE_COMPLETE expected=83
