@@ -12,6 +12,7 @@
     "verify:supabase": "node supabase/tests/verify_connection.mjs",
     "test:e2e": "tsx scripts/e2e-cycles.mts",
     "test:gating": "tsx scripts/subscription-smoke.mts",
+    "test:five-minute-wow": "tsx scripts/five-minute-wow.mts",
     "test:analytics": "tsx scripts/analytics-contract.mts"
   },
   "dependencies": {
