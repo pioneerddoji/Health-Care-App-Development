@@ -258,8 +258,7 @@ select case when
 set role anon;
 select expect_error($q$select run_scheduled_share_link_audit_retention()$q$, 'anon scheduled retention helper 실행 차단');
 select expect_error($q$select revoke_issued_share_links_on_guardian_removal()$q$, 'anon issuer revoke helper 실행 차단');
-set role authenticated;
-select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+reset role;
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
 set role service_role;
