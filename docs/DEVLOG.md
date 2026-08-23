@@ -1824,3 +1824,63 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   **PASS 893 modules**, `git diff --check` 통과.
 - 이 runner에는 `psql`이 없어 fresh PostgreSQL 16 RLS는 로컬에서 실행하지 못한다.
   push 뒤 exact current-head CI completion marker로 확인한다.
+
+---
+
+## 2026-08-24 — P0 5분 WOW 내부 퍼널 prototype·결정론 QA
+
+**한 일**
+- `fiveMinuteWow` 순수 상태기계와 내부 fixture를 추가했다. 최초 진입 → 첫 기록 → 초대/수락
+  → 다른 보호자 확인 → 병원 브리핑 미리보기의 4개 탭 경로와 synthetic elapsed를 고정하며,
+  상태 snapshot/resume으로 뒤로가기·재개도 검증한다.
+- clock/network/auth/record/invite/briefing port를 test double로 주입해 happy path와 취소,
+  만료, 중복 초대, 동의 철회, offline 뒤 명시 재시도, partial response, stale viewer 역할,
+  다른 circle 응답을 모두 fail-closed로 검사했다. circle/id를 갖춘 server confirmation이
+  없으면 다음 단계와 성공 표시는 절대 나오지 않는다.
+- fixture 상태에는 건강 원문·진단·약 정보가 없고 analytics/network SDK를 호출하지 않는다.
+  병원 레포트의 질문/보호자 전달 메모 입력에는 명시적 접근성 label을 추가했다.
+
+**결정과 이유**
+- 실제 auth/invite 또는 운영 데이터에 연결하지 않은 내부 비파괴 prototype으로 한정했다.
+  기존 화면·Repo·RLS 경계를 재작성하지 않고, 그 경계에 연결할 때 지켜야 할 confirmation과
+  UX 시간 예산을 executable contract로 만들었다.
+- 외부 참여자 모집·사례비·고객 접촉, production/store 배포, 운영 DB migration/data access,
+  OAuth/결제, secrets/DNS, 가격·브랜드 확정, main 병합은 수행하지 않았다.
+
+**검증**
+- RED: `src/services/fiveMinuteWow`가 없는 상태에서 `npx tsx scripts/five-minute-wow.mts`는
+  module-not-found로 실패했다. GREEN: `npm run test:five-minute-wow` **PASS 24 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건), `npm run typecheck`, E2E **PASS 189 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**, analytics contract **PASS 37 / FAIL 0**.
+- `npx --yes deno test` Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`,
+  `npx expo export --platform web --output-dir /tmp/carenote-p0-five-minute-wow-web --clear`
+  **PASS 893 modules**, `git diff --check` 통과.
+- Docker daemon와 `psql`이 없어 fresh PostgreSQL 16 RLS fixture는 로컬 재실행하지 못했다.
+  remote current-head CI에서 `PASS 181/181, FAIL 0, COMPLETION 1` 확인이 Draft PR/독립 ratchet
+  review 전 필수다. `npm ci`의 24 audit advisories와 allow-scripts 대기 esbuild 1건은 기존 환경
+  위험으로 남는다.
+
+## 2026-08-24 — P1 WOW guardian/resume server-confirmed fail-closed
+
+**한 일**
+- `confirmOtherGuardian()`에 별도 `guardian.confirm({ circleId })` 서버 경계를 추가했다.
+  완전한 `confirmed/circleId/non-empty id` 응답만 다음 단계로 진행하며, 취소·만료·중복·부분
+  응답·다른 circle·rejected promise·offline은 `invite_accepted`를 유지하고 재시도 가능하다.
+- caller-controlled resume snapshot의 `briefing_preview`는 `other_guardian_confirmed`로
+  downgrade한다. 재개된 여정은 briefing 서버를 다시 확정하기 전까지 성공 UI를 표시할 수 없다.
+- fixture에 forged snapshot, guardian partial/wrong-circle/rejected/offline/retry 회귀 계약을
+  추가했다.
+
+**결정과 이유**
+- WOW prototype의 모든 성공 표시는 서버 confirmation에 근거해야 한다. snapshot은 외부 입력으로
+  취급하고 최종 성공 상태의 영속 재개를 금지해 forged/corrupted data가 성공 UI를 만들지 못하게 했다.
+- production/store 배포, 운영 DB 작업, main 병합은 수행하지 않았다.
+
+**검증**
+- RED: 추가 guardian/resume 계약은 기존 구현에서 **13개 실패**로 재현됐다. GREEN:
+  `npm run test:five-minute-wow` **PASS 41 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건), `npm run typecheck`, analytics **PASS 37 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  **PASS 893 modules**, `git diff --check` 통과. Docker daemon와 `psql`이 없어 fresh PostgreSQL
+  16 RLS fixture는 로컬 실행하지 못했으며, push 뒤 exact current-head CI/PG16 marker를 확인한다.

@@ -173,7 +173,7 @@ export const ReportScreen = () => {
                 onPress={() => setQuestions((qs) => qs.filter((_, j) => j !== i))}> 삭제</Text>
             </Row>
           ))}
-          <Field label="" value={draft} onChangeText={setDraft}
+          <Field label="" accessibilityLabel="의사에게 질문" value={draft} onChangeText={setDraft}
             placeholder="예: 열이 떨어진 뒤에도 기침이 계속되는데 괜찮을까요?" />
           <Button label="+ 질문 추가" variant="ghost" onPress={addQuestion} />
         </Card>
@@ -182,7 +182,7 @@ export const ReportScreen = () => {
           <Text style={styles.cardTitle}>보호자 전달 메모</Text>
           <Muted>진료실에 전달할 관찰 내용을 직접 수정해 정리하세요. 앱은 진단이나 처방을 만들지 않습니다.</Muted>
           <View style={{ height: 8 }} />
-          <Field label="" value={briefingNote} onChangeText={setBriefingNote} multiline
+          <Field label="" accessibilityLabel="보호자 전달 메모" value={briefingNote} onChangeText={setBriefingNote} multiline
             placeholder="예: 열이 난 시간과 집에서 관찰한 변화를 함께 확인하고 싶습니다." />
         </Card>
 
