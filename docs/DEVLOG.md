@@ -1294,7 +1294,6 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **검증**
 - `npm ci` 후 `npm run typecheck` 통과.
-- `npm run test:e2e` **PASS 110 / FAIL 0**, `npm run test:gating` **PASS 27 / FAIL 0**.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
-
