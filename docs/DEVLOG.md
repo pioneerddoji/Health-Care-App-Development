@@ -1521,4 +1521,4 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run typecheck` 통과.
 - `npm run test:e2e` **PASS 171 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npx expo export --platform web --output-dir dist-web` 통과.
 - `npx --yes deno test --allow-env --allow-net` share/billing/delete-account contracts **10/0** 및 세 Edge Function `deno check` 통과.
-- `git diff --check` 통과. 이 worktree에는 `psql`이 없어 fresh PostgreSQL 16 RLS 172 assertion은 로컬 실행하지 못했으며, push 후 CI가 fail-closed marker를 확인해야 한다.
+- `git diff --check` 통과. 이 worktree에는 `psql`이 없어 fresh PostgreSQL 16 RLS는 로컬 실행하지 못했지만, push 후 GitHub Actions run `32651621687`에서 **PASS 172/172, FAIL 0, COMPLETION 1**을 확인했다.
