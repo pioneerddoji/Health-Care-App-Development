@@ -1,0 +1,149 @@
+import type { Profile } from '../types';
+
+export type NativeAppState = 'active' | 'background' | 'inactive' | 'unknown' | 'extension';
+
+export interface ResumeClient {
+  restoreSession(): Promise<Profile | null>;
+  /** current-generation guard must enclose the state application, not only confirmation. */
+  loadAll(isCurrent?: () => boolean): Promise<void>;
+  notificationDenied(): Promise<boolean>;
+  processAuthUrl(url: string): Promise<void>;
+}
+
+export interface ResumeCallbacks {
+  now(): number;
+  onPending(): void;
+  onConfirmed(input: { profile: Profile; notificationDenied: boolean }): void;
+  onInvalidated(): void;
+  onUrlRejected?(): void;
+}
+
+const DUPLICATE_URL_WINDOW_MS = 30_000;
+
+const urlFingerprint = (value: string): string => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${hash >>> 0}:${value.length}`;
+};
+
+const isRecoveryUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'carenote:' && url.protocol !== 'https:') return false;
+    const params = new URLSearchParams([
+      url.search.slice(1),
+      url.hash.slice(1),
+    ].filter(Boolean).join('&'));
+    return params.get('type') === 'recovery';
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * AppState와 Linking 이벤트를 UI에서 분리해 resume 시 성공 상태를 늦게 확정한다.
+ * 모든 외부 확인(세션·데이터·권한)이 끝나기 전에는 onConfirmed를 호출하지 않는다.
+ */
+export class AppResumeLifecycle {
+  private appState: NativeAppState = 'active';
+  private refreshing = false;
+  private refreshQueued = false;
+  private disposed = false;
+  private invalidated = false;
+  private generation = 0;
+  private readonly seenUrls = new Map<string, number>();
+
+  constructor(private readonly client: ResumeClient, private readonly callbacks: ResumeCallbacks) {}
+
+  /** 최초 boot도 foreground refresh와 같은 취소 경계를 공유한다. */
+  start(): void {
+    if (this.disposed || this.invalidated) return;
+    if (this.refreshing) {
+      this.refreshQueued = true;
+      return;
+    }
+    void this.refresh();
+  }
+
+  onAppStateChange(next: NativeAppState): void {
+    if (this.disposed) return;
+    const resumed = (this.appState === 'background' || this.appState === 'inactive') && next === 'active';
+    this.appState = next;
+    if (!resumed) return;
+    this.start();
+  }
+
+  async onUrl(url: string): Promise<void> {
+    if (this.disposed || !isRecoveryUrl(url)) return;
+    const now = this.callbacks.now();
+    const fingerprint = urlFingerprint(url);
+    for (const [known, seenAt] of this.seenUrls) {
+      if (now - seenAt > DUPLICATE_URL_WINDOW_MS) this.seenUrls.delete(known);
+    }
+    if (this.seenUrls.has(fingerprint)) return;
+    this.seenUrls.set(fingerprint, now);
+    // 복구 링크가 새 인증 상태를 열기 전에, 진행 중 boot/refresh가 이전 계정을 확정하지 못하게 한다.
+    this.invalidate();
+    try {
+      await this.client.processAuthUrl(url);
+    } catch {
+      // URL query와 토큰은 기록하지 않는다. auth 처리기는 자체적으로 안전한 UI 오류만 만든다.
+      if (!this.disposed) this.callbacks.onUrlRejected?.();
+    }
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.refreshQueued = false;
+    this.seenUrls.clear();
+  }
+
+  /** sign-out/recovery가 시작되면 이전 비동기 결과를 즉시 폐기한다. */
+  invalidate(): void {
+    if (this.disposed) return;
+    this.invalidated = true;
+    this.generation++;
+    this.refreshQueued = false;
+    this.callbacks.onInvalidated();
+  }
+
+  /**
+   * 새 인증이 데이터 bootstrap까지 성공한 뒤에만 다음 foreground refresh를 허용한다.
+   * invalidate 이전 generation은 계속 폐기하므로 sign-out/recovery 대기 중 이전 세션을
+   * 재확인할 수 없고, 이 메서드는 자체 refresh를 시작하지 않는다.
+   */
+  rearm(): void {
+    if (this.disposed) return;
+    this.invalidated = false;
+    this.generation++;
+    this.refreshQueued = false;
+  }
+
+  private async refresh(): Promise<void> {
+    const generation = this.generation;
+    this.refreshing = true;
+    if (this.isCurrent(generation)) this.callbacks.onPending();
+    try {
+      const profile = await this.client.restoreSession();
+      if (!profile) throw new Error('no session');
+      await this.client.loadAll(() => this.isCurrent(generation));
+      const notificationDenied = await this.client.notificationDenied();
+      if (this.isCurrent(generation)) this.callbacks.onConfirmed({ profile, notificationDenied });
+    } catch {
+      if (this.isCurrent(generation)) this.callbacks.onInvalidated();
+    } finally {
+      this.refreshing = false;
+      if (!this.disposed && this.refreshQueued) {
+        this.refreshQueued = false;
+        void this.refresh();
+      }
+    }
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.disposed && this.generation === generation;
+  }
+}

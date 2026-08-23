@@ -13,7 +13,9 @@
     "test:e2e": "tsx scripts/e2e-cycles.mts",
     "test:gating": "tsx scripts/subscription-smoke.mts",
     "test:five-minute-wow": "tsx scripts/five-minute-wow.mts",
-    "test:analytics": "tsx scripts/analytics-contract.mts"
+    "test:analytics": "tsx scripts/analytics-contract.mts",
+    "test:native-preflight": "tsx scripts/native-runtime-preflight.mts",
+    "test:app-resume-lifecycle": "tsx scripts/app-resume-lifecycle-contract.mts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

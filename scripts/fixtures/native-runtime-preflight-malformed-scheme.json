@@ -1,0 +1,13 @@
+{
+  "description": "Negative fixture: Expo native scheme must use URI-scheme characters.",
+  "appJson": {
+    "expo": {
+      "scheme": "care note",
+      "android": {
+        "permissions": ["READ_MEDIA_IMAGES", "POST_NOTIFICATIONS"]
+      },
+      "plugins": ["expo-notifications"]
+    }
+  },
+  "expectedError": "expo.scheme"
+}

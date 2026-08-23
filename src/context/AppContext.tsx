@@ -1,9 +1,9 @@
 // 앱 전역 상태 — 저장소 계층(repo)의 캐시.
 // mock 모드: 샘플 데이터 / supabase 모드: 로그인 후 서버에서 로드.
 import React, {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
-import { Linking } from 'react-native';
+import { AppState as NativeAppState, Linking } from 'react-native';
 import type {
   CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
@@ -12,9 +12,10 @@ import type {
 import { repo, SignUpInput } from '../services/repo';
 import type { SocialProvider } from '../services/socialAuth';
 import type { AccountDeletionResult } from '../services/accountDeletion';
-import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
+import { cancelReminder, isNotificationDenied, scheduleDueDateReminder } from '../services/reminders';
 import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
+import { AppResumeLifecycle } from '../services/appResumeLifecycle';
 
 interface AppState {
   mode: 'mock' | 'supabase';
@@ -66,6 +67,8 @@ interface AppState {
   completePasswordRecovery: (newPassword: string) => Promise<void>;
   recoveryRequest: { active: boolean; error?: string };
   dismissRecovery: () => void;
+  /** 마지막 foreground 재검증에서 확인한 알림 거부 상태. */
+  notificationDenied: boolean;
   getAccountAuthMethods: () => Promise<('email' | SocialProvider)[]>;
   deleteAccount: (input: { password?: string; socialProvider?: SocialProvider }) => Promise<AccountDeletionResult>;
 
@@ -118,9 +121,21 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [subscription, setSubscription] = useState<Subscription>({ tier: 'free' });
   const [settings, setSettings] = useState<UserSettings>({});
   const [recoveryRequest, setRecoveryRequest] = useState<{ active: boolean; error?: string }>({ active: false });
+  const [notificationDenied, setNotificationDenied] = useState(false);
+  const lifecycleRef = useRef<AppResumeLifecycle | null>(null);
 
-  const loadAll = useCallback(async () => {
+  const clearSession = useCallback(() => {
+    setGuardian(null); setConsented(false); setNotificationDenied(false);
+    setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+    setVaccinations([]); setCheckups([]); setCareTasks([]); setSelectedChildId(null);
+    setRoles({}); setSensitiveConsent({}); setSettings({}); setBooting(false);
+  }, []);
+
+  const loadAll = useCallback(async (isCurrent?: () => boolean) => {
     const all = await repo.loadAll();
+    // Resume invalidation must guard the data mutations themselves: a late repo
+    // result must not repopulate a cleared session between lifecycle checks.
+    if (isCurrent && !isCurrent()) return;
     setChildren(all.children);
     setRecords(all.records);
     setGrowth(all.growth);
@@ -136,35 +151,40 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       cur && all.children.some((c) => c.id === cur) ? cur : all.children[0]?.id ?? null);
   }, []);
 
-  // 앱 시작: 저장된 세션 복원 (supabase 모드)
-  useEffect(() => {
-    (async () => {
-      try {
-        const profile = await repo.restoreSession();
-        if (profile) {
-          setGuardian(profile);
-          setConsented(true); // 기존 계정은 가입 시 동의 완료
-          initBilling(repo.mode, profile.id).catch(() => {});
-          await loadAll();
-        }
-      } finally {
-        setBooting(false);
-      }
-    })();
-  }, [loadAll]);
-
   useEffect(() => {
     const unsubscribe = repo.subscribePasswordRecovery((error) =>
       setRecoveryRequest({ active: true, error }));
-    const handleUrl = ({ url }: { url: string }) => {
-      repo.processAuthLink(url).catch((error) => setRecoveryRequest({
-        active: true, error: error instanceof Error ? error.message : String(error),
-      }));
+    const lifecycle = new AppResumeLifecycle({
+      restoreSession: () => repo.restoreSession(),
+      loadAll,
+      notificationDenied: isNotificationDenied,
+      processAuthUrl: (url) => repo.processAuthLink(url),
+    }, {
+      now: () => Date.now(),
+      onPending: () => setBooting(true),
+      onConfirmed: ({ profile, notificationDenied: denied }) => {
+        setGuardian(profile);
+        setConsented(true);
+        initBilling(repo.mode, profile.id).catch(() => {});
+        setNotificationDenied(denied);
+        setBooting(false);
+      },
+      onInvalidated: clearSession,
+      onUrlRejected: () => setRecoveryRequest({
+        active: true,
+        error: '비밀번호 재설정 링크를 확인할 수 없습니다. 새 링크를 요청해 주세요.',
+      }),
+    });
+    lifecycleRef.current = lifecycle;
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => { void lifecycle.onUrl(url); });
+    const appStateSubscription = NativeAppState.addEventListener('change', (state) => lifecycle.onAppStateChange(state));
+    Linking.getInitialURL().then((url) => { if (url) void lifecycle.onUrl(url); }).catch(() => {});
+    lifecycle.start();
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current = null;
+      lifecycle.dispose(); unsubscribe(); linkSubscription.remove(); appStateSubscription.remove();
     };
-    const subscription = Linking.addEventListener('url', handleUrl);
-    Linking.getInitialURL().then((url) => { if (url) handleUrl({ url }); }).catch(() => {});
-    return () => { unsubscribe(); subscription.remove(); };
-  }, []);
+  }, [clearSession, loadAll]);
 
   const value = useMemo<AppState>(() => ({
     mode: repo.mode,
@@ -214,6 +234,9 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(true); // 기존 계정은 가입 시 동의 완료
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      // sign-out invalidation 이후에는 새 인증의 bootstrap 성공 전까지 foreground
+      // refresh를 열지 않는다. rearm은 다음 AppState resume부터만 적용된다.
+      lifecycleRef.current?.rearm();
       return null;
     },
 
@@ -224,6 +247,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(!out.isNewUser); // 첫 진입은 동의 화면을 거친다
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 
@@ -235,18 +259,14 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       setConsented(false); // 신규 가입은 동의 화면을 거친다
       if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 
     signOut: async () => {
+      lifecycleRef.current?.invalidate();
       await endBillingSession().catch(() => {});
       await repo.signOut();
-      setGuardian(null);
-      setConsented(false);
-      setChildren([]); setRecords([]); setGrowth([]);
-      setMedications([]); setVaccinations([]); setCheckups([]);
-      setSelectedChildId(null);
-      setSettings({});
     },
 
     grantConsents: () => setConsented(true),
@@ -254,12 +274,13 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
     requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
     completePasswordRecovery: async (newPassword) => {
+      lifecycleRef.current?.invalidate();
       await repo.completePasswordRecovery(newPassword);
-      setGuardian(null); setConsented(false);
       setRecoveryRequest({ active: false });
     },
     recoveryRequest,
     dismissRecovery: () => setRecoveryRequest({ active: false }),
+    notificationDenied,
     getAccountAuthMethods: () => repo.getAccountAuthMethods(),
     deleteAccount: async (input) => {
       const result = await repo.deleteAccount(input);
@@ -384,7 +405,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
        vaccinations, checkups, careTasks, selectedChildId, roles, sensitiveConsent, subscription,
-       settings, recoveryRequest, loadAll]);
+       settings, recoveryRequest, notificationDenied, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;
 };

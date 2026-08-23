@@ -1940,3 +1940,194 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   재대조했다. 로컬 `psql`/Docker 부재는 계속 문서에 명시했으며 local fresh PG16 실행을 주장하지 않았다.
 - 운영 migration/data access, telemetry, 사용자/외부 cohort·보상·고객 접촉, OAuth·결제·SMS,
   DNS/secrets, production/store 배포 및 `main` 병합은 수행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 내부 베타 native runtime gap matrix·정적 사전점검
+
+**한 일**
+- `docs/18_internal_beta_native_runtime_gap_matrix.md`에 picker, 사진 권한, PDF/share,
+  local notification, deep-link/auth resume, app resume, accessibility를 source/config 근거와
+  함께 **proven (static) / not-proven / needs-device**로 분리했다.
+- `scripts/native-runtime-preflight.mts`와 누락 notification declaration 실패 fixture를 추가했다.
+  preflight는 `app.json`과 source만 읽고 external telemetry, registry, SDK, network, credential을
+  사용하지 않으며 native runtime 성공을 주장하지 않는다.
+- `npm run test:native-preflight` 및 GitHub CI의 동명 독립 job을 추가했다.
+
+**결정과 이유**
+- Expo web export·Node contract가 native OS permission, PDF renderer, share sheet, notification,
+  lifecycle, TalkBack/VoiceOver를 증명하는 false-green이 되지 않도록 실제 기기 확인 항목을
+  명시적으로 남겼다. `AppState` lifecycle 구독은 현재 source에 없으므로 not-proven으로 고정했다.
+- 누락 config fixture가 실패해야 preflight 자체가 단순 존재 확인 green으로 퇴화하지 않는다.
+
+**검증**
+- clean `npm ci` 후 `npm run typecheck`, `npm run test:analytics` **PASS 37 / FAIL 0**,
+  `npm run test:five-minute-wow` **PASS 41 / FAIL 0**, `npm run test:e2e` **PASS 189 / FAIL 0**,
+  `npm run test:gating` **PASS 41 / FAIL 0**, `npm run test:native-preflight`
+  **PASS 9 / FAIL 0**. failure fixture는 `POST_NOTIFICATIONS` 누락을 실패로 확인했다.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  **PASS 893 modules**, `git diff --check` 통과. fresh PG16은 commit/push 뒤 current-head
+  GitHub CI completion marker로만 대조하며 local 실행으로 주장하지 않는다.
+- Android/iOS 기기·에뮬레이터, EAS/store build/upload, signing/bundle ID, OAuth/payment/Supabase
+  운영 연결, secrets/cost, external users, production deploy와 `main` 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-24 — PR #18 native scheme preflight false-green 차단
+
+**한 일**
+- `native-runtime-preflight`의 `expo.scheme` 검증을 truthy 확인에서 URI scheme 형식의 non-empty
+  string 검사로 강화했다. 배열·객체 같은 non-string과 공백을 포함한 malformed 문자열은 fail-closed로
+  `expo.scheme` 오류를 낸다.
+- 기존 `POST_NOTIFICATIONS` 누락 fixture를 유지하고, non-string 배열 및 malformed string scheme의
+  두 negative fixture를 추가했다. 이 fixture들이 preflight에서 반드시 실패해야 PASS가 된다.
+
+**결정과 이유**
+- `expo.scheme=[]`가 truthy여서 정적 preflight를 통과하던 P1 false-green을 차단한다. URI scheme의
+  첫 문자는 영문자이고 이후에는 영문자·숫자·`+`·`.`·`-`만 허용해 native deep-link 선언을 정적으로
+  보수적으로 검증한다.
+- matrix의 `not-proven`/`needs-device`, rollback, 캡틴 승인 gate 및 기존 기능별 정적 증거는 변경하지
+  않았다. native OS runtime 성공은 계속 주장하지 않는다.
+
+**검증**
+- RED: 새 invalid-scheme contract 추가 직후 기존 구현은 `NATIVE_RUNTIME_PREFLIGHT PASS=9 FAIL=1`로
+  실패했다. GREEN: `npm run test:native-preflight` **PASS 11 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건),
+  `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 893 modules**,
+  `git diff --check` 통과. fresh PostgreSQL 16은 push 뒤 exact current-head GitHub CI completion marker로만
+  대조한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 AppState foreground resume fail-closed 계약
+
+**한 일**
+- `AppResumeLifecycle`을 추가해 `background`/`inactive`에서 `active`로 돌아올 때 저장 세션,
+  서버 데이터 재로드, 알림 권한 상태가 모두 끝난 뒤에만 UI 성공 상태를 확정하도록 했다. 세션 없음,
+  offline/rejected/partial refresh는 로컬 보호자·건강 데이터 상태를 비우고 로그인 gate로 fail-closed한다.
+- AppContext는 AppState/Linking listener를 한 lifecycle 소유자로 묶어 cleanup 시 unmount callback을
+  막고, URL은 `carenote://`만 허용한다. malformed/non-app/중복 URL은 무시하며 URL query/token을
+  로그나 오류 UI에 넣지 않는다; 처리 거부는 고정된 재설정 안내만 노출한다.
+- clock, AppState, Linking, permission/repo test double 기반 `test:app-resume-lifecycle` contract를
+  추가했다. foreground, duplicate active, malformed/duplicate/rejected URL, offline/partial refresh,
+  back-to-back transition, unmount cleanup을 결정론적으로 검사한다.
+
+**결정과 이유**
+- foreground 이벤트에서 이전 화면을 먼저 성공으로 보이면 stale auth/permission/data가 false-green이
+  된다. 재검증 중 `booting` gate를 먼저 올리고, server data와 OS permission 확인이 모두 성공한 경우에만
+  상태를 확정한다.
+- URL 원문이나 query를 dedupe/logging에 보관하지 않고 짧은 수명의 fingerprint만 사용한다. 실기기
+  Android/iOS lifecycle 성공은 여전히 이 정적/fixture 검증으로 주장하지 않으며 `needs-device` 및
+  캡틴 승인 gate를 유지한다. 롤백은 이 커밋을 revert한다.
+
+**검증**
+- TDD RED: lifecycle module 부재에서 새 contract가 `ERR_MODULE_NOT_FOUND`로 실패했고, URL reject
+  callback 추가 전에는 `PASS=6 FAIL=1`로 실패했다. GREEN: `npm run test:app-resume-lifecycle`
+  **PASS 7 / FAIL 0**.
+- clean `npm ci` 후 `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW
+  **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, native preflight
+  **PASS 11 / FAIL 0**, `git diff --check` 통과.
+- Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 894 modules**
+  통과. 이 runner에는 `psql`/실행 Docker가 없어 fresh PG16은 local로 주장하지 않고 push 뒤 exact
+  current-head CI completion marker를 확인한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 web recovery·foreground 권한·lifecycle race fail-closed 보완
+
+**한 일**
+- `AppResumeLifecycle` URL 경계를 recovery 파라미터 기반으로 바꿔 `carenote:`와 HTTPS web recovery를
+  처리하고, malformed/non-recovery URL은 처리하지 않는다. URL/token을 로그나 UI 오류로 노출하지 않는다.
+- 최초 boot, foreground refresh, recovery/sign-out이 한 lifecycle generation을 공유하도록 통합했다.
+  invalidate 뒤 늦게 끝난 restore/load callback은 보호자·건강 데이터·권한 상태를 다시 확정할 수 없다.
+- `VaccinationScreen`은 mount 시 자체 조회를 하지 않고 AppContext의 foreground 재확인
+  `notificationDenied`를 사용한다. 따라서 설정 앱 왕복 후 denied↔granted 배너가 mounted 화면에도 갱신된다.
+- lifecycle contract에 HTTPS recovery/non-recovery 음성 URL, boot·resume·recovery/sign-out race,
+  unmount, denied→granted→denied permission fixture를 추가했다. native preflight에는 화면이
+  authoritative context 값을 소비하는 정적 fixture를 추가했다.
+
+**결정과 이유**
+- recovery URL 파서는 기존 `processRecoveryUrl()`의 scheme-agnostic contract를 유지하므로 lifecycle은
+  URL scheme 자체가 아닌 안전한 HTTPS/native recovery 이벤트만 통과시킨다. external/non-recovery
+  URL은 auth 처리기로 보내지 않아 token 처리 면적을 늘리지 않는다.
+- boot effect와 resume effect를 별도로 두면 늦은 성공 callback이 이후 sign-out/recovery invalidation을
+  덮을 수 있다. 한 lifecycle의 generation check와 invalidate를 단일 취소 경계로 사용한다.
+
+**검증**
+- TDD RED: 새 boot invalidation fixture는 `AppResumeLifecycle.start is not a function`으로 실패했다.
+  GREEN: `npm run test:app-resume-lifecycle` **PASS 11 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13), `npm run typecheck`, analytics
+  **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**, native preflight **PASS 12 / FAIL 0**, `git diff --check` 통과.
+- Expo web export **PASS 883 modules**. 이 runner에는 `deno`가 설치되어 있지 않아 Edge contracts/
+  `deno check`는 실행하지 못했다; 성공으로 주장하지 않으며 push 뒤 exact current-head CI/PG16 marker와
+  canonical independent review로 대조한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 stale load·post-invalidation resume fail-closed 보완
+
+**한 일**
+- `AppResumeLifecycle`이 `loadAll`에 현재 generation guard를 전달하고, `AppContext.loadAll`이 repo 결과의
+  React state 적용 전에 그 guard를 검사하도록 바꿨다. 따라서 invalidate 뒤 늦게 끝난 `repo.loadAll()`은
+  children/records/settings 등 clear된 세션 데이터를 다시 채우지 않는다.
+- `invalidate()`는 lifecycle의 새 `start()`와 queued foreground refresh를 terminal하게 차단한다. sign-out이
+  billing 종료와 repo sign-out을 기다리는 중 발생한 background→active도 이전 세션을 restore/confirm하지 않는다.
+- 결정론 lifecycle fixture에 stale `loadAll` state-application 및 invalidate 뒤 resume 두 회귀 사례를 추가했고,
+  native gap matrix의 현재 AppState 설명을 source와 같은 static proof/needs-device 경계로 갱신했다.
+
+**결정과 이유**
+- `onConfirmed` 직전만 generation을 검사하면 `loadAll` 안의 React setter는 이미 stale 데이터를 적용할 수 있다.
+  guard를 데이터 mutation 경계로 전달해 fail-closed 상태를 유지한다.
+- auth invalidation 뒤에 lifecycle을 재시작할 합법적 경로는 없으며, sign-in은 명시적 repo 흐름으로 데이터를
+  로드한다. 그러므로 invalidate된 lifecycle은 과거 세션을 재확인하기보다 정지해야 한다.
+
+**검증**
+- TDD RED: 새 fixture 추가 직후 `APP_RESUME_LIFECYCLE PASS=11 FAIL=2`로 stale application과
+  post-invalidation resume을 재현했다. GREEN: `npm run test:app-resume-lifecycle` **PASS 13 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건),
+  `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, native preflight (negative fixtures 포함)
+  **PASS 12 / FAIL 0**, Expo web export **PASS 869 modules**, `git diff --check` 통과.
+- 이 runner에는 `deno`와 `psql`이 없고 Docker daemon 연결도 불가하여 Edge contracts/`deno check`와 fresh
+  PostgreSQL 16 RLS suite는 local 성공으로 주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store,
+  signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data, 외부 메시지,
+  DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 새 인증 뒤 AppState lifecycle 재가동 보완
+
+**한 일**
+- `AppResumeLifecycle.rearm()`을 추가했다. `invalidate()`는 이전 generation과 queued refresh를 계속
+  폐기하며, `rearm()`은 자체 refresh 없이 새 generation에서 이후 foreground resume만 다시 허용한다.
+- 이메일·소셜 로그인과 이메일 확인 불필요 가입은 `repo` 인증과 `loadAll()` data bootstrap이 모두 성공한 뒤에만
+  lifecycle을 re-arm한다. 따라서 sign-out/recovery 대기 중에는 과거 세션 확인이 막히고, 새 인증 뒤에는
+  AppProvider 재마운트 없이 일반 background→active refresh가 복구된다.
+- lifecycle contract에 invalidate → old-session resume 차단 → 새 인증 re-arm → 이후 resume confirm의
+  결정론 fixture를 추가했다.
+
+**결정과 이유**
+- AppProvider는 프로세스 동안 유지되므로 terminal invalidation만 두면 로그아웃 뒤 새 로그인도 lifecycle을
+  영구적으로 잃는다. re-arm 경계를 인증 결과만이 아니라 데이터 bootstrap 성공 뒤로 늦춰, 대기 중인
+  sign-out의 이전 세션을 새 generation으로 확인하는 race를 열지 않는다.
+- password-recovery 완료는 복구 세션을 종료하고 재로그인을 요구하는 흐름이므로 re-arm하지 않는다.
+
+**검증**
+- TDD RED: `rearm` 부재에서 새 fixture가 `TypeError: lifecycle.rearm is not a function`으로 실패했다.
+  GREEN: `npm run test:app-resume-lifecycle` **PASS 14 / FAIL 0**, `npm run typecheck`, analytics
+  **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**, native preflight **PASS 12 / FAIL 0**, Expo web export **PASS 894 modules**,
+  Edge Deno contracts **PASS 10 / FAIL 0**와 세 Edge Function `deno check`, `git diff --check` 통과.
+- `npm ci`는 성공했다(기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건).
+  이 runner에는 `psql`이 없고 Docker daemon 연결도 불가하여 fresh PostgreSQL 16 RLS suite는 local 성공으로
+  주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영
+  연결, production migration/data, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
