@@ -10,7 +10,9 @@ create extension if not exists "pgcrypto";
 alter table share_links add column if not exists token_hash text;
 update share_links
 set revoked_at = coalesce(revoked_at, now()),
-    token_hash = coalesce(token_hash, encode(digest(coalesce(token, id::text), 'sha256'), 'hex'))
+    -- `token` was dropped after the first successful stage4 application. JSON extraction keeps
+    -- this upgrade idempotent while still hashing a pre-stage4 plaintext token when it exists.
+    token_hash = coalesce(token_hash, encode(digest(coalesce(to_jsonb(share_links)->>'token', id::text), 'sha256'), 'hex'))
 where token_hash is null;
 alter table share_links alter column token_hash set not null;
 alter table share_links alter column token_hash set default encode(digest(gen_random_bytes(32), 'sha256'), 'hex');

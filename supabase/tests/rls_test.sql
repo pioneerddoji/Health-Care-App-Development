@@ -223,7 +223,7 @@ select case when (select count(*) from share_link_access_audit_hourly where outc
   then 'PASS 거절 audit은 전역 시간별 집계 1행으로 제한' else 'FAIL 거절 audit write amplification' end;
 -- 발급 폭주도 원시 audit 행을 만들지 않는다. 200회 발급은 현재 시간대 issued 집계 하나만 증가시킨다.
 select count(*) from generate_series(1, 200) cross join lateral (
-  select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)
+  select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, (24 + generate_series * 0)::integer)
 ) ignored;
 select case when (select count(*) from share_link_access_audit_hourly
                   where outcome = 'issued' and bucket_at = date_trunc('hour', clock_timestamp() at time zone 'UTC')) = 1
