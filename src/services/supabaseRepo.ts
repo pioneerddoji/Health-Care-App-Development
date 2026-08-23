@@ -11,6 +11,7 @@ import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from './socialAuth';
 import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
 import { deletionResponseFromFunctionsHttpError, runAccountDeletion } from './accountDeletion';
+import { assertCareTaskCompletionResult } from './careTaskCompletion';
 import type {
   CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
@@ -173,7 +174,6 @@ const careTaskFromRow = (r: any): CareTask => ({
 const throwIf = (error: { message: string } | null): void => {
   if (error) throw new Error(error.message);
 };
-
 
 const currentUserId = async (): Promise<string> => {
   const { data } = await sb().auth.getUser();
@@ -651,8 +651,12 @@ export const supabaseRepo: Repo = {
   },
 
   async completeCareTask(taskId: string) {
-    const { error } = await sb().from('care_tasks').update({ completed_at: new Date().toISOString() }).eq('id', taskId);
-    throwIf(error);
+    const result = await sb().from('care_tasks')
+      .update({ completed_at: new Date().toISOString() })
+      .eq('id', taskId)
+      .select('id')
+      .single();
+    assertCareTaskCompletionResult(result);
   },
 
   async addVaccination(v: Omit<Vaccination, 'id'>): Promise<Vaccination> {

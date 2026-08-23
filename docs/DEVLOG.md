@@ -1762,3 +1762,32 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - 이 runner에는 native `deno`/`psql`이 없어 Deno는 `npx --yes deno`로 실행했고 fresh
   PostgreSQL 16 RLS fixture는 로컬 실행하지 못했다. current-head GitHub CI의 fresh PG16
   completion marker 재확인이 후속 독립 ratchet review의 필수 조건이다.
+
+---
+
+## 2026-08-24 — P1 care-task 완료 0행 응답 fail-closed
+
+**한 일**
+- `supabaseRepo.completeCareTask`가 UPDATE 뒤 `select('id').single()`로 실제 단일 행을
+  받아야만 성공으로 돌아가도록 바꿨다. 따라서 RLS로 숨겨진 task 또는 존재하지 않는
+  task의 `{ error: null, data: null, status: 204 }` 응답은 예외가 되어 AppContext의
+  로컬 완료 상태 변경과 알림 취소 이전에 중단된다.
+- 순수 결과 검증 helper와 E2E 회귀를 추가해 0행/서버 오류 거부와 단일 반환 행만의
+  성공을 명시적으로 고정했다. 동의 철회 후 acknowledgement·기존 task 완료를
+  fail-closed하는 기존 회귀도 유지했다.
+
+**결정과 이유**
+- UI 캐시나 알림을 보정하는 대신 저장소 경계에서 서버 확정을 강제했다. 이 경계가
+  실패하면 호출자는 예외를 받아 로컬 side effect를 실행하지 못하므로 RLS와 앱 상태가
+  어긋나지 않는다.
+- 운영 DB/OAuth·결제·배포/DNS·secrets 및 main 병합은 수행하지 않았다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, E2E
+  **PASS 185 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- `npx --yes deno test` Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check`,
+  `npx expo export --platform web --output-dir /tmp/carenote-p1-care-task-web --clear`
+  **PASS 892 modules**, `git diff --check` 통과.
+- 이 runner에는 `psql`이 없어 fresh PostgreSQL 16 fixture는 로컬에서 실행하지 못한다.
+  push 뒤 exact current-head GitHub `rls-test`의 `PASS 181/181, FAIL 0, COMPLETION 1`을
+  별도 ratchet review 전에 확인한다.

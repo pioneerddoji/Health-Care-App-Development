@@ -20,6 +20,7 @@ import {
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { socialAuthFailureMessage } from '../src/services/socialAuth';
 import { deletionSubmitDisabled, focusAccessibilityError, recoverySubmitDisabled } from '../src/services/authUxState';
+import { assertCareTaskCompletionResult } from '../src/services/careTaskCompletion';
 
 let pass = 0, fail = 0;
 const issues: string[] = [];
@@ -449,6 +450,21 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
   await repo.deleteAccount({ password: 'Changed123!' });
   ok((await repo.restoreSession()) === null, '계정 삭제 뒤 세션 정리');
   ok((await repo.loadAll()).children.length === 0, '계정 삭제 뒤 로컬 대상자 데이터 정리');
+}
+
+// ── P1 Supabase 완료 전이: RLS-hidden/없는 task의 204/0행은 성공이 아니다 ──
+{
+  let zeroRowRejected = false;
+  try { assertCareTaskCompletionResult({ data: null, error: null }); } catch { zeroRowRejected = true; }
+  ok(zeroRowRejected, 'care-task 완료 204/0행은 fail-closed되어 로컬 완료/알림 취소로 진행되지 않음');
+
+  let serverFailurePropagated = false;
+  try { assertCareTaskCompletionResult({ data: null, error: { message: 'RLS denied' } }); } catch { serverFailurePropagated = true; }
+  ok(serverFailurePropagated, 'care-task 완료 서버 오류는 fail-closed로 전파');
+
+  let confirmed = true;
+  try { assertCareTaskCompletionResult({ data: { id: 'task-1' }, error: null }); } catch { confirmed = false; }
+  ok(confirmed, 'care-task 완료는 반환된 단일 행에서만 서버 확정');
 }
 
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
