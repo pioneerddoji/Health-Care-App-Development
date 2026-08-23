@@ -58,6 +58,13 @@ begin
     or new.created_at is distinct from old.created_at then
     raise exception 'care task payload is immutable';
   end if;
+  -- Referential actions preserve completion state; they are not a second
+  -- completion transition and must remain possible after a task is completed.
+  if new.completed_at is not distinct from old.completed_at
+    and (new.record_id is distinct from old.record_id
+      or new.assignee_id is distinct from old.assignee_id) then
+    return new;
+  end if;
   if old.completed_at is not null or new.completed_at is null then
     raise exception 'care task completion is write-once';
   end if;
