@@ -77,7 +77,7 @@ jobs:
         working-directory: supabase/tests
         run: |
           set -Eeuo pipefail
-          expected_passes=117
+          expected_passes=134
           psql "postgresql://postgres:postgres@localhost:5432/postgres" \
             -v ON_ERROR_STOP=1 -f rls_test.sql 2>&1 | tee rls_out.txt
 

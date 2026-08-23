@@ -229,20 +229,36 @@ select case when purge_share_link_access_audit(interval '30 days') >= 1
 reset role;
 select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
   then 'PASS 만료 audit 보존 purge 확인' else 'FAIL 만료 audit 보존' end;
--- 자동 경로: 허용된 소비는 전역 시간당 1회 bounded purge를 실행한다.
-set role authenticated;
-select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '자동 purge 회귀용 공유 링크 발행');
-select set_config('test.auto_purge_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
-reset role;
+-- 트래픽과 독립적인 예약 경로: idle 상태에서도 service_role scheduled runner가 만료 audit을 지운다.
 insert into share_link_access_audit(share_link_id, outcome, occurred_at)
 values ((select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days');
-update share_link_audit_maintenance set last_purged_at = null where singleton;
 set role service_role;
-select consume_share_link_token(current_setting('test.auto_purge_share_token_hash'));
+select case when run_scheduled_share_link_audit_retention() >= 1
+  then 'PASS idle scheduled retention purge 실행' else 'FAIL idle scheduled retention purge 미실행' end;
 reset role;
 select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
-  then 'PASS 허용 consume은 bounded retention purge를 자동 실행' else 'FAIL 자동 retention purge 누락' end;
+  then 'PASS idle 상태에서도 만료 audit 보존' else 'FAIL idle retention 누락' end;
+-- 1,000행보다 큰 backlog도 예약 runner가 반복 bounded batch로 모두 drain한다.
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+select (select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days'
+from generate_series(1, 1201);
+set role service_role;
+select case when run_scheduled_share_link_audit_retention() >= 1201
+  then 'PASS scheduled retention backlog>1000 drain' else 'FAIL scheduled retention backlog drain' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS scheduled retention backlog 완전 제거' else 'FAIL scheduled retention backlog 잔존' end;
+select case when
+  has_function_privilege('service_role', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('anon', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
+  and not has_function_privilege('anon', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
+  then 'PASS scheduled/helper RPC는 service_role 외 실행 불가' else 'FAIL scheduled/helper RPC 권한 범위' end;
+set role anon;
+select expect_error($q$select run_scheduled_share_link_audit_retention()$q$, 'anon scheduled retention helper 실행 차단');
+select expect_error($q$select revoke_issued_share_links_on_guardian_removal()$q$, 'anon issuer revoke helper 실행 차단');
+set role authenticated;
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
 set role service_role;
@@ -266,10 +282,45 @@ select case when consume_share_link_token(current_setting('test.revoked_share_to
   then 'PASS 회수 후 Edge token 소비 차단' else 'FAIL 회수 뒤 token 재사용' end;
 set role authenticated;
 
--- ── B 스스로 나가기 / C(외부인) 완전 차단 ──
-select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'); -- 이하 B 본인 시점으로 복귀
-select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 스스로 나가기');
-select case when (select count(*) from children) = 0 then 'PASS 나간 후 아이 안 보임' else 'FAIL' end;
+-- ── 발행자 현재 권한: owner 제거 / self-leave / 계정 삭제가 bearer URL을 즉시 회수한다 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'editor')$q$, 'A가 B를 issuer 회귀용 editor로 승격');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B(editor) 서버 발행자 링크 생성');
+select set_config('test.owner_removed_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' order by created_at desc limit 1), false);
+select case when (select issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid from share_links where token_hash = current_setting('test.owner_removed_issuer_token_hash'))
+  then 'PASS issued_by는 서버 auth.uid로 기록' else 'FAIL issued_by 서버 결정 누락' end;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A owner가 B 관계 제거');
+select case when (select revoked_at is not null from share_links where token_hash = current_setting('test.owner_removed_issuer_token_hash'))
+  then 'PASS owner 제거는 B 발행 링크 회수' else 'FAIL owner 제거 issuer link 회수 누락' end;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.owner_removed_issuer_token_hash')) is null
+  then 'PASS owner 제거 뒤 consume 현재권한 차단' else 'FAIL owner 제거 뒤 stale issuer 접근' end;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'A가 self-leave 회귀용 B 재초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B self-leave 전 링크 생성');
+select set_config('test.self_leave_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and revoked_at is null order by created_at desc limit 1), false);
+select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'B 스스로 나가기');
+set role service_role;
+select case when consume_share_link_token(current_setting('test.self_leave_issuer_token_hash')) is null
+  then 'PASS self-leave 뒤 B 발행 링크 차단' else 'FAIL self-leave 뒤 stale issuer 접근' end;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'A가 account-delete 회귀용 B 재초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B account deletion 전 링크 생성');
+select set_config('test.account_deleted_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and revoked_at is null order by created_at desc limit 1), false);
+reset role;
+select expect_rows($q$delete from auth.users where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 계정 삭제 cascade');
+set role service_role;
+select case when consume_share_link_token(current_setting('test.account_deleted_issuer_token_hash')) is null
+  then 'PASS account deletion 뒤 B 발행 링크 차단' else 'FAIL account deletion 뒤 stale issuer 접근' end;
+set role authenticated;
+
+-- ── C(외부인) 완전 차단 ──
 select set_user('cccccccc-cccc-cccc-cccc-cccccccccccc');
 select case when (select count(*) from children) + (select count(*) from daily_records) + (select count(*) from storage.objects) = 0 then 'PASS 외부인 C 완전 차단' else 'FAIL 외부인 접근' end;
 
@@ -360,4 +411,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=117
+\echo RLS_SUITE_COMPLETE expected=134

@@ -1437,3 +1437,21 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.
+
+---
+
+## 2026-08-23 — 공유 링크 발행자 회수·트래픽 독립 audit 보존 계약
+
+**한 일**
+- 공유 링크에 서버가 결정한 `issued_by`를 기록하고, guardian 관계 제거 trigger가 같은 트랜잭션에서 해당 발행자의 활성 링크를 회수하도록 했다. consume은 발행자가 현재 owner/editor인지도 재검사한다.
+- fresh PG 공격 회귀로 owner 제거, editor self-leave, Auth 계정 삭제 cascade 뒤의 service-role consume 차단을 각각 검증한다.
+- 성공/거절 audit은 링크별 분당 한 표본으로 제한하고, `run_scheduled_share_link_audit_retention()`은 1,000행 배치를 최대 100회(시간당 100,000행) drain한다. `supabase/retention_schedule.sql`은 pg_cron 시간당 실행을 별도 승인 배포 계약으로 버전 관리한다. 이 변경은 스케줄을 배포하거나 운영 DB를 변경하지 않는다.
+- 내부 SECURITY DEFINER helper는 PUBLIC/anon/authenticated에서 EXECUTE를 회수하고, idle expiry, backlog>1,000 반복 drain, helper privilege denial을 fresh PG 회귀에 추가했다.
+
+**결정과 이유**
+- bearer URL의 발행 당시 권한만 신뢰하지 않는다. 관계 해제·계정 삭제에 연결된 즉시 회수와 consume 시점 재검사를 함께 적용해 cascade 누락이나 비정상 삭제 경로도 차단한다.
+- retention은 성공 트래픽에 의존하지 않으며, 예약 작업의 bounded 실행은 WAL/락을 제한하면서 단일 링크의 허용 최대 audit 입력(성공/거절 각 60, 총 120행/시간)을 크게 상회한다.
+
+**검증**
+- 아래 커밋의 로컬/원격 실행 결과와 PR #6 CI run은 Kanban handoff에 정확히 기록한다.
+- 운영 배포, production migration/data access, main merge는 수행하지 않는다.

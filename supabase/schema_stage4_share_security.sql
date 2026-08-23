@@ -22,10 +22,19 @@ create unique index if not exists share_links_token_hash_key on share_links(toke
 create index if not exists share_links_active_lookup on share_links(token_hash)
   where revoked_at is null;
 
+alter table share_links add column if not exists issued_by uuid references profiles(id) on delete set null;
+-- 이전 stage4 링크는 보고서 작성자에게만 귀속한다. 새 링크는 RPC가 auth.uid()를 기록한다.
+update share_links l set issued_by = r.created_by
+from reports r where r.id = l.report_id and l.issued_by is null;
+create index if not exists share_links_active_issuer on share_links(issued_by)
+  where revoked_at is null;
+
 alter table share_links add column if not exists last_access_at timestamptz;
 alter table share_links add column if not exists access_count integer not null default 0
   check (access_count >= 0);
--- 거절 폭주를 감사 행/갱신 폭주로 바꾸지 않는다. 링크별 분당 1회만 표본을 남긴다.
+-- 성공·거절 모두 링크별 분당 1개 표본으로 제한한다. 단일 링크의 최대 audit 유입은
+-- 120행/시간(각 outcome 60)이며, 예약 drain 100,000행/시간보다 충분히 작다.
+alter table share_links add column if not exists granted_audit_at timestamptz;
 alter table share_links add column if not exists rate_limit_audit_at timestamptz;
 
 -- 원문 token, IP, User-Agent, 수신자 식별자는 보존하지 않는다.
@@ -73,21 +82,39 @@ begin
 end;
 $$;
 
-create or replace function maybe_purge_share_link_access_audit() returns integer
+-- 예약 작업은 한 번에 100배치(100,000행)까지만 drain한다. pg_cron의 시간당 실행과
+-- 링크별 성공 audit 상한(60행/시간)을 조합해 최악 허용 단일 링크 유입보다 큰 용량을 보장한다.
+create or replace function run_scheduled_share_link_audit_retention() returns integer
 language plpgsql security definer set search_path = public as $$
 declare
-  claimed boolean;
+  deleted_count integer := 0;
+  batch_count integer;
 begin
-  update share_link_audit_maintenance
-  set last_purged_at = clock_timestamp()
-  where singleton and (last_purged_at is null or last_purged_at <= clock_timestamp() - interval '1 hour')
-  returning true into claimed;
-  if coalesce(claimed, false) then
-    return purge_share_link_access_audit(interval '30 days', 1000);
-  end if;
-  return 0;
+  for batch_no in 1..100 loop
+    batch_count := purge_share_link_access_audit(interval '30 days', 1000);
+    deleted_count := deleted_count + batch_count;
+    exit when batch_count < 1000;
+  end loop;
+  return deleted_count;
 end;
 $$;
+
+-- guardian 관계가 제거되면 해당 guardian이 발행한 bearer URL을 같은 트랜잭션에서 회수한다.
+-- 계정 삭제의 auth→profile cascade도 guardian_child DELETE를 발생시켜 동일 계약을 따른다.
+create or replace function revoke_issued_share_links_on_guardian_removal() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update share_links l set revoked_at = coalesce(l.revoked_at, clock_timestamp())
+  from reports r
+  where l.report_id = r.id and r.child_id = old.child_id
+    and l.issued_by = old.guardian_id and l.revoked_at is null;
+  return old;
+end;
+$$;
+drop trigger if exists guardian_removal_revokes_issued_share_links on guardian_child;
+create trigger guardian_removal_revokes_issued_share_links
+  before delete on guardian_child
+  for each row execute function revoke_issued_share_links_on_guardian_removal();
 
 -- 기본 스키마의 for-all 정책은 원문/해시를 임의 삽입하거나 만료·회수를 되돌릴 수 있다.
 drop policy if exists "share links by owner" on share_links;
@@ -125,8 +152,8 @@ begin
   -- 32 random bytes = 256 bits. 반환은 이 한 번뿐이고 DB에는 SHA-256만 저장한다.
   v_token := encode(gen_random_bytes(32), 'hex');
   v_expires_at := now() + make_interval(hours => p_expires_in_hours);
-  insert into share_links(report_id, token_hash, expires_at)
-  values (p_report_id, encode(digest(v_token, 'sha256'), 'hex'), v_expires_at)
+  insert into share_links(report_id, token_hash, expires_at, issued_by)
+  values (p_report_id, encode(digest(v_token, 'sha256'), 'hex'), v_expires_at, auth.uid())
   returning id into v_link_id;
   insert into share_link_access_audit(share_link_id, outcome) values (v_link_id, 'issued');
 
@@ -161,8 +188,13 @@ declare
 begin
   if p_token_hash !~ '^[0-9a-f]{64}$' then return null; end if;
 
-  select l.id, l.revoked_at, l.expires_at, l.last_access_at, l.rate_limit_audit_at,
-         r.storage_path, has_sensitive_consent(r.child_id) as has_sensitive_consent
+  select l.id, l.revoked_at, l.expires_at, l.last_access_at, l.granted_audit_at, l.rate_limit_audit_at,
+         r.storage_path, has_sensitive_consent(r.child_id) as has_sensitive_consent,
+         exists (
+           select 1 from guardian_child gc
+           where gc.child_id = r.child_id and gc.guardian_id = l.issued_by
+             and gc.role in ('owner', 'editor')
+         ) as issuer_authorized
   into v_link
   from share_links l
   join reports r on r.id = l.report_id
@@ -171,7 +203,7 @@ begin
   for update of l;
 
   if not found or v_link.revoked_at is not null or v_link.expires_at <= now()
-     or not v_link.has_sensitive_consent
+     or not v_link.has_sensitive_consent or not v_link.issuer_authorized
      or v_link.storage_path is null then
     return null;
   end if;
@@ -189,10 +221,11 @@ begin
   update share_links
   set last_access_at = clock_timestamp(), access_count = access_count + 1
   where id = v_link.id;
-  insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'granted');
-  -- 별도 운영 스케줄러 누락으로 보존이 무한해지지 않게, 허용된 접근에서만 시간당 1회
-  -- 최대 1,000행 purge를 자동 수행한다.
-  perform maybe_purge_share_link_access_audit();
+  if v_link.granted_audit_at is null
+     or v_link.granted_audit_at <= clock_timestamp() - interval '1 minute' then
+    update share_links set granted_audit_at = clock_timestamp() where id = v_link.id;
+    insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'granted');
+  end if;
   return jsonb_build_object('storage_path', v_link.storage_path);
 end;
 $$;
@@ -203,7 +236,10 @@ revoke all on function create_secure_share_link(uuid, integer) from public;
 revoke all on function revoke_secure_share_link(uuid) from public;
 revoke all on function consume_share_link_token(text) from public;
 revoke all on function purge_share_link_access_audit(interval, integer) from public;
+revoke all on function run_scheduled_share_link_audit_retention() from public;
+revoke all on function revoke_issued_share_links_on_guardian_removal() from public;
 grant execute on function create_secure_share_link(uuid, integer) to authenticated;
 grant execute on function revoke_secure_share_link(uuid) to authenticated;
 grant execute on function consume_share_link_token(text) to service_role;
 grant execute on function purge_share_link_access_audit(interval, integer) to service_role;
+grant execute on function run_scheduled_share_link_audit_retention() to service_role;
