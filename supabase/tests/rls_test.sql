@@ -274,17 +274,23 @@ select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'editor B의 소유권 이전 시도 차단');
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid)$q$, 'A가 기존 editor B에게 소유권 이전');
+-- authenticated actor의 RLS-visible subset이 아니라 service/reset-role 경계에서 두 관계 행을
+-- 모두 확인한다. 그래야 owner가 정확히 한 명인지 실제 테이블 상태를 검증한다.
+reset role;
 select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
   and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
   and (select role = 'editor' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
   then 'PASS 소유권 이전은 단일 owner를 보존하고 이전 owner를 editor로 강등' else 'FAIL 소유권 이전 owner 불변식' end;
+set role authenticated;
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'B가 A에게 소유권 되돌림');
+reset role;
 select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
   and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
   then 'PASS 소유권 이전 재시도도 단일 owner 보존' else 'FAIL 소유권 되돌림 owner 불변식' end;
 
 -- ── A가 B를 열람자로 강등 → B 기록 차단 ──
+set role authenticated;
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_rows($q$update guardian_child set role = 'viewer' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 0, '직접 역할 변경 차단');
 select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'viewer')$q$, 'A가 RPC로 B를 viewer로 변경');

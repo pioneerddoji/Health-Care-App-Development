@@ -156,6 +156,20 @@ for (let cycle = 1; cycle <= 5; cycle++) {
     && afterTransfer.find((guardian) => guardian.guardianId === target.guardianId)?.role === 'owner'
     && afterTransfer.find((guardian) => guardian.isMe)?.role === 'editor',
   '소유권 이전은 target 단일 owner와 이전 owner editor를 원자적으로 보존');
+  // 이전 owner는 이제 editor이므로 새 owner의 역할/관계/초대 권한을 다시 얻을 수 없어야 한다.
+  const rejects = async (operation: () => Promise<void>) => {
+    try { await operation(); return false; } catch { return true; }
+  };
+  ok(await rejects(() => repo.updateGuardianRole(transferChild.id, target.guardianId, 'viewer')),
+    '소유권 이전 뒤 이전 owner는 새 owner를 강등할 수 없음');
+  ok(await rejects(() => repo.removeGuardian(transferChild.id, target.guardianId)),
+    '소유권 이전 뒤 이전 owner는 새 owner를 제거할 수 없음');
+  ok(await rejects(() => repo.inviteGuardian(transferChild.id, 'stale-owner-invite@example.com', 'viewer')),
+    '소유권 이전 뒤 이전 owner는 공동 보호자를 초대할 수 없음');
+  const afterStaleAttempts = await repo.listGuardians(transferChild.id);
+  ok(afterStaleAttempts.filter((guardian) => guardian.role === 'owner').length === 1
+    && afterStaleAttempts.find((guardian) => guardian.guardianId === target.guardianId)?.role === 'owner',
+  '이전 owner의 모든 후속 시도 뒤에도 owner는 정확히 한 명');
   // 이 메모리 테스트의 현재 주체는 이제 editor다. 데모 재로그인으로 독립 후속 fixture를 복원한다.
   await repo.signIn('demo@kidcare.app', 'password123');
 }

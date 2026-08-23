@@ -1580,7 +1580,7 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **검증**
 - `npm ci`, `npx tsc --noEmit`, `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
-- Edge contracts **PASS 11 / FAIL 0**, delete-account/billing-webhook/share-report `deno check` 통과, `npx expo export --platform web --output-dir dist-web` 통과 (891 modules), `git diff --check` 통과.
+- Edge contracts **PASS 10 / FAIL 0**, delete-account/billing-webhook/share-report `deno check` 통과, `npx expo export --platform web --output-dir dist-web` 통과 (891 modules), `git diff --check` 통과.
 - GitHub REST API: PR #9 OPEN/DRAFT, base `chore/git-development-workflow`, head `fix/p0-integrate-approved-stacks` @ `ab6ff8751b6cad89e8d67d494118ceb6dacc9f25`; Workers Builds/e2e/gating/edge-contracts/rls/typecheck 모두 `completed/success`.
 
 **다음**
@@ -1704,8 +1704,29 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - RED: 새 E2E fixture가 `Repo.transferGuardianOwnership` 부재로 TypeScript 오류를 냈다.
   GREEN: `npm run typecheck`, `npm run test:e2e` **PASS 175 / FAIL 0**,
   `npm run test:gating` **PASS 41 / FAIL 0**, `npm run test:analytics` **PASS 37 / FAIL 0**.
-- Deno Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check` 통과,
+- Deno Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check` 통과,
   `npx expo export --platform web --output-dir /tmp/carenote-trust-web --clear` 통과(891 modules).
 - 이 runner에는 PostgreSQL client가 없고 Docker daemon도 연결되지 않아 fresh PG16 RLS는 실행하지
   못했다. `rls_test.sql` completion marker는 `expected=181`로 보강했으며, 독립 review CI의 fresh PG16
   gate가 반드시 재실행해야 한다.
+
+---
+
+## 2026-08-24 — PR #13 review finding: mock 권한 재검증·RLS fixture current-head 정정
+
+**한 일**
+- `memoryRepo`의 공동 보호자 초대·역할 변경·해제마다 현재 actor의 owner 역할과 대상 관계를
+  다시 확인하도록 해, ownership transfer 뒤 stale former owner가 새 owner를 강등/제거하거나
+  새 초대를 추가하지 못하게 했다.
+- E2E에 위 세 거부 경로와 모든 시도 후 exactly-one-owner 회귀를 추가했다.
+- RLS ownership assertion은 authenticated actor가 볼 수 있는 subset 대신 `reset role` 경계에서
+  두 guardian 행과 exactly-one-owner를 확인하게 바꾸고, CI 기대값/fixture completion marker를
+  `181`로 일치시켰다. Edge contract 실제 수는 `10`으로 문서화했다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, analytics **PASS 37 / FAIL 0**, E2E **PASS 179 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**.
+- Deno Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  (891 modules), `git diff --check` 통과.
+- 이 runner에는 `psql` 및 Docker daemon이 없어 fresh PostgreSQL 16 fixture는 로컬 실행할 수 없다.
+  push 뒤 current-head GitHub `rls-test`가 `PASS 181/181, FAIL 0, COMPLETION 1`을 충족해야 한다.

@@ -44,6 +44,15 @@ const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription' | 'setti
 
 let guardians: ChildGuardian[] = [];
 
+// Supabase RPC의 auth.uid()/my_role(childId) 권한 경계를 mock에서도 동일하게 확인한다.
+// 소유권 이전 뒤에도 로그인한 프로필은 이전 owner이므로, 매 변이 직전에 현재 역할을 재조회해야 한다.
+const requireOwner = (childId: string): string => {
+  const actorId = guardian?.id ?? 'guardian-1';
+  const actor = guardians.find((g) => g.childId === childId && g.guardianId === actorId);
+  if (actor?.role !== 'owner') throw new Error('대상자의 소유자만 이 작업을 수행할 수 있습니다');
+  return actorId;
+};
+
 const myRoles = (): AllData['roles'] =>
   Object.fromEntries(guardians.filter((g) => g.isMe).map((g) => [g.childId, g.role]));
 
@@ -460,9 +469,14 @@ const base: Repo = {
   },
 
   async inviteGuardian(childId: string, email: string, role: 'editor' | 'viewer') {
+    requireOwner(childId);
     const existing = guardians.find(
       (g) => g.childId === childId && g.name === email.split('@')[0]);
-    if (existing) { existing.role = role; return; }
+    if (existing) {
+      if (existing.role === 'owner') throw new Error('owner 역할은 변경할 수 없습니다');
+      existing.role = role;
+      return;
+    }
     // 서버(invite_guardian RPC)와 동일한 공동 보호자 한도 — mock에서도 미러
     const coCount = guardians.filter((g) => g.childId === childId && g.role !== 'owner').length;
     const maxCo = ENTITLEMENTS[subscription.tier].maxCoGuardians;
@@ -478,6 +492,11 @@ const base: Repo = {
   },
 
   async updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer') {
+    const actorId = requireOwner(childId);
+    const target = guardians.find((g) => g.childId === childId && g.guardianId === guardianId);
+    if (!target || target.guardianId === actorId || target.role === 'owner') {
+      throw new Error('변경할 공동 보호자를 찾을 수 없습니다');
+    }
     guardians = guardians.map((g) =>
       g.childId === childId && g.guardianId === guardianId ? { ...g, role } : g);
   },
@@ -497,6 +516,11 @@ const base: Repo = {
   },
 
   async removeGuardian(childId: string, guardianId: string) {
+    const actorId = requireOwner(childId);
+    const target = guardians.find((g) => g.childId === childId && g.guardianId === guardianId);
+    if (!target || target.guardianId === actorId || target.role === 'owner') {
+      throw new Error('제거할 공동 보호자를 찾을 수 없습니다');
+    }
     guardians = guardians.filter(
       (g) => !(g.childId === childId && g.guardianId === guardianId));
   },
