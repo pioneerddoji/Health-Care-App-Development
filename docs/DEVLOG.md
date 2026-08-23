@@ -1273,3 +1273,28 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - 우리 앱은 Supabase (REST 도메인) + 소셜 OAuth (팝업) + 서명 URL (data URI)
   을 함께 쓰므로 CSP를 일부러 넣지 않았다 (실배포에서 실제 요청을 본 뒤
   connect-src만 좁혀야 함).
+---
+
+## 2026-08-23 — GitHub 개발 버전관리·체크포인트 품질 게이트 정착 (이번 커밋)
+
+**한 일**
+- `docs/development-workflow.md`에 에이전트별 worktree·전용 브랜치, `feat`/`fix`/
+  `chore` 등 브랜치 규칙, 작은 원자 커밋과 검증 가능한 체크포인트 push, 장기 작업의
+  Draft PR 운영 기준을 문서화.
+- PR 증거(기준/최종 SHA·검증·위험·롤백), rebase/충돌/rollback, secrets·건강정보
+  노출 금지, 구현자/리뷰어 분리 및 `main` 병합·settings 변경의 캡틴 승인 원칙을 명시.
+- PR 템플릿을 추가하고 CI에 `repository-tests` 상태를 추가해 E2E 110건과 구독 게이팅
+  27건을 PR 자동 검증에 포함. branch protection의 필수 상태·별도 승인 권고도 문서화.
+
+**결정과 이유**
+- 큰 단일 커밋과 로컬에만 남은 작업으로 인한 손실을 피하기 위해, 독립적으로 검증 가능한
+  작은 단위마다 원격 checkpoint를 남기고 장기 작업은 Draft PR로 조기 가시화한다.
+- 기존 `typecheck`/RLS CI만으로는 저장소 계층과 구독 게이팅 회귀를 막지 못하므로,
+  이미 로컬에서 유지되는 두 스모크를 별도 required-status 후보로 추가했다.
+
+**검증**
+- `npm ci` 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 110 / FAIL 0**, `npm run test:gating` **PASS 27 / FAIL 0**.
+- `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
+  권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
