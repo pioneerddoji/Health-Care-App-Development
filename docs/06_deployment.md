@@ -9,7 +9,7 @@
 
 | 항목 | 위치 | 상태 |
 |---|---|---|
-| DB 스키마 + RLS + Storage 정책 | `supabase/schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` | SQL Editor에서 순서대로 실행 |
+| DB 스키마 + RLS + Storage 정책 | `schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` → `schema_security.sql` → `schema_consent_deletion.sql` → `schema_stage4_share_security.sql` | SQL Editor에서 순서대로 실행 |
 | 공유 링크 Edge Function | `supabase/functions/share-report` | `deploy --no-verify-jwt`로 배포 |
 | **연결 검증 스크립트** | `npm run verify:supabase` | 프로젝트 생성 직후 1회 실행 |
 | RLS 회귀 테스트 (58건) | `supabase/tests/rls_test.sql` + GitHub Actions CI | push/PR마다 자동 |
@@ -24,7 +24,9 @@
 1. [ ] supabase.com에서 프로젝트 생성 — **리전 선택 주의**: 한국 사용자 대상이면
    `ap-northeast-2 (서울)` 권장. 국외 리전 선택 시 개인정보처리방침 4조(국외 이전) 구체화 필요.
 2. [ ] SQL Editor에서 `supabase/schema.sql` → `schema_stage3.sql` →
-   `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` 순서대로 실행
+   `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` →
+   `schema_security.sql` → `schema_consent_deletion.sql` → `schema_stage4_share_security.sql` 순서대로 실행.
+   마지막 단계는 기존 원문 공유 token을 회수하고 hash-only 링크로 전환합니다.
 3. [ ] Supabase CLI 로그인 후 Edge Function 배포:
    ```bash
    supabase functions deploy share-report --no-verify-jwt --project-ref <ref>

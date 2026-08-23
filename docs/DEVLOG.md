@@ -772,6 +772,51 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 사용자 확인 필요: Play 중복 검색, 상표 검색(CareNote는 해외 의료·요양 분야에
 동명 서비스가 있어 글로벌 확장 시 충돌 가능성), 번들 ID 최종 확정.
 
+## 2026-08-23 — P0 병원 공유 링크 보안 강화
+
+- `schema_stage4_share_security.sql`을 추가해 256-bit 난수 원문 token은 발행 RPC의
+  단 한 번의 응답으로만 반환하고, DB에는 SHA-256 hash만 저장하도록 전환했다. 기존
+  원문 token 링크는 migration 시 즉시 회수한다.
+- 발행·회수는 owner/editor 및 유효 민감정보 동의를 재검사하는 definer RPC로만
+  허용한다. Edge Function은 hash를 원자 소비하여 회수·만료·대상자 삭제를
+  확인하고, 동시 replay에는 행 잠금+1초 rate limit을 적용한 뒤 5분 URL만 발급한다.
+  원문 token/IP/User-Agent는 저장·로그하지 않고 audit은 링크 id·결과·시각만 기록한다.
+- 변조/만료/회수/replay·직접 DML·viewer 권한 우회 회귀 항목을 RLS test에 추가했고,
+  운영 연결 검증 스크립트도 새 RPC 계약으로 갱신했다.
+- 검증: `npm run typecheck` 통과, `npm run test:e2e` **110/0**, `npm run test:gating`
+  **27/0**, `npx expo export --platform web` 통과, `npx deno@2.2.2 check` 통과,
+  `git diff --check` 통과. fresh PostgreSQL 16 RLS와 실제 Supabase Edge 수신자 검증은
+  이 브랜치에서 재실행한다.
+
+---
+
+## 2026-08-23 — P0 채널 통합 entitlement ledger·웹훅 상태 머신
+
+**한 일**
+- `schema_entitlement_ledger.sql`에 provider event inbox(유니크 idempotency key,
+  effective_at, 처리 상태/dead-letter audit)와 service_role 전용 projection RPC를 추가.
+  앱의 티어 원천은 계속 `subscriptions` 하나이며, refund/revoke/expiration/restore와
+  cancellation의 auto-renew 상태를 ledger가 순서대로 투영한다.
+- `billing-webhook`을 주입 가능한 handler contract로 바꾸고 RevenueCat event 정규화,
+  sandbox token test double, 미구현 Polar/Apple/Google verifier의 fail-closed 503을 추가.
+- fresh PostgreSQL RLS 공격 회귀(중복/역순/refund/restore/dead-letter/클라이언트 차단)와
+  Deno Edge handler contracts를 CI에 연결했다.
+
+**결정과 이유**
+- provider별 webhook이 subscriptions를 직접 upsert하면 순서 역전과 부분 실패를 복구할
+  감사 근거가 없으므로 inbox를 먼저 남기고 projection은 단일 RPC로 제한했다.
+- 실제 provider JWS/OAuth 검증 키·상품·가격·배포는 운영 승인 범위다. 검증기가 없는
+  production provider event는 수락하지 않고 503으로 실패 폐쇄한다.
+
+**검증**
+- 로컬: typecheck, E2E 137/137, gating 41/41, Expo web export 통과.
+- 로컬 Docker daemon/psql/Deno가 없어 fresh PG16 RLS 및 Deno handler 계약은 PR CI에서
+  확인해야 한다.
+
+**다음**
+- Draft PR CI에서 RLS 157건과 Edge contracts를 확인한 뒤, Polar/Apple/Google의 실제
+  서명 verifier와 replay worker는 운영 credential 승인 후 별도 카드로 진행한다.
+
 ---
 
 # 앞으로 진행할 내용
@@ -1297,3 +1342,201 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 공동관리 RLS·대상자 생성 원자성·감사 무결성 강화 (이번 커밋)
+
+**한 일**
+- `schema_security.sql`을 추가해 `children` 직접 INSERT와 `guardian_child` 직접
+  INSERT/UPDATE 정책을 제거하고, `create_recipient(jsonb)` 단일 definer RPC가
+  대상자·최초 owner·만 나이 기준 필수 동의를 원자적으로 생성하도록 변경했다.
+- 초대/역할 변경은 `invite_guardian`/`set_guardian_role` RPC로 강제했다. caller·owner·
+  역할·구독 한도를 검증하고 advisory transaction lock으로 동시 요청을 직렬화하며,
+  재초대는 멱등적으로 처리한다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하고 이후 변경할 수 없도록 RLS + trigger를 추가했다. Supabase repo도 새 대상자
+  생성/역할 변경 RPC를 사용하도록 바꿨다.
+- 적용 순서, 기존 데이터 호환, 비상 롤백 SQL과 제한을 `docs/11_rls_data_integrity.md`에
+  문서화하고 DB 스키마 문서에서 링크했다. RLS 통합 테스트는 직접 삽입/권한 변경,
+  부분 실패 고아 행, 비소유자, 작성자 위조 INSERT/UPDATE 공격을 포함하도록 확장했다.
+
+**결정과 이유**
+- 대상자·owner·동의를 클라이언트의 여러 요청으로 나누면 네트워크/한도 실패가 고아
+  행 또는 동의 누락으로 남을 수 있으므로 서버 트랜잭션이 경계를 소유한다.
+- 감사 작성자는 UI가 아니라 DB가 신뢰 경계여야 하므로, 앱이 임의 UUID를 보내도
+  `auth.uid()`와 불일치하면 거부한다. owner 이전은 별도 보안 설계가 필요한 범위라
+  계속 비범위로 유지한다.
+
+**검증**
+- `npm ci` 완료 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (`dist/`, web bundle 2.54 MB), `git diff --check` 통과.
+- 로컬 PostgreSQL/`psql`이 없고 Docker daemon도 실행 중이 아니어서, 확장된
+  `supabase/tests/rls_test.sql`의 실제 PostgreSQL 16 실행은 이 작업 환경에서
+  수행하지 못했다. 스테이징/CI의 fresh DB에서 반드시 먼저 실행한다.
+
+**다음**
+- 스테이징 Supabase 또는 PostgreSQL 16에서 `rls_test.sql`을 실행해 migration SQL과
+  실제 auth/storage 권한을 검증한 뒤, 운영 적용은 별도 승인으로 진행한다.
+
+---
+
+## 2026-08-23 — P0 RLS 원격 체크포인트·GitHub PostgreSQL 16 검증 (이번 커밋)
+
+**한 일**
+- 공용 GitHub credential helper를 사용해 `fix/p0-rls-data-integrity`의 원격 SHA가
+  로컬 구현 커밋과 일치함을 확인하고, 검증된 PR #2 브랜치 대상으로 Draft PR #3을 유지했다.
+- GitHub CI fresh PostgreSQL 16 환경에서 확장한 `rls_test.sql`을 포함한 전체 품질 게이트를
+  재확인했다. 이는 이 작업 환경에서 `psql`/Docker daemon 부재로 남아 있던 로컬 SQL 실행
+  제약을 해소하는 원격 검증 증거다.
+
+**검증**
+- 구현 체크포인트(불변): `563abe982b543fccee374b8988d1f9e5fcfe38bd`.
+- PR HEAD는 후속 검증·문서 커밋에 따라 이동하므로 GitHub PR의 현재 head SHA를 기준으로 확인한다.
+- Draft PR #3: `fix/p0-rls-data-integrity` → `chore/git-development-workflow`.
+- 당시 GitHub `rls-test` green은 `psql | tee`의 종료 상태 누락으로 SQL 조기 종료를 숨긴
+  false-green이었다. 후속 보정에서 pipefail·완료 마커·정확한 PASS 수 검증을 추가한다.
+- Cloudflare Workers build PASS.
+
+**다음**
+- 독립 라쳇 보안 리뷰에서 RPC 권한·원자성·감사 위조 공격 시나리오를 별도 clean checkout으로
+  재검증한다. 운영 migration 적용과 `main` 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — RLS CI false-green 제거·공격 회귀 보강
+
+**한 일**
+- RLS CI에 `pipefail`을 적용하고 stderr까지 캡처해 `psql` 오류가 즉시 job 실패가 되도록 했다.
+  SQL 끝의 `RLS_SUITE_COMPLETE expected=68` 도달 1회, `PASS 68/68`, `FAIL 0`을 모두 검증해
+  조기 종료나 일부 실행이 green이 될 수 없게 했다.
+- Supabase 권한 모델처럼 `authenticated`에 `auth` schema USAGE를 부여하고 `anon` 역할을
+  별도로 셈했다. 신규 SECURITY DEFINER RPC 3개의 고정 search_path, authenticated 전용
+  EXECUTE grant, anon의 실제 호출 거부를 실행형 테스트로 검증한다.
+- 동일 id 네트워크 재시도의 중복 없음과, test-only guardian trigger가 children INSERT 다음에
+  실패할 때 children/관계/동의가 모두 rollback되는 실제 중간 실패를 추가했다.
+
+**결정과 이유**
+- 로그에 `FAIL` 문자열이 없다는 것만으로는 테스트 완주를 증명하지 못한다. 실행기 종료 상태,
+  명시적 마지막 마커, 예상 assertion 수를 독립적으로 모두 확인해야 한다.
+- 기존 quota 실패는 children INSERT 전에 발생하므로 트랜잭션 rollback 증거가 아니었다.
+  이번 fault injection은 다음 쓰기에서 실패시켜 PostgreSQL 함수 호출 전체 원자성을 직접 검증한다.
+
+**검증**
+- 이 엔트리의 수치는 현재 PR HEAD를 로컬 및 GitHub fresh PostgreSQL 16에서 재검증한 뒤
+  PR 본문과 CI 로그 URL에 기록한다. 운영 DB에는 적용하지 않는다.
+
+---
+
+## 2026-08-23 — P0 서버 동의 증빙·완전 탈퇴 backend 계약 (이번 커밋)
+
+**한 일**
+- `schema_consent_deletion.sql`에 버전형 문서 레지스트리와 계정/대상자 불변 동의 증빙을 추가했다. 새 대상자 동의는 trigger로 자동 캡처하고, 재동의·철회·계정 약관 동의는 authenticated RPC로만 수행하게 했다.
+- `request_account_deletion(dry_run)`이 `sub` 일치 및 10분 이내 `reauthenticated_at` JWT claim을 확인하고, dry-run·멱등 job·비식별 감사·partial retry 경계를 만들도록 구현했다.
+- `delete-account` Edge Function이 공유 token 회수 → Storage → 소유 관계형 데이터 → Auth 순서를 수행한다. 공동 관리 대상자는 보존하되 탈퇴 계정이 작성한 records/reports와 파일은 제거해 FK로 Auth 삭제가 막히지 않게 했다.
+- fresh PG 공격 회귀(직접 증빙 쓰기, viewer 증빙 생성, 알려지지 않은 문서 버전, 재인증 없는 요청, dry-run, 멱등성, 타인 job 비노출, claim 주체 바꿔치기, 탈퇴 뒤 쓰기 차단)를 추가하고 CI의 RLS expected count를 83으로 올렸다. 배포/claim hook/롤백은 `docs/12_consent_account_deletion.md`에 문서화했다.
+
+**결정과 이유**
+- 과거 동의의 의미를 현재 앱 라벨로 해석하지 않도록 동의 당시의 항목 배열을 snapshot으로 남긴다. 확인할 수 없는 과거 문서 버전은 임의 증빙을 만들지 않는다.
+- Storage signed URL은 이미 발급된 뒤 즉시 회수할 수 없으므로 새 URL 발행을 먼저 막는 share token 회수를 첫 단계로 둔다. 완료 job에서 user UUID를 NULL로 소거해 운영 감사가 불필요한 식별자를 장기 보관하지 않게 했다.
+
+**검증**
+- `npm ci` 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (web bundle 2.54 MB), `git diff --check` 통과.
+- 이 환경에는 `psql`/PostgreSQL 16 및 `deno`/Supabase CLI가 없어 새 `rls_test.sql` 83건과 Edge Function은 로컬 실행하지 못했다. Draft PR의 GitHub PostgreSQL 16 CI와 스테이징 dry-run에서 반드시 확인한다.
+
+**다음**
+- client UI/repo 호출을 새 동의 RPC와 탈퇴 Edge Function 계약으로 바꾸는 작업은 PR #4 충돌 방지를 위해 별도 카드에서 수행한다. 운영 migration·실사용자 삭제·secrets 설정·main 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — P0 동의/탈퇴 RLS false-green 직접 복구
+
+**한 일**
+- `record_recipient_consent`와 `record_account_consent`의 함수 인자 `document_version`을 명시적으로 분리하고 문서 테이블 별칭을 사용해 PL/pgSQL column/parameter ambiguity를 제거했다.
+- 계정 약관 증빙 UPDATE는 명시적인 실패 `WITH CHECK (false)` RLS 정책으로 append-only를 강제했다. 성인 대상자 철회 fixture는 직접 UPDATE가 아니라 권한 검증 RPC를 호출하도록 맞췄다.
+- `RLS_SUITE_COMPLETE`와 CI expected count를 모두 93으로 동기화했다. Edge Function Deno typecheck도 delete-account client 타입과 expiration webhook row를 보정해 통과시켰다.
+
+**검증**
+- GitHub Actions child run `32643540040`의 `rls-test` REST API 로그를 직접 읽어 8개 FAIL의 원인을 확인했다.
+- `npm run typecheck` 통과, `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npm run build:web` 통과, Deno Edge checks 통과, `git diff --check` 통과.
+- 이 환경에는 local PostgreSQL/psql 및 실행 중인 Docker daemon이 없어 fresh PostgreSQL 16 RLS는 실행하지 못했다. push 후 GitHub Actions의 fresh PostgreSQL 16 job을 실제 근거로 확인한다.
+
+**다음**
+- CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.
+
+---
+
+## 2026-08-23 — 공유 링크 발행자 회수·트래픽 독립 audit 보존 계약
+
+**한 일**
+- 공유 링크에 서버가 결정한 `issued_by`를 기록하고, guardian 관계 제거 trigger가 같은 트랜잭션에서 해당 발행자의 활성 링크를 회수하도록 했다. consume은 발행자가 현재 owner/editor인지도 재검사한다.
+- fresh PG 공격 회귀로 owner 제거, editor self-leave, Auth 계정 삭제 cascade 뒤의 service-role consume 차단을 각각 검증한다.
+- 성공/거절 audit은 링크별 분당 한 표본으로 제한하고, `run_scheduled_share_link_audit_retention()`은 1,000행 배치를 최대 100회(시간당 100,000행) drain한다. `supabase/retention_schedule.sql`은 pg_cron 시간당 실행을 별도 승인 배포 계약으로 버전 관리한다. 이 변경은 스케줄을 배포하거나 운영 DB를 변경하지 않는다.
+- 내부 SECURITY DEFINER helper는 PUBLIC/anon/authenticated에서 EXECUTE를 회수하고, idle expiry, backlog>1,000 반복 drain, helper privilege denial을 fresh PG 회귀에 추가했다.
+
+**결정과 이유**
+- bearer URL의 발행 당시 권한만 신뢰하지 않는다. 관계 해제·계정 삭제에 연결된 즉시 회수와 consume 시점 재검사를 함께 적용해 cascade 누락이나 비정상 삭제 경로도 차단한다.
+- retention은 성공 트래픽에 의존하지 않으며, 예약 작업의 bounded 실행은 WAL/락을 제한하면서 단일 링크의 허용 최대 audit 입력(성공/거절 각 60, 총 120행/시간)을 크게 상회한다.
+
+**검증**
+- 아래 커밋의 로컬/원격 실행 결과와 PR #6 CI run은 Kanban handoff에 정확히 기록한다.
+- 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — 공유 링크 legacy fail-closed·전역 aggregate audit 입력 계약
+
+**한 일**
+- stage4 migration은 `issued_by IS NULL`인 활성 hashed legacy link를 report 작성자에게 추정 귀속하지 않고 즉시 revoke한다. consume은 NULL issuer를 계속 fail-closed로 처리한다.
+- 신규 audit은 link별 raw INSERT 대신 UTC 시간대별 전역 outcome aggregate(issued/granted/rate_limited/revoked) upsert로 기록한다. 따라서 허용된 새 audit 행 입력은 전역 정확히 최대 4행/시간이며, event count만 증가한다.
+- hourly scheduled retention은 aggregate 최대 1,000행과 legacy raw audit 최대 100×1,000행을 bounded drain한다. `share_link_audit_max_rows_per_hour() = 4` 계약을 runner 및 fresh-PG regression으로 확인한다.
+- fresh-PG에 legacy NULL-issuer migration 재적용 후 revoke/consume 차단, 200회 issuance flood의 한 aggregate row 수렴, idle aggregate retention, helper privilege denial, capacity contract를 추가했다. CI RLS expected assertion count를 141로 동기화했다.
+
+**결정과 이유**
+- 과거 link의 실제 issuer를 증명할 수 없으면 작성자 귀속은 권한 인수 정책이 아니라 stale authorization 재부여다. 기존 bearer URL은 안전하게 폐기하고 재발급만 허용한다.
+- 사용자·대상자 수가 커질 수 있는 환경에서 link별 sampling 상한의 합은 전역 drain과 비교할 수 없다. 식별자 없는 전역 hourly aggregate는 tenant 수·발급률과 무관하게 row admission을 수학적으로 제한한다.
+
+**검증**
+- 로컬: `npm run typecheck`, `npm run test:e2e` (137/0), `npm run test:gating` (41/0), Deno share-report contracts (6/0), Deno check, Expo web export, `git diff --check`을 실행했다.
+- local PostgreSQL 16/psql 및 Docker daemon은 사용할 수 없으므로 fresh-PG regression은 push 뒤 GitHub CI로 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — P0 통합 검토: 탈퇴 응답 경계·공동 데이터 탈퇴 fixture 보강
+
+**한 일**
+- `supabaseRepo.deleteAccount`는 Edge Function의 raw 응답을 `runAccountDeletion`에 전달하고, 해당 공통 경계가 한 번만 versioned deletion contract를 파싱하도록 수정했다. completed일 때만 local session을 정리하며 partial/processing은 재시도 가능한 세션을 유지한다.
+- E2E에 Supabase raw completed/partial/processing 응답 회귀를 추가했다.
+- fresh-PG fixture에 공동 대상자의 B 작성 care-task와 B acknowledgement, A acknowledgement를 추가했다. 탈퇴 모델은 B 작성 task를 Auth 삭제 전에 명시적으로 제거하고, B 작성 record 삭제의 acknowledgement cascade와 A/공동 대상자 데이터 보존을 검증한다.
+- CI RLS assertion marker를 172로 동기화했다.
+
+**결정과 이유**
+- raw Edge payload와 이미 파싱된 도메인 결과를 같은 parser에 전달하면 정상 `completed`가 계약 오류가 된다. 파싱 책임을 workflow boundary 하나로 고정해 실제 앱 탈퇴 완료 UX가 session cleanup까지 도달하도록 했다.
+- `created_by`는 profile FK이므로 shared recipient를 보존하는 계정 삭제도 B 작성 task를 Auth/profile 삭제 전 제거해야 한다. acknowledgement는 작성 record와 함께 cascade되어야 하며 다른 보호자의 acknowledgement는 유지되어야 한다.
+
+**검증**
+- `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 171 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npx expo export --platform web --output-dir dist-web` 통과.
+- `npx --yes deno test --allow-env --allow-net` share/billing/delete-account contracts **10/0** 및 세 Edge Function `deno check` 통과.
+- `git diff --check` 통과. 이 worktree에는 `psql`이 없어 fresh PostgreSQL 16 RLS는 로컬 실행하지 못했지만, push 후 GitHub Actions run `32651621687`에서 **PASS 172/172, FAIL 0, COMPLETION 1**을 확인했다.
+
+---
+
+## 2026-08-24 — P1 독립 리뷰 보완: SDK non-2xx 탈퇴 응답·Storage 재귀 페이지네이션
+
+**한 일**
+- `FunctionsHttpError.context`의 실제 one-shot `Response`에서 409 processing 및 503 partial versioned body를 한 번만 읽어 기존 deletion contract parser에 전달했다. completed에서만 local session cleanup을 수행하는 기존 경계를 유지했고 malformed/non-contract body는 fail closed한다.
+- 재귀 Storage prefix 삭제는 어떤 파일도 삭제하기 전에 전체 트리를 목록화하도록 분리했다. 이제 nested folder 삭제가 상위 prefix의 offset pagination을 바꾸지 않는다.
+- 실제 `@supabase/supabase-js` `FunctionsHttpError` test double과 101개 nested prefix 회귀 Deno test를 추가했다.
+
+**결정과 이유**
+- Supabase Functions SDK는 non-2xx body를 `data`가 아니라 `FunctionsHttpError.context`에 둔다. 이 boundary에서만 body를 소비하면 response body를 재사용하지 않으면서 domain parser의 단일 책임을 보존한다.
+- 목록 페이지를 처리하면서 child prefix를 삭제하면 다음 offset이 축소된 상위 목록에 적용되어 남은 child를 건너뛸 수 있다. 목록/삭제를 두 단계로 분리했다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, Expo web export 및 `git diff --check` 통과.
+- `npx --yes deno test` delete-account contract/storage tests **PASS 2 / FAIL 0** 및 세 Edge Function `deno check` 통과.
+- 이 worktree에는 `psql`이 없고 Docker daemon도 접근 불가하여 fresh PostgreSQL 16 RLS는 push 후 GitHub Actions에서 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.

@@ -5,8 +5,8 @@ import { demoStorage } from '../lib/demoStorage';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
-  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
+  RecordAcknowledgement, RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier,
   UserSettings, Vaccination,
 } from '../types';
 import { ENTITLEMENTS, TIER_META } from '../constants/subscription';
@@ -39,7 +39,7 @@ let accountPassword: string | null = null;   // 데모 계정 비밀번호 (재�
 let accountEmail: string | null = null;
 const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription' | 'settings'> = {
   children: [], records: [], growth: [],
-  medications: [], vaccinations: [], checkups: [],
+  medications: [], vaccinations: [], checkups: [], recordAcknowledgements: [], careTasks: [],
 };
 
 let guardians: ChildGuardian[] = [];
@@ -93,6 +93,8 @@ const hydrate = async (): Promise<void> => {
     data.medications = s.medications ?? data.medications;
     data.vaccinations = s.vaccinations ?? data.vaccinations;
     data.checkups = s.checkups ?? data.checkups;
+    data.recordAcknowledgements = s.recordAcknowledgements ?? data.recordAcknowledgements;
+    data.careTasks = s.careTasks ?? data.careTasks;
     guardians = s.guardians ?? guardians;
     reports = s.reports ?? reports;
     shareLinks = s.shareLinks ?? shareLinks;
@@ -117,6 +119,9 @@ const stripSampleData = (): boolean => {
   data.medications = data.medications.filter((m) => !SAMPLE_CHILD_IDS.has(m.childId));
   data.vaccinations = data.vaccinations.filter((v) => !SAMPLE_CHILD_IDS.has(v.childId));
   data.checkups = data.checkups.filter((c) => !SAMPLE_CHILD_IDS.has(c.childId));
+  data.recordAcknowledgements = data.recordAcknowledgements.filter((a) =>
+    data.records.some((r) => r.id === a.recordId));
+  data.careTasks = data.careTasks.filter((t) => !SAMPLE_CHILD_IDS.has(t.childId));
   guardians = guardians.filter((g) => !SAMPLE_CHILD_IDS.has(g.childId));
   reports = reports.filter((r) => !SAMPLE_CHILD_IDS.has(r.childId));
   shareLinks = shareLinks.filter((l) => !SAMPLE_CHILD_IDS.has(l.childId));
@@ -137,6 +142,7 @@ const base: Repo = {
     // 신규 가입은 샘플 없이 빈 상태로 시작 (사용자 요구사항)
     data.children = []; data.records = []; data.growth = [];
     data.medications = []; data.vaccinations = []; data.checkups = [];
+    data.recordAcknowledgements = []; data.careTasks = [];
     guardians = []; reports = []; shareLinks = [];
     subscription = { tier: 'free' };   // 신규 가입은 무료 플랜부터
     settings = {};                     // 설정도 새 계정 기준으로 초기화
@@ -161,6 +167,7 @@ const base: Repo = {
       data.medications = [...SAMPLE_MEDICATIONS];
       data.vaccinations = [...SAMPLE_VACCINATIONS];
       data.checkups = [...SAMPLE_CHECKUPS];
+      data.recordAcknowledgements = []; data.careTasks = [];
       guardians = [...DEMO_GUARDIANS];
       guardian = { ...SAMPLE_GUARDIAN };
       accountEmail = DEMO_EMAIL;          // 저장본을 데모 상태로 표시 (재시작 시 샘플 유지)
@@ -189,6 +196,7 @@ const base: Repo = {
     if (isNewUser) {
       data.children = []; data.records = []; data.growth = [];
       data.medications = []; data.vaccinations = []; data.checkups = [];
+      data.recordAcknowledgements = []; data.careTasks = [];
       guardians = []; reports = []; shareLinks = [];
       subscription = { tier: 'free' };
       settings = {};
@@ -213,7 +221,7 @@ const base: Repo = {
   },
 
   async resetPassword(email: string, phone: string, newPassword: string): Promise<void> {
-    if (!guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
+    if (email !== accountEmail || !guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
       throw new Error('가입 시 등록한 연락처와 일치하지 않습니다.');
     }
     accountPassword = newPassword;
@@ -221,6 +229,39 @@ const base: Repo = {
 
   async requestPasswordResetEmail(): Promise<void> {
     // 데모: 실제 메일 발송 없음 — 성공으로 처리 (실서버는 supabase가 발송)
+  },
+
+  async completePasswordRecovery(newPassword: string): Promise<void> {
+    accountPassword = newPassword;
+    guardian = null;
+  },
+
+  subscribePasswordRecovery() { return () => {}; },
+  async processAuthLink() {},
+  async getAccountAuthMethods(): Promise<('email' | SocialProvider)[]> {
+    if (accountPassword) return ['email'];
+    if (accountEmail?.startsWith('kakao@')) return ['kakao'];
+    if (accountEmail?.startsWith('google@')) return ['google'];
+    return ['email'];
+  },
+
+  async deleteAccount({ password, socialProvider }): Promise<import('./accountDeletion').AccountDeletionResult> {
+    const expectedSocial = accountEmail?.startsWith('kakao@') ? 'kakao'
+      : accountEmail?.startsWith('google@') ? 'google' : undefined;
+    if (expectedSocial ? socialProvider !== expectedSocial : (!accountPassword || password !== accountPassword)) {
+      throw new Error('현재 비밀번호가 일치하지 않습니다.');
+    }
+    guardian = null;
+    accountPassword = null;
+    accountEmail = null;
+    data.children = []; data.records = []; data.growth = [];
+    data.medications = []; data.vaccinations = []; data.checkups = [];
+    data.recordAcknowledgements = []; data.careTasks = [];
+    guardians = []; reports = []; shareLinks = [];
+    for (const id of Object.keys(sensitiveConsent)) delete sensitiveConsent[id];
+    subscription = { tier: 'free' };
+    settings = {};
+    return { status: 'completed', jobId: 'mock-delete-job' };
   },
 
   async signOut() { guardian = null; },
@@ -235,6 +276,8 @@ const base: Repo = {
       medications: [...data.medications],
       vaccinations: [...data.vaccinations],
       checkups: [...data.checkups],
+      recordAcknowledgements: [...data.recordAcknowledgements],
+      careTasks: [...data.careTasks],
       roles: myRoles(),
       sensitiveConsent: Object.fromEntries(
         data.children.map((c) => [c.id, consentOf(c.id)])),
@@ -265,6 +308,7 @@ const base: Repo = {
 
   async deleteChildAndData(id: string) {
     // supabase 모드의 FK cascade와 동일하게 레포트/공유 링크/동의 상태까지 정리
+    const removedRecordIds = new Set(data.records.filter((r) => r.childId === id).map((r) => r.id));
     guardians = guardians.filter((g) => g.childId !== id);
     data.children = data.children.filter((c) => c.id !== id);
     data.records = data.records.filter((r) => r.childId !== id);
@@ -272,6 +316,8 @@ const base: Repo = {
     data.medications = data.medications.filter((m) => m.childId !== id);
     data.vaccinations = data.vaccinations.filter((v) => v.childId !== id);
     data.checkups = data.checkups.filter((c) => c.childId !== id);
+    data.recordAcknowledgements = data.recordAcknowledgements.filter((a) => !removedRecordIds.has(a.recordId));
+    data.careTasks = data.careTasks.filter((t) => t.childId !== id);
     reports = reports.filter((r) => r.childId !== id);
     shareLinks = shareLinks.filter((l) => l.childId !== id);
     delete sensitiveConsent[id];
@@ -294,6 +340,46 @@ const base: Repo = {
 
   async deleteRecord(id: string) {
     data.records = data.records.filter((r) => r.id !== id);
+    data.recordAcknowledgements = data.recordAcknowledgements.filter((a) => a.recordId !== id);
+  },
+
+  async acknowledgeRecord(recordId: string) {
+    const record = data.records.find((r) => r.id === recordId);
+    if (!record) throw new Error('기록을 찾을 수 없습니다');
+    const guardianId = guardian?.id ?? 'guardian-1';
+    if (!guardians.some((g) => g.childId === record.childId && g.guardianId === guardianId)) throw new Error('이 기록을 확인할 권한이 없습니다');
+    if (!data.recordAcknowledgements.some((a) => a.recordId === recordId && a.guardianId === guardianId)) {
+      data.recordAcknowledgements.push({ recordId, guardianId, acknowledgedAt: new Date().toISOString() });
+    }
+  },
+
+  async listRecordAcknowledgements(childId: string): Promise<RecordAcknowledgement[]> {
+    const recordIds = new Set(data.records.filter((r) => r.childId === childId).map((r) => r.id));
+    return data.recordAcknowledgements.filter((a) => recordIds.has(a.recordId));
+  },
+
+  async createCareTask(input): Promise<CareTask> {
+    if ((myRoles()[input.childId] ?? 'owner') === 'viewer') throw new Error('열람 전용 권한에서는 지시를 등록할 수 없습니다');
+    if (!consentOf(input.childId)) throw new Error('건강정보 수집 동의가 철회된 상태입니다. 재동의 후 안내를 기록할 수 있어요.');
+    if (!input.title.trim()) throw new Error('전달할 내용을 입력해 주세요');
+    if (input.recordId && !data.records.some((r) => r.id === input.recordId && r.childId === input.childId)) throw new Error('연결할 기록을 찾을 수 없습니다');
+    if (input.assigneeId && !guardians.some((g) => g.childId === input.childId && g.guardianId === input.assigneeId)) throw new Error('담당 보호자를 찾을 수 없습니다');
+    const task: CareTask = { ...input, id: newId('care'), createdBy: guardian?.id ?? 'guardian-1', createdAt: new Date().toISOString() };
+    data.careTasks.push(task);
+    return task;
+  },
+
+  async listCareTasks(childId: string): Promise<CareTask[]> {
+    return data.careTasks.filter((t) => t.childId === childId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  },
+
+  async completeCareTask(taskId: string) {
+    const task = data.careTasks.find((t) => t.id === taskId);
+    if (!task) throw new Error('지시를 찾을 수 없습니다');
+    const guardianId = guardian?.id ?? 'guardian-1';
+    const role = myRoles()[task.childId] ?? 'owner';
+    if (role === 'viewer' || (task.assigneeId && task.assigneeId !== guardianId && role !== 'owner')) throw new Error('이 지시를 완료할 권한이 없습니다');
+    task.completedAt = new Date().toISOString();
   },
 
   async addVaccination(v: Omit<Vaccination, 'id'>): Promise<Vaccination> {
@@ -404,7 +490,7 @@ const base: Repo = {
 
 // 모든 메서드를 감싸: 호출 전 기기 저장본 하이드레이션, 변이 성공 후 자동 저장.
 // 읽기 메서드(loadAll 등)는 저장을 건너뛴다.
-const READ_ONLY = new Set(['loadAll', 'restoreSession', 'listGuardians', 'listShareLinks']);
+const READ_ONLY = new Set(['loadAll', 'restoreSession', 'listGuardians', 'listShareLinks', 'getAccountAuthMethods', 'listRecordAcknowledgements', 'listCareTasks']);
 
 export const memoryRepo: Repo = {
   mode: 'mock',
@@ -418,5 +504,7 @@ export const memoryRepo: Repo = {
         if (!READ_ONLY.has(k)) persist();
         return result;
       }]),
-  ) as Omit<Repo, 'mode'>),
+  ) as unknown as Omit<Repo, 'mode'>),
+  // 구독은 동기 계약이어야 하므로 async 영속화 프록시를 통과시키지 않는다.
+  subscribePasswordRecovery: base.subscribePasswordRecovery,
 };

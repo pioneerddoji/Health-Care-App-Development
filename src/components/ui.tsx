@@ -53,6 +53,8 @@ export const Button = ({
   disabled?: boolean;
 }) => (
   <Pressable
+    accessibilityRole="button"
+    accessibilityState={{ disabled: !!disabled }}
     onPress={onPress}
     disabled={disabled}
     style={({ pressed }) => [
@@ -84,6 +86,7 @@ export const Field = ({
   <View style={{ marginBottom: 12 }}>
     <Text style={s.fieldLabel}>{label}</Text>
     <TextInput
+      accessibilityLabel={inputProps.accessibilityLabel ?? label}
       placeholderTextColor={tokens.muted}
       {...inputProps}
       style={[s.input, inputProps.multiline && { height: 80, textAlignVertical: 'top' }]}
