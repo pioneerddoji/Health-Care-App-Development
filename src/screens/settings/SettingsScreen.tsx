@@ -29,7 +29,7 @@ export const SettingsScreen = () => {
     roleOf, listGuardians, inviteGuardian, updateGuardianRole, removeGuardian,
     listShareLinks, revokeShareLink,
     consentActive, revokeSensitiveConsent, grantSensitiveConsent,
-    subscription, ent,
+    subscription, ent, deleteAccount,
   } = useApp();
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -38,6 +38,10 @@ export const SettingsScreen = () => {
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('editor');
   const [busy, setBusy] = useState(false);
   const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePhrase, setDeletePhrase] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const isOwner = selectedChild ? roleOf(selectedChild.id) === 'owner' : false;
   const coGuardianCount = guardians.filter((g) => g.role !== 'owner').length;
@@ -131,6 +135,18 @@ export const SettingsScreen = () => {
         },
       ],
     );
+  };
+
+  const removeAccount = async () => {
+    if (deletePhrase !== '탈퇴합니다') return;
+    setDeleteBusy(true);
+    try {
+      await deleteAccount({ password: deletePassword });
+      Alert.alert('탈퇴 완료', '계정과 이 계정의 대상자 데이터 삭제가 완료되었습니다.');
+    } catch (e) {
+      // 서버 계약 미배포·네트워크 오류도 세션을 지운 것으로 오인하지 않도록 명시한다.
+      alertError(e);
+    } finally { setDeleteBusy(false); }
   };
 
   return (
@@ -284,6 +300,29 @@ export const SettingsScreen = () => {
                 onPress={confirmDelete} disabled={!selectedChild} />
             ) : (
               <Muted>데이터 삭제는 소유자만 할 수 있습니다.</Muted>
+            )}
+          </Card>
+        </Section>
+
+        <Section title="계정 탈퇴">
+          <Card>
+            <Text style={[styles.body, { color: tokens.danger }]}>계정과 모든 대상자·건강 기록·사진·레포트가 영구 삭제됩니다.</Text>
+            <Muted>삭제 전 현재 비밀번호로 재인증합니다. 진행 중 일부 단계가 실패하면 완료로 표시하지 않고 오류를 안내합니다.</Muted>
+            {!deleteAccountOpen ? (
+              <Button label="계정 탈퇴 진행" variant="danger" onPress={() => setDeleteAccountOpen(true)} />
+            ) : (
+              <>
+                <Field label="확인 문구" value={deletePhrase} onChangeText={setDeletePhrase}
+                  placeholder="탈퇴합니다" autoCapitalize="none" />
+                <Field label="현재 비밀번호" value={deletePassword} onChangeText={setDeletePassword}
+                  secureTextEntry />
+                <Button label={deleteBusy ? '삭제 요청 중…' : '계정과 데이터 영구 삭제'} variant="danger"
+                  onPress={removeAccount}
+                  disabled={deleteBusy || deletePhrase !== '탈퇴합니다' || !deletePassword} />
+                <Button label="취소" variant="ghost" onPress={() => {
+                  setDeleteAccountOpen(false); setDeletePhrase(''); setDeletePassword('');
+                }} disabled={deleteBusy} />
+              </>
             )}
           </Card>
         </Section>

@@ -8,6 +8,7 @@ import { AppNavigation } from './src/navigation';
 import { LoginScreen } from './src/screens/auth/LoginScreen';
 import { SignUpScreen } from './src/screens/auth/SignUpScreen';
 import { FindAccountScreen } from './src/screens/auth/FindAccountScreen';
+import { RecoveryPasswordScreen } from './src/screens/auth/RecoveryPasswordScreen';
 import { ConsentScreen } from './src/screens/auth/ConsentScreen';
 import { tokens } from './src/components/ui';
 
@@ -27,7 +28,10 @@ WebBrowser.maybeCompleteAuthSession();
 
 const Gate = () => {
   const { booting, guardian, consented, grantConsents } = useApp();
-  const [mode, setMode] = useState<'login' | 'signup' | 'find'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'find' | 'recovery'>(() =>
+    // 웹 recovery redirect는 hash에 type=recovery를 남긴다. 네이티브 deep link는
+    // Supabase 세션 이벤트 뒤 로그인 화면으로 안전하게 귀결되며, 실제 URL 검증은 서버가 한다.
+    typeof window !== 'undefined' && window.location.hash.includes('type=recovery') ? 'recovery' : 'login');
 
   // 로그아웃(guardian → null) 시 항상 로그인 화면으로 복귀
   useEffect(() => {
@@ -41,6 +45,8 @@ const Gate = () => {
       </View>
     );
   }
+  // recovery 세션도 기존 프로필을 조회할 수 있으므로 guardian 판정보다 먼저 처리한다.
+  if (mode === 'recovery') return <RecoveryPasswordScreen onDone={() => setMode('login')} />;
   if (!guardian) {
     if (mode === 'signup') return <SignUpScreen onBack={() => setMode('login')} />;
     if (mode === 'find') return <FindAccountScreen onBack={() => setMode('login')} />;

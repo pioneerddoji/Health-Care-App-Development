@@ -60,6 +60,8 @@ interface AppState {
   findEmailByPhone: (phone: string) => Promise<string | null>;
   resetPassword: (email: string, phone: string, newPassword: string) => Promise<void>;
   requestPasswordResetEmail: (email: string) => Promise<void>;
+  completePasswordRecovery: (newPassword: string) => Promise<void>;
+  deleteAccount: (input: { password: string }) => Promise<void>;
 
   selectChild: (id: string) => void;
   createChild: (input: ChildInput) => Promise<Child>;
@@ -224,6 +226,16 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     findEmailByPhone: (phone) => repo.findEmailByPhone(phone),
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
     requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
+    completePasswordRecovery: async (newPassword) => {
+      await repo.completePasswordRecovery(newPassword);
+      setGuardian(null); setConsented(false);
+    },
+    deleteAccount: async (input) => {
+      await repo.deleteAccount(input);
+      setGuardian(null); setConsented(false);
+      setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+      setVaccinations([]); setCheckups([]); setSelectedChildId(null); setSettings({});
+    },
 
     selectChild: setSelectedChildId,
 

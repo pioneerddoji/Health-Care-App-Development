@@ -213,7 +213,7 @@ const base: Repo = {
   },
 
   async resetPassword(email: string, phone: string, newPassword: string): Promise<void> {
-    if (!guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
+    if (email !== accountEmail || !guardian?.phone || guardian.phone.replace(/\D/g, '') !== phone.replace(/\D/g, '')) {
       throw new Error('가입 시 등록한 연락처와 일치하지 않습니다.');
     }
     accountPassword = newPassword;
@@ -221,6 +221,26 @@ const base: Repo = {
 
   async requestPasswordResetEmail(): Promise<void> {
     // 데모: 실제 메일 발송 없음 — 성공으로 처리 (실서버는 supabase가 발송)
+  },
+
+  async completePasswordRecovery(newPassword: string): Promise<void> {
+    accountPassword = newPassword;
+    guardian = null;
+  },
+
+  async deleteAccount({ password }: { password: string }): Promise<void> {
+    if (!accountPassword || password !== accountPassword) {
+      throw new Error('현재 비밀번호가 일치하지 않습니다.');
+    }
+    guardian = null;
+    accountPassword = null;
+    accountEmail = null;
+    data.children = []; data.records = []; data.growth = [];
+    data.medications = []; data.vaccinations = []; data.checkups = [];
+    guardians = []; reports = []; shareLinks = [];
+    for (const id of Object.keys(sensitiveConsent)) delete sensitiveConsent[id];
+    subscription = { tier: 'free' };
+    settings = {};
   },
 
   async signOut() { guardian = null; },

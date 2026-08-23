@@ -1297,3 +1297,35 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 가입 프로필 보존·복구·탈퇴 라이프사이클 UX (이번 커밋)
+
+**한 일**
+- 이메일 가입 시 보호자 이름·관계·연락처를 Supabase Auth `user_metadata`에 함께 저장하고,
+  이메일 확인 뒤 첫 로그인에서 해당 값을 `profiles` 행으로 완성하도록 했다. 확인 메일 때문에
+  가입 프로필이 이메일 앞부분/기본 관계로 덮이는 문제를 막는다.
+- 비밀번호 재설정 redirect의 recovery 세션을 웹에서 수신하고, 새 비밀번호 설정 화면에서
+  `updateUser` 후 즉시 sign-out 하도록 저장소·Context·Gate를 확장했다.
+- repo에 재인증 기반 `deleteAccount` 계약을 추가하고, 데모에서는 모든 계정·대상자·기록·동의·
+  공유 상태를 제거한다. 설정에 확인 문구+현재 비밀번호를 요구하는 계정 탈퇴 UI와 실패 상태를
+  추가했다. 운영 Supabase 경로는 관리자 키/클라이언트 Auth 삭제를 하지 않고, 서버 계약이
+  배포되기 전에는 명시적으로 중단한다.
+
+**결정과 이유**
+- 연락처 등 민감한 프로필 값은 로그나 화면 상태의 임시 pending 객체가 아니라 Auth metadata로
+  제한 저장해 이메일 확인 후에도 신뢰 가능한 첫 세션에서만 profile을 만들도록 했다.
+- 실제 OAuth 설정/실사용자 삭제는 이 작업에서 수행하지 않았다. 계정 삭제는 서비스 롤 backend
+  계약이 필요하므로 클라이언트는 재인증까지만 수행하고, 미배포 상태를 성공처럼 표시하지 않는다.
+
+**검증**
+- `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 141 / FAIL 0** — 가입 프로필 보존, 복구 비밀번호 로그인,
+  탈퇴 후 세션 및 로컬 대상자 데이터 제거 회귀를 추가.
+- `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npx expo export --platform web --output-dir dist-web` 통과.
+
+**다음**
+- 운영 Supabase에 계정 삭제 Edge Function/서비스 롤 계약을 별도 배포하고, 실제 recovery
+  redirect URL(웹·`carenote://`) 및 카카오·Google provider 콘솔을 실계정으로 점검한다.

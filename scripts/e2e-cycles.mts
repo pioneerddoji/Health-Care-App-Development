@@ -207,5 +207,23 @@ for (const provider of ['kakao', 'google'] as const) {
 ok((await repo.signInWithSocial('kakao')).isNewUser === true,
   '구글 → 카카오 전환 = 다른 계정(신규)');
 
+// ── P0 인증 라이프사이클: 이메일 확인 뒤에도 가입 프로필이 보존되고,
+// 복구 완료는 세션을 정리하며, 계정 삭제는 로컬 민감 데이터를 남기지 않는다 ──
+{
+  await repo.signOut();
+  const signup = await repo.signUp({
+    email: 'profile-preserved@example.com', password: 'Password123!',
+    name: '프로필보호자', relationship: '아빠', phone: '01012345678',
+  });
+  ok(signup.profile?.name === '프로필보호자' && signup.profile?.relationship === '아빠'
+    && signup.profile?.phone === '01012345678', '가입 프로필 보존');
+  await repo.resetPassword('profile-preserved@example.com', '01012345678', 'Changed123!');
+  const recovered = await repo.signIn('profile-preserved@example.com', 'Changed123!');
+  ok(!recovered.error, '복구 후 새 비밀번호 로그인');
+  await repo.deleteAccount({ password: 'Changed123!' });
+  ok((await repo.restoreSession()) === null, '계정 삭제 뒤 세션 정리');
+  ok((await repo.loadAll()).children.length === 0, '계정 삭제 뒤 로컬 대상자 데이터 정리');
+}
+
 console.log(`\n===== 결과: PASS ${pass} / FAIL ${fail} =====`);
 if (issues.length) { console.log('특이사항:'); issues.forEach((i) => console.log(' -', i)); process.exit(1); }

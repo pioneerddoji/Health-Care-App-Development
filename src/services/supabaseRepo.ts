@@ -247,7 +247,13 @@ export const supabaseRepo: Repo = {
   mode: 'supabase',
 
   async signUp(input: SignUpInput): Promise<AuthOutcome> {
-    const { data, error } = await sb().auth.signUp({ email: input.email, password: input.password });
+    // 이메일 확인이 켜져 세션이 즉시 없더라도 user_metadata는 Auth에 보존된다.
+    // 첫 세션에서 아래 signIn이 이를 profiles 행으로 안전하게 완성한다.
+    const { data, error } = await sb().auth.signUp({
+      email: input.email,
+      password: input.password,
+      options: { data: { name: input.name, relationship: input.relationship, phone: input.phone ?? null } },
+    });
     if (error) return { error: error.message };
     if (!data.session || !data.user) return { needsEmailConfirm: true };
     const profile: Profile = {
@@ -265,11 +271,20 @@ export const supabaseRepo: Repo = {
     if (error) return { error: error.message };
     let profile = await fetchProfile(data.user.id);
     if (!profile) {
-      // 이메일 확인 후 첫 로그인 등 프로필이 아직 없는 경우
-      profile = { id: data.user.id, name: email.split('@')[0], relationship: '보호자' };
-      await sb().from('profiles').upsert({
-        id: profile.id, name: profile.name, relationship: profile.relationship,
+      // 이메일 확인 후 첫 로그인: 가입 당시 Auth metadata를 사용한다. 이메일 앞부분으로
+      // 덮어쓰면 이름·관계·연락처가 유실되므로, 값이 없을 때만 보수적 기본값을 쓴다.
+      const meta = data.user.user_metadata as Record<string, unknown> | null;
+      profile = {
+        id: data.user.id,
+        name: typeof meta?.name === 'string' && meta.name.trim() ? meta.name : email.split('@')[0],
+        relationship: typeof meta?.relationship === 'string' && meta.relationship.trim()
+          ? meta.relationship : '보호자',
+        phone: typeof meta?.phone === 'string' && meta.phone.trim() ? meta.phone : undefined,
+      };
+      const { error: pErr } = await sb().from('profiles').upsert({
+        id: profile.id, name: profile.name, relationship: profile.relationship, phone: profile.phone ?? null,
       });
+      if (pErr) return { error: pErr.message };
     }
     return { profile };
   },
@@ -347,6 +362,24 @@ export const supabaseRepo: Repo = {
     // — 운영 프로젝트에서 재설정 웹 페이지 호스팅 후 URL 지정 필요 (docs/09 §2-3)
     const { error } = await sb().auth.resetPasswordForEmail(email);
     throwIf(error);
+  },
+
+  async completePasswordRecovery(newPassword: string): Promise<void> {
+    const { error } = await sb().auth.updateUser({ password: newPassword });
+    throwIf(error);
+    // 복구 링크 세션은 최소 권한으로 짧게 유지하고, 비밀번호 변경 후 로그인 화면으로 돌린다.
+    await sb().auth.signOut();
+  },
+
+  async deleteAccount({ password }: { password: string }): Promise<void> {
+    // 실제 Auth 삭제/동의 이력 처리는 서비스 롤을 가진 별도 서버 계약의 책임이다.
+    // 클라이언트는 Auth 관리 API나 관리자 키를 절대 사용하지 않는다. 운영 계약이 배포되기
+    // 전에는 오삭제보다 명시적 중단이 안전하며, mock에서 상태 전이를 검증한다.
+    const { data } = await sb().auth.getUser();
+    if (!data.user?.email) throw new Error('계정 이메일을 확인할 수 없습니다. 다시 로그인해 주세요.');
+    const { error } = await sb().auth.signInWithPassword({ email: data.user.email, password });
+    if (error) throw new Error('현재 비밀번호가 일치하지 않습니다.');
+    throw new Error('계정 삭제 서버 계약이 아직 배포되지 않았습니다. 고객센터에 문의해 주세요.');
   },
 
   async restoreSession(): Promise<Profile | null> {

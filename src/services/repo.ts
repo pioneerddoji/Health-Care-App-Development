@@ -64,6 +64,10 @@ export interface Repo {
   /** 비밀번호 재설정 메일 발송 — 문자 인증이 꺼진 빌드(smsMode='off')의 대체 경로.
    *  계정 존재 여부를 노출하지 않기 위해 미가입 이메일도 성공으로 처리한다 */
   requestPasswordResetEmail(email: string): Promise<void>;
+  /** 복구 링크가 만든 제한 세션에서 새 비밀번호를 설정하고 세션을 정리한다. */
+  completePasswordRecovery(newPassword: string): Promise<void>;
+  /** 재인증 뒤 계정·대상자 데이터를 완전 삭제하는 서버 계약. mock은 로컬에서 검증한다. */
+  deleteAccount(input: { password: string }): Promise<void>;
 
   /** 로그인한 보호자가 접근 가능한 전체 데이터 로드 */
   loadAll(): Promise<AllData>;
