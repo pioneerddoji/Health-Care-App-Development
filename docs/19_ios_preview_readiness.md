@@ -31,7 +31,7 @@ upstream exact head는 fast-forward 직후 clean 상태였고, 이 evidence bran
 | `npm run test:native-preflight` | **PASS 13 / FAIL 0** |
 | `npm run test:accessibility` | **PASS 11 / FAIL 0** |
 | `npm run test:ios-preview-readiness` | **PASS 8 / FAIL 0**, expected blocked gates **6** |
-| Deno contracts/check | share-report/billing-webhook/delete-account contracts **PASS 11 / FAIL 0**; 세 entrypoint `deno check` 통과 |
+| Deno contracts/check | share-report/billing-webhook/delete-account contracts **PASS 10 / FAIL 0** (share 6 + billing 3 + delete-account 1); 세 entrypoint `deno check` 통과 |
 | `npx expo export --platform web --output-dir dist-web` | 통과; web bundle **833 modules** |
 | `git diff --check` | 통과 |
 

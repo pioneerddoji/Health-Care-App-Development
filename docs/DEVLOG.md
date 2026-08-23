@@ -2216,5 +2216,5 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **검증**
 - clean lockfile `npm ci` 성공(기존 advisory 24건: moderate 11, high 13; pending esbuild install script 1건), typecheck 통과, analytics **37/0**, five-minute WOW **41/0**, E2E **189/0**, gating **41/0**, app-resume **14/0**, native preflight **13/0**, accessibility **11/0**, iOS readiness **8/0**(expected blocked gates 6) 통과.
-- Deno share-report/billing-webhook/delete-account contracts **11/0** 및 세 entrypoint `deno check`, Expo web export **833 modules**, `git diff --check` 통과. fresh PostgreSQL 16은 이 runner에서 local 실행하지 않고 exact-head CI/선행 handoff의 `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS FAIL=0 COMPLETION=1` 근거로만 분리했다.
+- Deno share-report/billing-webhook/delete-account contracts **10/0**(share 6 + billing 3 + delete-account 1) 및 세 entrypoint `deno check`, Expo web export **833 modules**, `git diff --check` 통과. fresh PostgreSQL 16은 이 runner에서 local 실행하지 않고 exact-head CI/선행 handoff의 `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS FAIL=0 COMPLETION=1` 근거로만 분리했다.
 - iOS/Android 기기·에뮬레이터, EAS/store build·upload, signing/Apple login, bundle ID 확정, OAuth/payment/운영 Supabase 연결·migration/data access, DNS/secrets/cost, 고객 메시지·광고·가격/브랜딩 결정, production/main 병합은 실행하지 않았다.
