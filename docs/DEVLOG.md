@@ -790,6 +790,35 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 
 ---
 
+## 2026-08-23 — P0 채널 통합 entitlement ledger·웹훅 상태 머신
+
+**한 일**
+- `schema_entitlement_ledger.sql`에 provider event inbox(유니크 idempotency key,
+  effective_at, 처리 상태/dead-letter audit)와 service_role 전용 projection RPC를 추가.
+  앱의 티어 원천은 계속 `subscriptions` 하나이며, refund/revoke/expiration/restore와
+  cancellation의 auto-renew 상태를 ledger가 순서대로 투영한다.
+- `billing-webhook`을 주입 가능한 handler contract로 바꾸고 RevenueCat event 정규화,
+  sandbox token test double, 미구현 Polar/Apple/Google verifier의 fail-closed 503을 추가.
+- fresh PostgreSQL RLS 공격 회귀(중복/역순/refund/restore/dead-letter/클라이언트 차단)와
+  Deno Edge handler contracts를 CI에 연결했다.
+
+**결정과 이유**
+- provider별 webhook이 subscriptions를 직접 upsert하면 순서 역전과 부분 실패를 복구할
+  감사 근거가 없으므로 inbox를 먼저 남기고 projection은 단일 RPC로 제한했다.
+- 실제 provider JWS/OAuth 검증 키·상품·가격·배포는 운영 승인 범위다. 검증기가 없는
+  production provider event는 수락하지 않고 503으로 실패 폐쇄한다.
+
+**검증**
+- 로컬: typecheck, E2E 137/137, gating 41/41, Expo web export 통과.
+- 로컬 Docker daemon/psql/Deno가 없어 fresh PG16 RLS 및 Deno handler 계약은 PR CI에서
+  확인해야 한다.
+
+**다음**
+- Draft PR CI에서 RLS 157건과 Edge contracts를 확인한 뒤, Polar/Apple/Google의 실제
+  서명 verifier와 replay worker는 운영 credential 승인 후 별도 카드로 진행한다.
+
+---
+
 # 앞으로 진행할 내용
 
 ## 최우선: 안드로이드 출시 준비 — `docs/09_android_release.md`가 단일 기준 문서

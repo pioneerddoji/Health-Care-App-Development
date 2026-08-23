@@ -106,3 +106,14 @@ payload 키는 앱 코드와 동일한 **camelCase**로 저장한다(JSONB이므
   (수신자는 로그인 세션이 없으므로 JWT 검증을 꺼야 한다).
 - 공유 URL 형태: `{SUPABASE_URL}/functions/v1/share-report?token=<발행 응답의 일회성 원문 token>`
   (목록에서 token을 다시 조회하거나 재구성할 수 없다).
+
+### P0 결제 entitlement ledger (`schema_entitlement_ledger.sql`)
+- `billing_event_inbox`는 provider·provider event ID의 유니크 키로 중복 delivery를
+  멱등 처리하고, 원문 payload·수신/유효 시각·처리 결과(applied/stale/dead-letter)를
+  감사 목적으로 보존한다. 일반 사용자 RLS에는 노출하지 않는다.
+- `ingest_entitlement_event(...)`는 service_role 전용이다. `effective_at`이 현재
+  projection보다 같거나 과거면 무시하므로, 늦게 도착한 expiration/refund가 새
+  restore/renewal을 되돌릴 수 없다. 앱의 유일한 읽기 원천은 계속 `subscriptions`다.
+- RevenueCat과 sandbox double만 현재 서명/토큰 검증 후 ledger로 정규화한다. Polar,
+  Apple, Google Play은 각 공급자 JWS/OAuth verifier를 실제로 등록하기 전에는 503으로
+  fail-closed하며 DB를 쓰지 않는다. 운영 credential·상품 등록·웹훅 배포는 별도 운영 작업이다.
