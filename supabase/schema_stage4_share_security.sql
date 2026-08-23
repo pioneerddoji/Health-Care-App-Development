@@ -23,9 +23,10 @@ create index if not exists share_links_active_lookup on share_links(token_hash)
   where revoked_at is null;
 
 alter table share_links add column if not exists issued_by uuid references profiles(id) on delete set null;
--- 이전 stage4 링크는 보고서 작성자에게만 귀속한다. 새 링크는 RPC가 auth.uid()를 기록한다.
-update share_links l set issued_by = r.created_by
-from reports r where r.id = l.report_id and l.issued_by is null;
+-- 기존 stage4 hashed 링크는 실제 발행자를 증명할 수 없다. 보고서 작성자로 추정 backfill하면
+-- editor 발행 링크가 owner 권한으로 되살아날 수 있으므로, 미귀속 활성 링크는 fail-closed 회수한다.
+update share_links set revoked_at = coalesce(revoked_at, clock_timestamp())
+where issued_by is null and revoked_at is null;
 create index if not exists share_links_active_issuer on share_links(issued_by)
   where revoked_at is null;
 
@@ -47,6 +48,35 @@ create table if not exists share_link_access_audit (
 create index if not exists share_link_access_audit_retention
   on share_link_access_audit(occurred_at);
 alter table share_link_access_audit enable row level security;
+
+-- 새 이벤트는 링크별 원시 행이 아니라 전역 시간대·outcome 집계로만 남긴다. 따라서 임의의
+-- 발급/접속 폭주도 매시간 정확히 네 행(issued/granted/rate_limited/revoked)만 새로 허용한다.
+-- 기존 원시 행은 아래 retention runner가 호환 목적으로 정리한다.
+create table if not exists share_link_access_audit_hourly (
+  bucket_at   timestamp without time zone not null,
+  outcome     text not null check (outcome in ('issued', 'granted', 'rate_limited', 'revoked')),
+  event_count bigint not null default 1 check (event_count > 0),
+  primary key (bucket_at, outcome)
+);
+alter table share_link_access_audit_hourly enable row level security;
+
+create or replace function record_share_link_access_audit(p_outcome text) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_bucket_at timestamp without time zone := date_trunc('hour', clock_timestamp() at time zone 'UTC');
+begin
+  if p_outcome not in ('issued', 'granted', 'rate_limited', 'revoked') then
+    raise exception '허용되지 않는 감사 outcome입니다' using errcode = '22023';
+  end if;
+  insert into share_link_access_audit_hourly(bucket_at, outcome, event_count)
+  values (v_bucket_at, p_outcome, 1)
+  on conflict (bucket_at, outcome)
+  do update set event_count = share_link_access_audit_hourly.event_count + 1;
+end;
+$$;
+
+create or replace function share_link_audit_max_rows_per_hour() returns integer
+language sql immutable as $$ select 4 $$;
 
 -- 서비스가 살아 있는 동안 자동 보존 작업은 전역적으로 시간당 한 번만 실행한다.
 create table if not exists share_link_audit_maintenance (
@@ -82,14 +112,26 @@ begin
 end;
 $$;
 
--- 예약 작업은 한 번에 100배치(100,000행)까지만 drain한다. pg_cron의 시간당 실행과
--- 링크별 성공 audit 상한(60행/시간)을 조합해 최악 허용 단일 링크 유입보다 큰 용량을 보장한다.
+-- 예약 작업은 한 번에 원시 legacy audit 100배치(100,000행)와 aggregate 1,000행만 drain한다.
+-- 새로 허용되는 audit row 입력은 전역 4행/시간이므로, 모든 admitted input보다 용량이 크다.
 create or replace function run_scheduled_share_link_audit_retention() returns integer
 language plpgsql security definer set search_path = public as $$
 declare
   deleted_count integer := 0;
   batch_count integer;
+  aggregate_deleted integer;
 begin
+  if share_link_audit_max_rows_per_hour() >= 1000 then
+    raise exception '감사 입력 상한이 예약 drain 용량을 초과합니다';
+  end if;
+  delete from share_link_access_audit_hourly
+  where ctid in (
+    select ctid from share_link_access_audit_hourly
+    where bucket_at < (clock_timestamp() at time zone 'UTC') - interval '30 days'
+    order by bucket_at limit 1000
+  );
+  get diagnostics aggregate_deleted = row_count;
+  deleted_count := aggregate_deleted;
   for batch_no in 1..100 loop
     batch_count := purge_share_link_access_audit(interval '30 days', 1000);
     deleted_count := deleted_count + batch_count;
@@ -155,7 +197,7 @@ begin
   insert into share_links(report_id, token_hash, expires_at, issued_by)
   values (p_report_id, encode(digest(v_token, 'sha256'), 'hex'), v_expires_at, auth.uid())
   returning id into v_link_id;
-  insert into share_link_access_audit(share_link_id, outcome) values (v_link_id, 'issued');
+  perform record_share_link_access_audit('issued');
 
   return jsonb_build_object('id', v_link_id, 'token', v_token, 'expires_at', v_expires_at);
 end;
@@ -175,7 +217,7 @@ begin
   if v_link_id is null then
     raise exception '공유 링크를 회수할 권한이 없습니다' using errcode = '42501';
   end if;
-  insert into share_link_access_audit(share_link_id, outcome) values (v_link_id, 'revoked');
+  perform record_share_link_access_audit('revoked');
 end;
 $$;
 
@@ -213,7 +255,7 @@ begin
     if v_link.rate_limit_audit_at is null
        or v_link.rate_limit_audit_at <= clock_timestamp() - interval '1 minute' then
       update share_links set rate_limit_audit_at = clock_timestamp() where id = v_link.id;
-      insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'rate_limited');
+      perform record_share_link_access_audit('rate_limited');
     end if;
     return null;
   end if;
@@ -224,7 +266,7 @@ begin
   if v_link.granted_audit_at is null
      or v_link.granted_audit_at <= clock_timestamp() - interval '1 minute' then
     update share_links set granted_audit_at = clock_timestamp() where id = v_link.id;
-    insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'granted');
+    perform record_share_link_access_audit('granted');
   end if;
   return jsonb_build_object('storage_path', v_link.storage_path);
 end;
@@ -238,6 +280,7 @@ revoke all on function consume_share_link_token(text) from public;
 revoke all on function purge_share_link_access_audit(interval, integer) from public;
 revoke all on function run_scheduled_share_link_audit_retention() from public;
 revoke all on function revoke_issued_share_links_on_guardian_removal() from public;
+revoke all on function record_share_link_access_audit(text) from public;
 grant execute on function create_secure_share_link(uuid, integer) to authenticated;
 grant execute on function revoke_secure_share_link(uuid) to authenticated;
 grant execute on function consume_share_link_token(text) to service_role;

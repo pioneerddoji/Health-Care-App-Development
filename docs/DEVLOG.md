@@ -1455,3 +1455,21 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - 아래 커밋의 로컬/원격 실행 결과와 PR #6 CI run은 Kanban handoff에 정확히 기록한다.
 - 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — 공유 링크 legacy fail-closed·전역 aggregate audit 입력 계약
+
+**한 일**
+- stage4 migration은 `issued_by IS NULL`인 활성 hashed legacy link를 report 작성자에게 추정 귀속하지 않고 즉시 revoke한다. consume은 NULL issuer를 계속 fail-closed로 처리한다.
+- 신규 audit은 link별 raw INSERT 대신 UTC 시간대별 전역 outcome aggregate(issued/granted/rate_limited/revoked) upsert로 기록한다. 따라서 허용된 새 audit 행 입력은 전역 정확히 최대 4행/시간이며, event count만 증가한다.
+- hourly scheduled retention은 aggregate 최대 1,000행과 legacy raw audit 최대 100×1,000행을 bounded drain한다. `share_link_audit_max_rows_per_hour() = 4` 계약을 runner 및 fresh-PG regression으로 확인한다.
+- fresh-PG에 legacy NULL-issuer migration 재적용 후 revoke/consume 차단, 200회 issuance flood의 한 aggregate row 수렴, idle aggregate retention, helper privilege denial, capacity contract를 추가했다. CI RLS expected assertion count를 141로 동기화했다.
+
+**결정과 이유**
+- 과거 link의 실제 issuer를 증명할 수 없으면 작성자 귀속은 권한 인수 정책이 아니라 stale authorization 재부여다. 기존 bearer URL은 안전하게 폐기하고 재발급만 허용한다.
+- 사용자·대상자 수가 커질 수 있는 환경에서 link별 sampling 상한의 합은 전역 drain과 비교할 수 없다. 식별자 없는 전역 hourly aggregate는 tenant 수·발급률과 무관하게 row admission을 수학적으로 제한한다.
+
+**검증**
+- 로컬: `npm run typecheck`, `npm run test:e2e` (137/0), `npm run test:gating` (41/0), Deno share-report contracts (6/0), Deno check, Expo web export, `git diff --check`을 실행했다.
+- local PostgreSQL 16/psql 및 Docker daemon은 사용할 수 없으므로 fresh-PG regression은 push 뒤 GitHub CI로 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.

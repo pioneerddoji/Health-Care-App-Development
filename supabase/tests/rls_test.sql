@@ -219,8 +219,21 @@ select count(*) from generate_series(1, 20) cross join lateral (
   select consume_share_link_token(current_setting('test.share_token_hash') || right(generate_series::text, 0))
 ) ignored;
 reset role;
-select case when (select count(*) from share_link_access_audit where outcome = 'rate_limited') = 1
-  then 'PASS 거절 audit은 링크별 분당 1개 표본으로 제한' else 'FAIL 거절 audit write amplification' end;
+select case when (select count(*) from share_link_access_audit_hourly where outcome = 'rate_limited') = 1
+  then 'PASS 거절 audit은 전역 시간별 집계 1행으로 제한' else 'FAIL 거절 audit write amplification' end;
+-- 발급 폭주도 원시 audit 행을 만들지 않는다. 200회 발급은 현재 시간대 issued 집계 하나만 증가시킨다.
+select count(*) from generate_series(1, 200) cross join lateral (
+  select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)
+) ignored;
+select case when (select count(*) from share_link_access_audit_hourly
+                  where outcome = 'issued' and bucket_at = date_trunc('hour', clock_timestamp() at time zone 'UTC')) = 1
+                 and (select event_count from share_link_access_audit_hourly
+                      where outcome = 'issued' and bucket_at = date_trunc('hour', clock_timestamp() at time zone 'UTC')) >= 202
+  then 'PASS 발급 폭주는 전역 hourly audit 집계 하나로 수렴' else 'FAIL 발급 audit input unbounded' end;
+-- admitted audit input is exactly four global hourly buckets (issued/granted/rate_limited/revoked),
+-- while the scheduled worker drains 100 batches x 1,000 raw rows/hour.
+select case when share_link_audit_max_rows_per_hour() = 4 and 100 * 1000 > share_link_audit_max_rows_per_hour()
+  then 'PASS 지속부하 audit 입력 상한(4/h)보다 scheduled drain(100000/h)이 큼' else 'FAIL scheduled drain capacity contract' end;
 insert into share_link_access_audit(share_link_id, outcome, occurred_at)
 values ((select id from share_links order by created_at limit 1), 'granted', now() - interval '31 days');
 set role service_role;
@@ -238,6 +251,16 @@ select case when run_scheduled_share_link_audit_retention() >= 1
 reset role;
 select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
   then 'PASS idle 상태에서도 만료 audit 보존' else 'FAIL idle retention 누락' end;
+-- 새 aggregate audit도 트래픽 없는 상태에서 scheduled runner가 보존 기한을 강제한다.
+insert into share_link_access_audit_hourly(bucket_at, outcome, event_count)
+values (date_trunc('hour', (clock_timestamp() at time zone 'UTC') - interval '31 days'), 'revoked', 1);
+set role service_role;
+select case when run_scheduled_share_link_audit_retention() >= 1
+  then 'PASS idle scheduled aggregate audit purge 실행' else 'FAIL idle aggregate retention purge 미실행' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit_hourly
+                             where bucket_at < (clock_timestamp() at time zone 'UTC') - interval '30 days')
+  then 'PASS idle aggregate audit도 30일 보존' else 'FAIL idle aggregate retention 누락' end;
 -- 1,000행보다 큰 backlog도 예약 runner가 반복 bounded batch로 모두 drain한다.
 insert into share_link_access_audit(share_link_id, outcome, occurred_at)
 select (select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days'
@@ -254,10 +277,13 @@ select case when
   and not has_function_privilege('anon', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
   and not has_function_privilege('authenticated', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
   and not has_function_privilege('anon', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'record_share_link_access_audit(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'record_share_link_access_audit(text)', 'EXECUTE')
   then 'PASS scheduled/helper RPC는 service_role 외 실행 불가' else 'FAIL scheduled/helper RPC 권한 범위' end;
 set role anon;
 select expect_error($q$select run_scheduled_share_link_audit_retention()$q$, 'anon scheduled retention helper 실행 차단');
 select expect_error($q$select revoke_issued_share_links_on_guardian_removal()$q$, 'anon issuer revoke helper 실행 차단');
+select expect_error($q$select record_share_link_access_audit('issued')$q$, 'anon aggregate audit helper 실행 차단');
 reset role;
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
@@ -321,6 +347,20 @@ select expect_rows($q$delete from auth.users where id = 'bbbbbbbb-bbbb-bbbb-bbbb
 set role service_role;
 select case when consume_share_link_token(current_setting('test.account_deleted_issuer_token_hash')) is null
   then 'PASS account deletion 뒤 B 발행 링크 차단' else 'FAIL account deletion 뒤 stale issuer 접근' end;
+set role authenticated;
+
+-- ── 업그레이드 fail-closed: old stage4 hashed active link has no provable issuer ──
+-- B가 실제 발행했다고 모델링하되 구 스키마에는 issued_by가 없었다. 작성자 A로 backfill하면
+-- B 제거 뒤에도 stale authorization이 살아난다. migration 재적용은 반드시 즉시 revoke해야 한다.
+reset role;
+insert into share_links(report_id, token_hash, expires_at, issued_by)
+values ('99999999-9999-9999-9999-999999999999', repeat('f', 64), now() + interval '7 days', null);
+\i ../schema_stage4_share_security.sql
+select case when (select revoked_at is not null from share_links where token_hash = repeat('f', 64))
+  then 'PASS issued_by NULL legacy active link migration fail-closed revoke' else 'FAIL legacy NULL issuer backfilled or active' end;
+set role service_role;
+select case when consume_share_link_token(repeat('f', 64)) is null
+  then 'PASS legacy NULL issuer link cannot consume after migration' else 'FAIL legacy NULL issuer stale access' end;
 set role authenticated;
 
 -- ── C(외부인) 완전 차단 ──
@@ -414,4 +454,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=134
+\echo RLS_SUITE_COMPLETE expected=141
