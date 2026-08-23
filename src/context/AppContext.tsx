@@ -3,13 +3,15 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from 'react';
+import { Linking } from 'react-native';
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
   ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
 import type { SocialProvider } from '../services/socialAuth';
+import type { AccountDeletionResult } from '../services/accountDeletion';
 import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
 import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
@@ -25,6 +27,7 @@ interface AppState {
   medications: Medication[];
   vaccinations: Vaccination[];
   checkups: Checkup[];
+  careTasks: CareTask[];
   selectedChildId: string | null;
   selectedChild: Child | null;
 
@@ -60,6 +63,11 @@ interface AppState {
   findEmailByPhone: (phone: string) => Promise<string | null>;
   resetPassword: (email: string, phone: string, newPassword: string) => Promise<void>;
   requestPasswordResetEmail: (email: string) => Promise<void>;
+  completePasswordRecovery: (newPassword: string) => Promise<void>;
+  recoveryRequest: { active: boolean; error?: string };
+  dismissRecovery: () => void;
+  getAccountAuthMethods: () => Promise<('email' | SocialProvider)[]>;
+  deleteAccount: (input: { password?: string; socialProvider?: SocialProvider }) => Promise<AccountDeletionResult>;
 
   selectChild: (id: string) => void;
   createChild: (input: ChildInput) => Promise<Child>;
@@ -68,6 +76,9 @@ interface AppState {
 
   createRecord: (childId: string, input: RecordInput) => Promise<DailyRecord>;
   deleteRecord: (id: string) => Promise<void>;
+  acknowledgeRecord: (recordId: string) => Promise<void>;
+  createCareTask: (input: Omit<CareTask, 'id' | 'createdBy' | 'createdAt' | 'completedAt'>) => Promise<void>;
+  completeCareTask: (taskId: string) => Promise<void>;
 
   addVaccination: (v: Omit<Vaccination, 'id'>) => Promise<void>;
   updateVaccination: (id: string, patch: Partial<Vaccination>) => Promise<void>;
@@ -99,11 +110,13 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [medications, setMedications] = useState<Medication[]>([]);
   const [vaccinations, setVaccinations] = useState<Vaccination[]>([]);
   const [checkups, setCheckups] = useState<Checkup[]>([]);
+  const [careTasks, setCareTasks] = useState<CareTask[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [roles, setRoles] = useState<Record<string, GuardianRole>>({});
   const [sensitiveConsent, setSensitiveConsent] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription>({ tier: 'free' });
   const [settings, setSettings] = useState<UserSettings>({});
+  const [recoveryRequest, setRecoveryRequest] = useState<{ active: boolean; error?: string }>({ active: false });
 
   const loadAll = useCallback(async () => {
     const all = await repo.loadAll();
@@ -113,6 +126,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     setMedications(all.medications);
     setVaccinations(all.vaccinations);
     setCheckups(all.checkups);
+    setCareTasks(all.careTasks);
     setRoles(all.roles);
     setSensitiveConsent(all.sensitiveConsent);
     setSubscription(all.subscription);
@@ -138,6 +152,19 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     })();
   }, [loadAll]);
 
+  useEffect(() => {
+    const unsubscribe = repo.subscribePasswordRecovery((error) =>
+      setRecoveryRequest({ active: true, error }));
+    const handleUrl = ({ url }: { url: string }) => {
+      repo.processAuthLink(url).catch((error) => setRecoveryRequest({
+        active: true, error: error instanceof Error ? error.message : String(error),
+      }));
+    };
+    const subscription = Linking.addEventListener('url', handleUrl);
+    Linking.getInitialURL().then((url) => { if (url) handleUrl({ url }); }).catch(() => {});
+    return () => { unsubscribe(); subscription.remove(); };
+  }, []);
+
   const value = useMemo<AppState>(() => ({
     mode: repo.mode,
     booting,
@@ -149,6 +176,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     medications,
     vaccinations,
     checkups,
+    careTasks,
     selectedChildId,
     selectedChild: children.find((c) => c.id === selectedChildId) ?? null,
 
@@ -224,6 +252,23 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     findEmailByPhone: (phone) => repo.findEmailByPhone(phone),
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
     requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
+    completePasswordRecovery: async (newPassword) => {
+      await repo.completePasswordRecovery(newPassword);
+      setGuardian(null); setConsented(false);
+      setRecoveryRequest({ active: false });
+    },
+    recoveryRequest,
+    dismissRecovery: () => setRecoveryRequest({ active: false }),
+    getAccountAuthMethods: () => repo.getAccountAuthMethods(),
+    deleteAccount: async (input) => {
+      const result = await repo.deleteAccount(input);
+      if (result.status === 'completed') {
+        setGuardian(null); setConsented(false);
+        setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+        setVaccinations([]); setCheckups([]); setSelectedChildId(null); setSettings({});
+      }
+      return result;
+    },
 
     selectChild: setSelectedChildId,
 
@@ -263,6 +308,20 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     deleteRecord: async (id) => {
       await repo.deleteRecord(id);
       setRecords((prev) => prev.filter((r) => r.id !== id));
+    },
+    acknowledgeRecord: (recordId) => repo.acknowledgeRecord(recordId),
+    createCareTask: async (input) => {
+      const task = await repo.createCareTask(input);
+      setCareTasks((prev) => [task, ...prev]);
+      if (task.dueDate) scheduleDueDateReminder({
+        id: `care-${task.id}`, title: '보호자 확인 알림', body: task.title, dueDate: task.dueDate,
+      }).catch(() => {});
+    },
+    completeCareTask: async (taskId) => {
+      await repo.completeCareTask(taskId);
+      setCareTasks((prev) => prev.map((t) => t.id === taskId
+        ? { ...t, completedAt: new Date().toISOString() } : t));
+      cancelReminder(`care-${taskId}`).catch(() => {});
     },
 
     addVaccination: async (v) => {
@@ -321,8 +380,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     listShareLinks: (childId) => repo.listShareLinks(childId),
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
-       vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription,
-       settings, loadAll]);
+       vaccinations, checkups, careTasks, selectedChildId, roles, sensitiveConsent, subscription,
+       settings, recoveryRequest, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;
 };

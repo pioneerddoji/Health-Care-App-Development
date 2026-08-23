@@ -4,6 +4,7 @@
 // 이 함수는 JWT 검증을 켠 상태로 배포한다. service role key는 서버 내부에서만 사용하며
 // 응답/로그/감사 detail에 건강정보·경로·토큰을 기록하지 않는다.
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { accountDeletionResponse } from './contract.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -11,10 +12,15 @@ const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const RECORD_BUCKET = 'record-files';
 const REPORT_BUCKET = 'reports';
 
+const responseHeaders = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
+  'content-type': 'application/json; charset=utf-8',
+};
 const json = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8' },
+    headers: responseHeaders,
   });
 
 const unique = <T>(values: T[]) => [...new Set(values)];
@@ -40,6 +46,7 @@ async function removePrefix(admin: SupabaseClient<any, 'public', 'public', any, 
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: responseHeaders });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
   const authorization = req.headers.get('authorization');
   if (!authorization) return json({ error: 'unauthorized' }, 401);
@@ -54,23 +61,23 @@ Deno.serve(async (req) => {
 
   let dryRun = false;
   try {
-    const body = await req.json();
+    const body = await req.json() as { confirmation?: unknown; dry_run?: unknown };
+    if (body.confirmation !== 'delete-my-account') return json({ error: 'confirmation_required' }, 400);
     dryRun = body?.dry_run === true;
   } catch {
-    // An empty body means an actual deletion request. Invalid JSON is not an authorization bypass.
-    if (Number(req.headers.get('content-length') ?? 0) > 0) return json({ error: 'invalid_request' }, 400);
+    return json({ error: 'confirmation_required' }, 400);
   }
 
   // The SQL RPC enforces `sub` and the 10-minute `reauthenticated_at` custom JWT claim.
   // The Auth custom-access-token hook must set this claim only after a fresh password/OAuth reauth.
   const { data: requested, error: requestError } = await caller.rpc('request_account_deletion', { dry_run: dryRun });
   if (requestError || !requested) return json({ error: 'recent_reauthentication_required' }, 403);
-  if (dryRun) return json(requested as Record<string, unknown>);
+  if (dryRun) return json(accountDeletionResponse(requested as Record<string, unknown>));
 
   const jobId = (requested as { job_id?: string }).job_id;
   if (!jobId) return json({ error: 'deletion_request_failed' }, 500);
   const { data: claimed, error: claimError } = await caller.rpc('claim_account_deletion_job', { requested_job_id: jobId });
-  if (claimError || !claimed) return json({ job_id: jobId, status: 'processing', retryable: true }, 409);
+  if (claimError || !claimed) return json(accountDeletionResponse({ job_id: jobId, status: 'processing', retryable: true }), 409);
   const leaseId = (claimed as { lease_id?: string }).lease_id;
   if (!leaseId) return json({ error: 'deletion_request_failed' }, 500);
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -94,7 +101,7 @@ Deno.serve(async (req) => {
       status: 'partial', phase, last_error: 'retryable_server_failure', updated_at: new Date().toISOString(),
     }).eq('id', jobId).eq('lease_id', leaseId).eq('status', 'processing');
     await admin.from('account_deletion_audit').insert({ job_id: jobId, phase, outcome: 'partial' });
-    return json({ job_id: jobId, status: 'partial', retryable: true }, 503);
+    return json(accountDeletionResponse({ job_id: jobId, status: 'partial', phase, retryable: true }), 503);
   };
 
   try {
@@ -142,6 +149,10 @@ Deno.serve(async (req) => {
 
     await renewLease();
     await admin.from('account_deletion_jobs').update({ phase: 'delete_relational_data', updated_at: new Date().toISOString() }).eq('id', jobId).eq('lease_id', leaseId).eq('status', 'processing');
+    // A task authored by the departing guardian cannot retain a required profile FK.
+    // Tasks assigned to them are safe: assignee_id is ON DELETE SET NULL.
+    const { error: authoredCareTaskError } = await admin.from('care_tasks').delete().eq('created_by', uid);
+    if (authoredCareTaskError) throw new Error('authored_care_task_delete_failed');
     if (ownedChildIds.length) {
       const { error } = await admin.from('children').delete().in('id', ownedChildIds);
       if (error) throw new Error('owned_recipient_delete_failed');
@@ -168,7 +179,7 @@ Deno.serve(async (req) => {
       last_error: null, updated_at: new Date().toISOString(),
     }).eq('id', jobId).eq('lease_id', leaseId).eq('status', 'processing');
     await admin.from('account_deletion_audit').insert({ job_id: jobId, phase: 'completed', outcome: 'succeeded' });
-    return json({ job_id: jobId, status: 'completed' });
+    return json(accountDeletionResponse({ job_id: jobId, status: 'completed' }));
   } catch {
     return fail('retry_required');
   }

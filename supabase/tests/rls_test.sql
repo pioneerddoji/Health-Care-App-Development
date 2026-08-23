@@ -34,6 +34,7 @@ create role service_role;
 \i ../schema_consent_deletion.sql
 \i ../schema_stage4_share_security.sql
 \i ../schema_entitlement_ledger.sql
+\i ../schema_care_handoff.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -130,6 +131,7 @@ select expect_error($q$insert into recipient_consent_evidence(consent_id, child_
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '원자 생성 후 기록 허용');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, '기록 author_id 위조 차단');
 select expect_error($q$update daily_records set author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where child_id = '11111111-1111-1111-1111-111111111111'$q$, '기록 author_id 재작성 차단');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id) select id, auth.uid() from daily_records where child_id = '11111111-1111-1111-1111-111111111111' limit 1$q$, 'A 기록 확인 상태 저장');
 
 -- ── 구독 한도 (free → standard 업그레이드) ──
 select expect_error($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'free 티어 대상자 한도·실패 원자성');
@@ -225,6 +227,13 @@ select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from children) = 1 then 'PASS B가 초대 후 아이 보임' else 'FAIL B가 아이 안 보임' end;
 select case when (select count(*) from profiles) = 2 then 'PASS B가 공동 보호자 프로필(A) 열람' else 'FAIL 프로필 열람 실패' end;
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'meal')$q$, 'B(editor) 기록 허용');
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assignee_id, created_by) select '88888888-8888-8888-8888-888888888888', '11111111-1111-1111-1111-111111111111', id, '진료 후 안내 확인', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', auth.uid() from daily_records where child_id = '11111111-1111-1111-1111-111111111111' limit 1$q$, 'A가 B 담당 care-task 생성');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_error($q$update care_tasks set title = '변조' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 제목 변조 차단');
+select expect_error($q$update care_tasks set child_id = '33333333-3333-3333-3333-333333333333' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 대상자 변조 차단');
+select expect_ok($q$update care_tasks set completed_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 완료 전이 허용');
+select expect_error($q$update care_tasks set completed_at = null where id = '88888888-8888-8888-8888-888888888888'$q$, '완료 care-task 재개방 차단');
 select expect_rows($q$update guardian_child set role = 'owner' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 0, 'B 자기승격(구멍②) 무효');
 
 -- ── A가 B를 열람자로 강등 → B 기록 차단 ──
@@ -514,4 +523,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=157
+\echo RLS_SUITE_COMPLETE expected=163

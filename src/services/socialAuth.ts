@@ -65,3 +65,19 @@ export const enabledSocialProviders = (
 ): SocialProvider[] =>
   (Object.keys(SOCIAL_PROVIDERS) as SocialProvider[])
     .filter((p) => resolveSocialLogin(p, repoMode));
+
+/** OAuth 실패를 사용자가 조치할 수 있는 안정된 메시지로 변환한다. */
+export const socialAuthFailureMessage = (
+  label: string,
+  outcome: { type?: string; errorCode?: string; message?: string },
+): string => {
+  if (outcome.type === 'cancel' || outcome.type === 'dismiss') return `${label} 로그인이 취소되었습니다.`;
+  if (outcome.errorCode === 'provider_not_enabled' || outcome.errorCode === 'provider_not_found'
+    || outcome.errorCode === 'provider_disabled') {
+    return `${label} 로그인이 아직 설정되지 않았습니다. 다른 로그인 방법을 이용해 주세요.`;
+  }
+  if (outcome.errorCode === 'identity_already_exists' || outcome.errorCode === 'email_exists') {
+    return '이미 다른 로그인 방법에 연결된 계정입니다. 기존 로그인 방법으로 로그인해 주세요.';
+  }
+  return outcome.message ?? outcome.errorCode ?? `${label} 로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.`;
+};

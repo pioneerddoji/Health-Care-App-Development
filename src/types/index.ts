@@ -167,6 +167,28 @@ export interface DailyRecord {
   photoUris: string[]; // MVP: 로컬 URI, 연동 후 storage path
 }
 
+/** 공동 보호자가 기록을 확인한 시각. 관찰 기록의 전달 상태만 나타내며 의료 판단이 아니다. */
+export interface RecordAcknowledgement {
+  recordId: string;
+  guardianId: string;
+  acknowledgedAt: string;
+}
+
+/** 진료 후 안내 또는 기록 후속 조치의 보호자 간 담당·기한·완료 상태. */
+export interface CareTask {
+  id: string;
+  childId: string;
+  /** 특정 기록에서 시작한 후속 조치라면 연결한다. */
+  recordId?: string;
+  title: string;
+  note?: string;
+  assigneeId?: string;
+  dueDate?: ISODate;
+  completedAt?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export type RecordInput = Omit<DailyRecord, 'id' | 'childId' | 'authorId'>;
 
 // ── 성장/약/접종/검진 ───────────────────────────────────────
@@ -244,5 +266,7 @@ export interface ReportInput {
   periodStart: ISODate;
   periodEnd: ISODate;
   questionsForDoctor: string[];
+  /** 보호자가 수정하는 진료 전 전달 메모 — 의학적 요약/판단을 생성하지 않는다. */
+  briefingNote?: string;
   guardianName: string;
 }
