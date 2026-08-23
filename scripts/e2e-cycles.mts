@@ -21,6 +21,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 import { socialAuthFailureMessage } from '../src/services/socialAuth';
 import { deletionSubmitDisabled, focusAccessibilityError, recoverySubmitDisabled } from '../src/services/authUxState';
 import { assertCareTaskCompletionResult } from '../src/services/careTaskCompletion';
+import { assertSensitiveConsentMutationResult } from '../src/services/sensitiveConsentMutation';
 
 let pass = 0, fail = 0;
 const issues: string[] = [];
@@ -167,6 +168,8 @@ for (let cycle = 1; cycle <= 5; cycle++) {
     '소유권 이전 뒤 이전 owner는 새 owner를 제거할 수 없음');
   ok(await rejects(() => repo.inviteGuardian(transferChild.id, 'stale-owner-invite@example.com', 'viewer')),
     '소유권 이전 뒤 이전 owner는 공동 보호자를 초대할 수 없음');
+  ok(await rejects(() => repo.deleteChildAndData(transferChild.id)),
+    '소유권 이전 뒤 이전 owner는 대상자 전체 데이터를 삭제할 수 없음');
   const afterStaleAttempts = await repo.listGuardians(transferChild.id);
   ok(afterStaleAttempts.filter((guardian) => guardian.role === 'owner').length === 1
     && afterStaleAttempts.find((guardian) => guardian.guardianId === target.guardianId)?.role === 'owner',
@@ -452,8 +455,20 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
   ok((await repo.loadAll()).children.length === 0, '계정 삭제 뒤 로컬 대상자 데이터 정리');
 }
 
-// ── P1 Supabase 완료 전이: RLS-hidden/없는 task의 204/0행은 성공이 아니다 ──
+// ── P0/P1 Supabase 완료 전이: RLS-hidden/없는 mutation의 204/0행은 성공이 아니다 ──
 {
+  let zeroRowConsentRejected = false;
+  try { assertSensitiveConsentMutationResult({ data: null, error: null }, '철회'); } catch { zeroRowConsentRejected = true; }
+  ok(zeroRowConsentRejected, '민감정보 동의 철회 204/0행은 fail-closed되어 로컬 상태를 바꾸지 않음');
+
+  let consentServerFailurePropagated = false;
+  try { assertSensitiveConsentMutationResult({ data: null, error: { message: 'RLS denied' } }, '재동의'); } catch { consentServerFailurePropagated = true; }
+  ok(consentServerFailurePropagated, '민감정보 동의 서버 오류는 fail-closed로 전파');
+
+  let consentConfirmed = true;
+  try { assertSensitiveConsentMutationResult({ data: { id: 'consent-1' }, error: null }, '재동의'); } catch { consentConfirmed = false; }
+  ok(consentConfirmed, '민감정보 동의 변경은 반환된 서버 행에서만 확정');
+
   let zeroRowRejected = false;
   try { assertCareTaskCompletionResult({ data: null, error: null }); } catch { zeroRowRejected = true; }
   ok(zeroRowRejected, 'care-task 완료 204/0행은 fail-closed되어 로컬 완료/알림 취소로 진행되지 않음');

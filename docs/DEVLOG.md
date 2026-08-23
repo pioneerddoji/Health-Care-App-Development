@@ -1791,3 +1791,36 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - 이 runner에는 `psql`이 없어 fresh PostgreSQL 16 fixture는 로컬에서 실행하지 못한다.
   push 뒤 exact current-head GitHub `rls-test`의 `PASS 181/181, FAIL 0, COMPLETION 1`을
   별도 ratchet review 전에 확인한다.
+
+---
+
+## 2026-08-24 — P0 동의 RPC·stale former-owner 삭제 fail-closed 정합성
+
+**한 일**
+- `supabaseRepo`의 민감정보 동의 철회/재동의를 deprecated 직접 `consents` mutation이
+  아니라 versioned evidence·권한을 검증하는 `revoke_recipient_consent`/
+  `record_recipient_consent` RPC로 전환했다. RPC가 실제 동의 행을 반환하지 않거나
+  서버 오류면 Context가 로컬 동의 상태를 바꾸기 전에 fail-closed한다.
+- 재동의의 subject role은 대상자 birth date/is_self에서 계산하되 서버가 동일 기준으로
+  최종 재검증한다. 따라서 날짜 경계나 stale 권한은 잘못된 동의 저장이 아니라 명시적
+  오류로 끝난다.
+- `memoryRepo.deleteChildAndData`에도 현재 owner 재확인과 존재 확인을 추가했다. 소유권
+  이전 뒤 editor가 된 former owner는 기기 캐시만으로 대상자·기록·공유 링크를 삭제할 수 없다.
+- E2E에 stale former-owner 삭제 거부와 동의 mutation의 0행·서버 오류·확정 행 회귀를
+  추가했다.
+
+**결정과 이유**
+- RLS/RPC가 거부한 direct table mutation은 Supabase의 204/0행 성공처럼 보일 수 있다.
+  저장소 경계에서 반환 행을 요구해야 UI의 "철회됨/재동의됨" 상태가 실제 서버 상태와
+  불일치하지 않는다.
+- 운영 DB migration/data access, 실제 계정 삭제, OAuth·결제·배포·secrets 및 main 병합은
+  수행하지 않았다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, `npm run test:e2e` **PASS 189 / FAIL 0**,
+  `npm run test:gating` **PASS 41 / FAIL 0**, analytics contract **PASS 37 / FAIL 0**.
+- native `deno` 대신 `npx --yes deno`로 Edge contracts **PASS 8 / FAIL 0**과
+  share-report/delete-account/billing-webhook `deno check`을 통과했다. Expo web export는
+  **PASS 893 modules**, `git diff --check` 통과.
+- 이 runner에는 `psql`이 없어 fresh PostgreSQL 16 RLS는 로컬에서 실행하지 못한다.
+  push 뒤 exact current-head CI completion marker로 확인한다.

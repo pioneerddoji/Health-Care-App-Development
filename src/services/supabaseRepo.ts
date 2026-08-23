@@ -12,6 +12,7 @@ import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from 
 import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
 import { deletionResponseFromFunctionsHttpError, runAccountDeletion } from './accountDeletion';
 import { assertCareTaskCompletionResult } from './careTaskCompletion';
+import { assertSensitiveConsentMutationResult, sensitiveConsentSubject } from './sensitiveConsentMutation';
 import type {
   CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
@@ -569,18 +570,28 @@ export const supabaseRepo: Repo = {
   },
 
   async revokeSensitiveConsent(childId: string) {
-    // 내 동의 행만 철회 가능(RLS) — createChild가 만든 동의는 나(owner)의 행이다
-    const { error } = await sb().from('consents')
-      .update({ revoked_at: new Date().toISOString() })
-      .eq('child_id', childId).eq('type', 'sensitive_health').is('revoked_at', null);
-    throwIf(error);
+    // schema_consent_deletion.sql 이후 consents는 RPC 전용이다. 204/0행을
+    // 성공으로 취급하면 Context가 서버와 다른 동의 상태를 표시하게 된다.
+    const result = await sb().rpc('revoke_recipient_consent', {
+      cid: childId, consent_type: 'sensitive_health',
+    });
+    assertSensitiveConsentMutationResult(result, '철회');
   },
 
   async grantSensitiveConsent(childId: string) {
-    const userId = await currentUserId();
-    const { error } = await sb().from('consents')
-      .insert({ child_id: childId, guardian_id: userId, type: 'sensitive_health' });
+    // subject_role은 서버가 다시 검증한다. 대상자 행을 읽을 수 없거나 날짜 경계가
+    // 달라지면 fail-closed하며, 임의의 동의 행을 클라이언트가 직접 INSERT하지 않는다.
+    const { data: child, error } = await sb().from('children')
+      .select('birth_date, is_self').eq('id', childId).single();
     throwIf(error);
+    if (!child) throw new Error('대상자를 찾을 수 없습니다');
+    const result = await sb().rpc('record_recipient_consent', {
+      cid: childId,
+      consent_type: 'sensitive_health',
+      p_document_version: 'v1',
+      subject_role: sensitiveConsentSubject({ birthDate: child.birth_date, isSelf: child.is_self }),
+    });
+    assertSensitiveConsentMutationResult(result, '재동의');
   },
 
   async createRecord(childId: string, input: RecordInput): Promise<DailyRecord> {
