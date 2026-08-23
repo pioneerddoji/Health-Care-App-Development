@@ -259,6 +259,7 @@ set role anon;
 select expect_error($q$select run_scheduled_share_link_audit_retention()$q$, 'anon scheduled retention helper 실행 차단');
 select expect_error($q$select revoke_issued_share_links_on_guardian_removal()$q$, 'anon issuer revoke helper 실행 차단');
 set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
 set role service_role;
@@ -314,6 +315,9 @@ select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B account deletion 전 링크 생성');
 select set_config('test.account_deleted_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and revoked_at is null order by created_at desc limit 1), false);
 reset role;
+-- delete-account Edge Function removes authored rows before Auth deletion; model that order so the
+-- auth.users cascade reaches guardian_child and exercises issuer-link revocation.
+delete from daily_records where author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 select expect_rows($q$delete from auth.users where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 계정 삭제 cascade');
 set role service_role;
 select case when consume_share_link_token(current_setting('test.account_deleted_issuer_token_hash')) is null
