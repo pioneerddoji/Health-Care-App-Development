@@ -31,8 +31,9 @@ const createFixture = (overrides: Partial<FiveMinuteWowDependencies> = {}) => {
   let consent = true;
   let inviteResult: ServerConfirmation = confirmed('circle-a', 'invite-1');
   let acceptResult: ServerConfirmation = confirmed('circle-a', 'accept-1');
+  let guardianResult: ServerConfirmation = confirmed('circle-a', 'guardian-1');
   let briefingResult: ServerConfirmation = confirmed('circle-a', 'briefing-1');
-  let calls = { record: 0, invite: 0, accept: 0, briefing: 0 };
+  let calls = { record: 0, invite: 0, accept: 0, guardian: 0, briefing: 0 };
   const deps: FiveMinuteWowDependencies = {
     clock,
     network: { isOnline: () => online },
@@ -42,6 +43,7 @@ const createFixture = (overrides: Partial<FiveMinuteWowDependencies> = {}) => {
       create: async () => { calls.invite++; return inviteResult; },
       accept: async () => { calls.accept++; return acceptResult; },
     },
+    guardian: { confirm: async () => { calls.guardian++; return guardianResult; } },
     briefing: { preview: async () => { calls.briefing++; return briefingResult; } },
     ...overrides,
   };
@@ -52,6 +54,7 @@ const createFixture = (overrides: Partial<FiveMinuteWowDependencies> = {}) => {
     setConsent: (value: boolean) => { consent = value; },
     setInviteResult: (value: ServerConfirmation) => { inviteResult = value; },
     setAcceptResult: (value: ServerConfirmation) => { acceptResult = value; },
+    setGuardianResult: (value: ServerConfirmation) => { guardianResult = value; },
     setBriefingResult: (value: ServerConfirmation) => { briefingResult = value; },
   };
 };
@@ -71,7 +74,9 @@ const createFixture = (overrides: Partial<FiveMinuteWowDependencies> = {}) => {
   ok(view.syntheticElapsedMs === 110_000 && view.withinFiveMinutes, 'fixture synthetic elapsed가 5분 이내');
   ok(!JSON.stringify(view).match(/symptom|diagnosis|medication|health/i), '퍼널 상태는 건강 원문·의료판단을 수집하지 않음');
   const resumed = FiveMinuteWowJourney.resume(f.deps, journey.snapshot());
-  ok(resumed.view().stage === 'briefing_preview' && resumed.view().syntheticElapsedMs === 110_000, '뒤로가기/재개 뒤 단계와 경과 시간 보존');
+  ok(resumed.view().stage === 'other_guardian_confirmed' && !resumed.view().successVisible && resumed.view().syntheticElapsedMs === 110_000, '재개는 서버 브리핑 재확정 전 성공을 표시하지 않음');
+  await resumed.previewBriefing();
+  ok(resumed.view().stage === 'briefing_preview' && resumed.view().successVisible, '재개 뒤 서버 브리핑 재확정에서만 성공 표시');
 }
 
 // Offline must not call a server mutation; retry remains available and only later confirmation advances.
@@ -129,6 +134,56 @@ for (const [label, result] of [
   f.setBriefingResult({ confirmed: true, circleId: 'circle-a' });
   await rejects(() => journey.previewBriefing(), '부분 브리핑 응답은 성공으로 표시하지 않음');
   ok(journey.view().stage === 'other_guardian_confirmed', '부분 브리핑 실패 뒤 직전 단계 보존');
+}
+
+// A caller-controlled snapshot must never manufacture the final success state.
+{
+  const f = createFixture();
+  const forged = FiveMinuteWowJourney.resume(f.deps, {
+    circleId: 'circle-a', subjectId: 'subject-a', stage: 'briefing_preview', startedAtMs: 1_000,
+  });
+  ok(forged.view().stage !== 'briefing_preview' && !forged.view().successVisible, '위조된 재개 snapshot은 브리핑 성공을 만들 수 없음');
+}
+
+// The other guardian boundary requires its own complete server confirmation and remains retryable on every rejection.
+for (const [label, response] of [
+  ['취소', unconfirmed('circle-a')],
+  ['만료', { confirmed: false, circleId: 'circle-a', reason: 'expired' }],
+  ['중복', { confirmed: false, circleId: 'circle-a', reason: 'duplicate' }],
+  ['부분', { confirmed: true, circleId: 'circle-a' }],
+  ['다른 circle', confirmed('circle-b', 'guardian-other-circle')],
+] as const) {
+  const f = createFixture();
+  let calls = 0;
+  const deps = {
+    ...f.deps,
+    guardian: { confirm: async () => { calls++; return response; } },
+  } as FiveMinuteWowDependencies;
+  const journey = new FiveMinuteWowJourney(deps, { circleId: 'circle-a', subjectId: 'subject-a' });
+  await journey.recordFirstObservation(); await journey.createInvite(); await journey.acceptInvite();
+  await rejects(() => journey.confirmOtherGuardian(), `${label} 다른 보호자 응답은 다음 단계로 진행하지 않음`);
+  ok(calls === 1 && journey.view().stage === 'invite_accepted' && journey.view().retryable, `${label} 뒤 이전 단계 유지 및 재시도 가능`);
+}
+
+{
+  const f = createFixture();
+  let calls = 0;
+  let reject = true;
+  const deps = {
+    ...f.deps,
+    guardian: { confirm: async () => { calls++; if (reject) throw new Error('server unavailable'); return confirmed('circle-a', 'guardian-1'); } },
+  } as FiveMinuteWowDependencies;
+  const journey = new FiveMinuteWowJourney(deps, { circleId: 'circle-a', subjectId: 'subject-a' });
+  await journey.recordFirstObservation(); await journey.createInvite(); await journey.acceptInvite();
+  f.setOnline(false);
+  await rejects(() => journey.confirmOtherGuardian(), 'offline 다른 보호자 확인은 서버를 호출하지 않음');
+  ok(calls === 0 && journey.view().stage === 'invite_accepted' && journey.view().retryable, 'offline 뒤 이전 단계 유지 및 재시도 가능');
+  f.setOnline(true);
+  await rejects(() => journey.confirmOtherGuardian(), '거절된 다른 보호자 promise는 다음 단계로 진행하지 않음');
+  ok(calls === 1 && journey.view().stage === 'invite_accepted' && journey.view().retryable, '거절된 promise 뒤 재시도 가능');
+  reject = false;
+  await journey.confirmOtherGuardian();
+  ok(calls === 2 && journey.view().stage === 'other_guardian_confirmed', '명시 재시도의 완전 서버 확정에서만 다른 보호자 단계 진행');
 }
 
 console.log(`\n결과: PASS ${pass} / FAIL ${fail}`);

@@ -21,6 +21,7 @@ export interface FiveMinuteWowDependencies {
     create: (input: { circleId: string }) => Promise<ServerConfirmation>;
     accept: (input: { circleId: string }) => Promise<ServerConfirmation>;
   };
+  guardian: { confirm: (input: { circleId: string }) => Promise<ServerConfirmation> };
   briefing: { preview: (input: { circleId: string; subjectId: string }) => Promise<ServerConfirmation> };
 }
 
@@ -61,7 +62,9 @@ export class FiveMinuteWowJourney {
   ) {
     if (!ids.circleId || !ids.subjectId) throw new Error('circle과 대상자 식별자가 필요합니다');
     if (snapshot && stageIndex(snapshot.stage) < 0) throw new Error('알 수 없는 퍼널 단계입니다');
-    this.stage = snapshot?.stage ?? 'entry';
+    // Persisted snapshots are caller-controlled. The final UI state is never resumable
+    // without asking the briefing boundary to confirm it again on the server.
+    this.stage = snapshot?.stage === 'briefing_preview' ? 'other_guardian_confirmed' : (snapshot?.stage ?? 'entry');
     this.startedAtMs = snapshot?.startedAtMs ?? deps.clock.now();
   }
 
@@ -118,6 +121,13 @@ export class FiveMinuteWowJourney {
   async confirmOtherGuardian(): Promise<void> {
     this.requireStage('invite_accepted');
     this.requireOnline();
+    let result: ServerConfirmation;
+    try {
+      result = await this.deps.guardian.confirm({ circleId: this.ids.circleId });
+    } catch {
+      this.fail('다른 보호자 확인이 서버에서 확정되지 않았습니다');
+    }
+    this.confirm(result!, '다른 보호자 확인');
     this.advance('other_guardian_confirmed');
   }
 

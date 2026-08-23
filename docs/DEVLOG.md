@@ -1859,3 +1859,28 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   remote current-head CI에서 `PASS 181/181, FAIL 0, COMPLETION 1` 확인이 Draft PR/독립 ratchet
   review 전 필수다. `npm ci`의 24 audit advisories와 allow-scripts 대기 esbuild 1건은 기존 환경
   위험으로 남는다.
+
+## 2026-08-24 — P1 WOW guardian/resume server-confirmed fail-closed
+
+**한 일**
+- `confirmOtherGuardian()`에 별도 `guardian.confirm({ circleId })` 서버 경계를 추가했다.
+  완전한 `confirmed/circleId/non-empty id` 응답만 다음 단계로 진행하며, 취소·만료·중복·부분
+  응답·다른 circle·rejected promise·offline은 `invite_accepted`를 유지하고 재시도 가능하다.
+- caller-controlled resume snapshot의 `briefing_preview`는 `other_guardian_confirmed`로
+  downgrade한다. 재개된 여정은 briefing 서버를 다시 확정하기 전까지 성공 UI를 표시할 수 없다.
+- fixture에 forged snapshot, guardian partial/wrong-circle/rejected/offline/retry 회귀 계약을
+  추가했다.
+
+**결정과 이유**
+- WOW prototype의 모든 성공 표시는 서버 confirmation에 근거해야 한다. snapshot은 외부 입력으로
+  취급하고 최종 성공 상태의 영속 재개를 금지해 forged/corrupted data가 성공 UI를 만들지 못하게 했다.
+- production/store 배포, 운영 DB 작업, main 병합은 수행하지 않았다.
+
+**검증**
+- RED: 추가 guardian/resume 계약은 기존 구현에서 **13개 실패**로 재현됐다. GREEN:
+  `npm run test:five-minute-wow` **PASS 41 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건), `npm run typecheck`, analytics **PASS 37 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  **PASS 893 modules**, `git diff --check` 통과. Docker daemon와 `psql`이 없어 fresh PostgreSQL
+  16 RLS fixture는 로컬 실행하지 못했으며, push 뒤 exact current-head CI/PG16 marker를 확인한다.
