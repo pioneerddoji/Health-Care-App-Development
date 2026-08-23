@@ -43,10 +43,16 @@ create function enforce_care_task_completion() returns trigger
 language plpgsql set search_path = public as $fn$
 begin
   if new.child_id is distinct from old.child_id
-    or new.record_id is distinct from old.record_id
+    -- Preserve FK lifecycle semantics without reopening payload edits: PostgreSQL
+    -- may null these columns only after the referenced row has been deleted.
+    or (new.record_id is distinct from old.record_id and not (
+      new.record_id is null and old.record_id is not null
+      and not exists (select 1 from daily_records where id = old.record_id)))
     or new.title is distinct from old.title
     or new.note is distinct from old.note
-    or new.assignee_id is distinct from old.assignee_id
+    or (new.assignee_id is distinct from old.assignee_id and not (
+      new.assignee_id is null and old.assignee_id is not null
+      and not exists (select 1 from profiles where id = old.assignee_id)))
     or new.due_date is distinct from old.due_date
     or new.created_by is distinct from old.created_by
     or new.created_at is distinct from old.created_at then

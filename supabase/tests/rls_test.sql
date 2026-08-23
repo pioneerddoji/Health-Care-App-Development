@@ -232,6 +232,8 @@ select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assig
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$update care_tasks set title = '변조' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 제목 변조 차단');
 select expect_error($q$update care_tasks set child_id = '33333333-3333-3333-3333-333333333333' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 대상자 변조 차단');
+select expect_error($q$update care_tasks set record_id = null where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 기록 연결 직접 해제 차단');
+select expect_error($q$update care_tasks set assignee_id = null where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 배정 직접 해제 차단');
 select expect_ok($q$update care_tasks set completed_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 완료 전이 허용');
 select expect_error($q$update care_tasks set completed_at = null where id = '88888888-8888-8888-8888-888888888888'$q$, '완료 care-task 재개방 차단');
 select expect_rows($q$update guardian_child set role = 'owner' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 0, 'B 자기승격(구멍②) 무효');
@@ -523,4 +525,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=163
+\echo RLS_SUITE_COMPLETE expected=165
