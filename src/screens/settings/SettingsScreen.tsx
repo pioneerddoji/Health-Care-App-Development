@@ -31,7 +31,7 @@ export const SettingsScreen = () => {
     roleOf, listGuardians, inviteGuardian, updateGuardianRole, removeGuardian,
     listShareLinks, revokeShareLink,
     consentActive, revokeSensitiveConsent, grantSensitiveConsent,
-    subscription, ent, deleteAccount, getAccountAuthMethods,
+    subscription, ent, deleteAccount, getAccountAuthMethods, transferGuardianOwnership, loadAll,
   } = useApp();
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -93,15 +93,23 @@ export const SettingsScreen = () => {
     ]);
   };
 
-  const invite = async () => {
+  const invite = () => {
     if (!selectedChild || !inviteEmail.trim()) return;
-    setBusy(true);
-    try {
-      await inviteGuardian(selectedChild.id, inviteEmail.trim(), inviteRole);
-      setInviteEmail('');
-      await refreshGuardians();
-      Alert.alert('완료', `${ROLE_LABEL[inviteRole]} 권한으로 초대했습니다.`);
-    } catch (e) { alertError(e); } finally { setBusy(false); }
+    const child = selectedChild;
+    Alert.alert('공동 관리 범위 확인',
+      `${child.name}의 건강 기록, 사진, 레포트, 보호자 전달 상태를 ${ROLE_LABEL[inviteRole]}에게 공유합니다. ${inviteRole === 'editor' ? '편집자는 기록·레포트 발행과 공유 링크 관리를 할 수 있습니다.' : '열람자는 읽기만 할 수 있습니다.'}`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '범위 확인 후 초대', onPress: async () => {
+          setBusy(true);
+          try {
+            await inviteGuardian(child.id, inviteEmail.trim(), inviteRole);
+            setInviteEmail('');
+            await refreshGuardians();
+            Alert.alert('완료', `${ROLE_LABEL[inviteRole]} 권한으로 초대했습니다.`);
+          } catch (e) { alertError(e); } finally { setBusy(false); }
+        } },
+      ]);
   };
 
   const toggleRole = async (g: ChildGuardian) => {
@@ -126,6 +134,23 @@ export const SettingsScreen = () => {
         },
       },
     ]);
+  };
+
+  const confirmTransferOwnership = (g: ChildGuardian) => {
+    if (!selectedChild || g.role !== 'editor') return;
+    Alert.alert('소유권 이전',
+      `${g.name}님이 ${selectedChild.name}의 유일한 소유자가 됩니다. 현재 소유자는 편집자로 변경되며, 삭제·보호자 관리 권한은 새 소유자에게만 남습니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '소유권 이전', style: 'destructive', onPress: async () => {
+          try {
+            await transferGuardianOwnership(selectedChild.id, g.guardianId);
+            await loadAll();
+            await refreshGuardians();
+            Alert.alert('완료', '소유권 이전이 서버에서 확정되었습니다.');
+          } catch (e) { alertError(e); }
+        } },
+      ]);
   };
 
   const confirmDelete = () => {
@@ -214,6 +239,11 @@ export const SettingsScreen = () => {
                     <Pressable onPress={() => confirmRemove(g)} style={styles.linkBtn}>
                       <Text style={[styles.link, { color: tokens.danger }]}>해제</Text>
                     </Pressable>
+                    {g.role === 'editor' && (
+                      <Pressable onPress={() => confirmTransferOwnership(g)} style={styles.linkBtn}>
+                        <Text style={[styles.link, { color: tokens.danger }]}>소유권 이전</Text>
+                      </Pressable>
+                    )}
                   </Row>
                 )}
               </Row>

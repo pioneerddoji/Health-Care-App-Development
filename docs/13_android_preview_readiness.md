@@ -27,7 +27,7 @@ GitHub REST API로 위 head의 현재 check-run 6개를 대조했으며 `Workers
 | `npx expo export --platform web --output-dir dist-web` | 통과; web bundle 891 modules, output `dist-web` |
 | `git diff --check` | 통과 |
 
-`npx --yes deno`로 share-report/billing-webhook/delete-account contracts **PASS 11 / FAIL 0** 및 세 Edge Function `deno check`를 로컬 재실행했다. 이 runner에는 `psql`이 없고 Docker daemon도 실행 중이 아니므로 fresh PostgreSQL 16 RLS는 재실행하지 못했다. 대신 동일 immutable head의 GitHub `rls-test` check-run 성공을 API로 대조했다. PR #9 handoff의 해당 CI 증거는 RLS `PASS 172/172, FAIL 0, COMPLETION 1`이며, CI 정의는 `.github/workflows/ci.yml:86-99`에서 기대값 `172`·완료 marker를 fail-closed로 확인한다.
+`npx --yes deno`로 share-report/billing-webhook/delete-account contracts **PASS 10 / FAIL 0** 및 세 Edge Function `deno check`를 로컬 재실행했다. 이 runner에는 `psql`이 없고 Docker daemon도 실행 중이 아니므로 fresh PostgreSQL 16 RLS는 재실행하지 못했다. 대신 동일 immutable head의 GitHub `rls-test` check-run 성공을 API로 대조했다. PR #9 handoff의 해당 CI 증거는 RLS `PASS 172/172, FAIL 0, COMPLETION 1`이며, 현재 CI 정의는 `.github/workflows/ci.yml:86-111`에서 completion marker `181`과 일치하는 기대값 `181`을 fail-closed로 확인한다.
 
 ## 3. Android preview 사전검사
 

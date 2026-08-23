@@ -87,6 +87,7 @@ interface AppState {
   listGuardians: (childId: string) => Promise<ChildGuardian[]>;
   inviteGuardian: (childId: string, email: string, role: 'editor' | 'viewer') => Promise<void>;
   updateGuardianRole: (childId: string, guardianId: string, role: 'editor' | 'viewer') => Promise<void>;
+  transferGuardianOwnership: (childId: string, guardianId: string) => Promise<void>;
   removeGuardian: (childId: string, guardianId: string) => Promise<void>;
 
   publishReport: (input: {
@@ -373,6 +374,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     inviteGuardian: (childId, email, role) => repo.inviteGuardian(childId, email, role),
     updateGuardianRole: (childId, guardianId, role) =>
       repo.updateGuardianRole(childId, guardianId, role),
+    transferGuardianOwnership: (childId, guardianId) =>
+      repo.transferGuardianOwnership(childId, guardianId),
     removeGuardian: (childId, guardianId) => repo.removeGuardian(childId, guardianId),
 
     publishReport: (input) => repo.publishReport(input),
