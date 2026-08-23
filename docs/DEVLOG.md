@@ -613,3 +613,34 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - Storage 재귀 완전 삭제는 실 Supabase 미검증 (list API 페이지네이션 1000개 한도 —
   기록이 매우 많은 아이는 반복 호출 필요할 수 있음)
 - 개인정보처리방침은 초안 — 배포 전 법률 검토 필수
+
+---
+
+## 2026-08-24 — P1 Android·iOS preview readiness 포트폴리오 (문서·정적 계약만)
+
+**한 일**
+- `docs/20_preview_readiness_portfolio.md`를 추가해 Android Draft PR #18과 iOS Draft
+  PR #20의 remote base/head SHA, Draft 상태, Actions 및 review API 결과를 한 표로
+  고정했다. Android의 4건 `COMMENTED` review와 iOS의 query 시 formal review 없음은
+  승인으로 바꾸어 표기하지 않았다.
+- immutable iOS exact head `fa2cf745aaf79ab66746d2d83d6a38b4c58f79a0`의 임시
+  clean archive에서 `npm ci` 후 typecheck, analytics 37/0, five-minute WOW 41/0,
+  E2E 189/0, gating 41/0, app-resume 14/0, native preflight 13/0,
+  accessibility 11/0, iOS readiness 8/0(의도된 blocked gate 6), Deno contracts
+  10/0+세 entrypoint check, Expo web export, diff check을 재실행했다.
+- Android/iOS별 proven / not proven / needs-device / 캡틴 승인 gate / rollback을
+  분리했다. build/upload/signing/device/OAuth/billing/production Supabase가 성공한
+  것처럼 표현하지 않았다.
+
+**결정과 이유**
+- 서로 다른 PR의 CI를 교차 근거로 쓰면 false-green이 될 수 있으므로 각 행에
+  정확한 remote SHA와 current-head Actions URL을 남겼다. local PostgreSQL 16은
+  실행하지 않았으며 iOS `rls-test` current-head CI(181 assertion contract)를 원격
+  근거로만 기록했다.
+- portfolio 자체는 문서뿐인 원자적 변경이다. 원본 후보, EAS/Apple/Google 상태,
+  운영 Supabase와 고객 데이터의 rollback 범위를 열지 않는다.
+
+**다음**
+- 이 카드와 구현자를 분리한 same-card ratchet review에서 APPROVE 또는 단일 canonical
+  REQUEST_CHANGES를 받는다. 별도 승인 전에는 build/upload/signing/device/운영 연동
+  작업을 새 카드로도 시작하지 않는다.
