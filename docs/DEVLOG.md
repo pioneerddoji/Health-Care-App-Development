@@ -644,3 +644,17 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - 이 카드와 구현자를 분리한 same-card ratchet review에서 APPROVE 또는 단일 canonical
   REQUEST_CHANGES를 받는다. 별도 승인 전에는 build/upload/signing/device/운영 연동
   작업을 새 카드로도 시작하지 않는다.
+
+**재검토 정정**
+- 격리 실행 환경의 repository config에 보호된 공용 Git credential helper가 있음을 확인했다.
+  credential을 출력·복사·저장하지 않고 `git credential fill`의 메모리 내 결과로 GitHub REST
+  API를 호출해 PR #18/#20/#21의 base/head SHA, Draft/open 상태, review endpoint와 exact-head
+  check-runs를 재대조했다. #18은 `COMMENTED` 4건, #20과 #21은 formal GitHub PR review 없음으로
+  유지했다.
+- 포트폴리오 Draft PR #21 exact head `60bb5966e79dad6e402e516d8bc0bcf0c34668c2`의 `typecheck`와
+  `rls-test`는 completed/success지만 `Workers Builds: health-care-app-development`는
+  completed/failure임을 명시했다. 이를 green 또는 build/upload/production 결과로 과장하지 않았다.
+- 수정된 docs branch에서 `npm ci`, `npm run typecheck`, `npm run test:e2e` (110/0),
+  `npm run test:gating` (27/0), `git diff --check`를 재실행했다. `npm ci`가 보고한 기존
+  dependency advisory 22건(중간 9, 높음 13)과 보류된 `esbuild` install script는 이 문서 작업에서
+  변경하거나 승인하지 않았다.

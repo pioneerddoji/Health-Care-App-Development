@@ -12,7 +12,7 @@
 
 ## 2. 원격 exact-head 대조 (2026-08-24 KST)
 
-GitHub public REST API와 `git ls-remote`로 원격 refs를 대조했다. 현재 격리 profile HOME에는 사용할 수 있는 GitHub CLI/credential helper가 없었으므로 credential/token을 조회·출력·복사하지 않았고, public metadata만 사용했다. 이 사실은 인증된 결과라고 과장하지 않는다.
+보호된 공용 Git credential helper(`git credential fill` → GitHub API)를 통해 credential을 프로세스 메모리에서만 사용하고 출력·복사·저장하지 않은 채, GitHub REST API와 `git ls-remote`로 원격 refs를 대조했다. 이 인증 경로로 PR #18/#20/#21의 base/head SHA·Draft 상태·review endpoint·head check-runs를 같은 시점에 재조회했다.
 
 | 플랫폼 | Draft PR | base (remote SHA) | head (remote SHA) | Draft | review endpoint 결과 | current-head Actions |
 |---|---|---|---|---|---|---|
@@ -21,7 +21,11 @@ GitHub public REST API와 `git ls-remote`로 원격 refs를 대조했다. 현재
 
 The Android and iOS SHA values are distinct. No cross-PR status is substituted for an exact head.
 
-## 3. iOS exact-head clean reproduction
+## 3. 포트폴리오 Draft PR current-head 상태
+
+이 문서만 담은 [Draft PR #21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21)은 base `main` (`bd23179fd09af1c53522b3b4bf1fb6e08fbfac19`), head `docs/p1-preview-readiness-portfolio` (`60bb5966e79dad6e402e516d8bc0bcf0c34668c2`)로 API·ref가 일치했고, Draft/open이며 formal GitHub PR review는 없었다. head check-runs는 `typecheck` 및 `rls-test`가 completed/success였고, `Workers Builds: health-care-app-development`는 completed/**failure**였다. 따라서 PR #21은 green으로 취급하지 않으며, 이 실패를 build·upload·production 성공 또는 실패의 근거로 해석하지 않는다.
+
+## 4. iOS exact-head clean reproduction
 
 A disposable archive extracted directly from immutable `fa2cf745aaf79ab66746d2d83d6a38b4c58f79a0` was clean-installed with `npm ci`; it was not the portfolio branch. `npm ci` succeeded and reported existing advisories (24: moderate 11, high 13) plus one pending `esbuild` install script. No audit fix or script approval was performed.
 
@@ -42,7 +46,7 @@ A disposable archive extracted directly from immutable `fa2cf745aaf79ab66746d2d8
 | exact-head `git diff --check` | pass |
 | PostgreSQL 16 | local run not performed; iOS exact-head [remote `rls-test` success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32673930804/job/97278878052) is the source of truth. CI contract expects 181 assertions and one completion marker. |
 
-## 4. Android·iOS preview readiness matrix
+## 5. Android·iOS preview readiness matrix
 
 | area | Android evidence — PR #18 exact head | iOS evidence — PR #20 exact head | not proven / needs-device | 캡틴 승인 gate | rollback |
 |---|---|---|---|---|---|
@@ -53,12 +57,12 @@ A disposable archive extracted directly from immutable `fa2cf745aaf79ab66746d2d8
 | device runtime/accessibility | **needs-device** | **needs-device**: VoiceOver speech/navigation, OS picker focus trap, native focus, permissions, PDF/share/notification/deep-link lifecycle | actual physical-device behavior | approved device test card and real device evidence | no device state changed |
 | OAuth, billing, Supabase | **not performed**; hidden/off policy remains static | **not performed**; six iOS preflight blockers explicitly preserve provider/billing/production gates | OAuth redirect, payment, production RLS/data/migration are not validated | provider, RevenueCat/store, production Supabase and legal approvals | no external configuration changed |
 
-## 5. Next decision sequence
+## 6. Next decision sequence
 
 1. Keep both candidate PRs Draft and retain their exact heads until review settles.
 2. A reviewer must evaluate this portfolio card independently of the implementation author. An APPROVE or one canonical REQUEST_CHANGES is required; neither existing Android comments nor the absent iOS formal PR review is relabeled as approval.
 3. Only after explicit Captain approval, create separately scoped work for identity/signing, approved preview build/upload, real-device test, production Supabase, OAuth/billing, and store/legal metadata. None is authorized by this portfolio.
 
-## 6. Prohibited work confirmation
+## 7. Prohibited work confirmation
 
 This task did not perform EAS/store build or upload; Google/Apple login; signing or secret operations; bundle/package ID finalization; external device/emulator connection; OAuth/billing/production Supabase/migration/data access; DNS/cost increase; customer-facing content or price/brand decisions; deployment; or a `main` merge.
