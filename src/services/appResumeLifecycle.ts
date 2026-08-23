@@ -28,10 +28,15 @@ const urlFingerprint = (value: string): string => {
   return `${hash >>> 0}:${value.length}`;
 };
 
-const isAppUrl = (value: string): boolean => {
+const isRecoveryUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
-    return url.protocol === 'carenote:' && !url.hostname;
+    if (url.protocol !== 'carenote:' && url.protocol !== 'https:') return false;
+    const params = new URLSearchParams([
+      url.search.slice(1),
+      url.hash.slice(1),
+    ].filter(Boolean).join('&'));
+    return params.get('type') === 'recovery';
   } catch {
     return false;
   }
@@ -46,15 +51,14 @@ export class AppResumeLifecycle {
   private refreshing = false;
   private refreshQueued = false;
   private disposed = false;
+  private generation = 0;
   private readonly seenUrls = new Map<string, number>();
 
   constructor(private readonly client: ResumeClient, private readonly callbacks: ResumeCallbacks) {}
 
-  onAppStateChange(next: NativeAppState): void {
+  /** 최초 boot도 foreground refresh와 같은 취소 경계를 공유한다. */
+  start(): void {
     if (this.disposed) return;
-    const resumed = (this.appState === 'background' || this.appState === 'inactive') && next === 'active';
-    this.appState = next;
-    if (!resumed) return;
     if (this.refreshing) {
       this.refreshQueued = true;
       return;
@@ -62,8 +66,16 @@ export class AppResumeLifecycle {
     void this.refresh();
   }
 
+  onAppStateChange(next: NativeAppState): void {
+    if (this.disposed) return;
+    const resumed = (this.appState === 'background' || this.appState === 'inactive') && next === 'active';
+    this.appState = next;
+    if (!resumed) return;
+    this.start();
+  }
+
   async onUrl(url: string): Promise<void> {
-    if (this.disposed || !isAppUrl(url)) return;
+    if (this.disposed || !isRecoveryUrl(url)) return;
     const now = this.callbacks.now();
     const fingerprint = urlFingerprint(url);
     for (const [known, seenAt] of this.seenUrls) {
@@ -71,6 +83,8 @@ export class AppResumeLifecycle {
     }
     if (this.seenUrls.has(fingerprint)) return;
     this.seenUrls.set(fingerprint, now);
+    // 복구 링크가 새 인증 상태를 열기 전에, 진행 중 boot/refresh가 이전 계정을 확정하지 못하게 한다.
+    this.invalidate();
     try {
       await this.client.processAuthUrl(url);
     } catch {
@@ -85,17 +99,26 @@ export class AppResumeLifecycle {
     this.seenUrls.clear();
   }
 
+  /** sign-out/recovery가 시작되면 이전 비동기 결과를 즉시 폐기한다. */
+  invalidate(): void {
+    if (this.disposed) return;
+    this.generation++;
+    this.refreshQueued = false;
+    this.callbacks.onInvalidated();
+  }
+
   private async refresh(): Promise<void> {
+    const generation = this.generation;
     this.refreshing = true;
-    this.callbacks.onPending();
+    if (this.isCurrent(generation)) this.callbacks.onPending();
     try {
       const profile = await this.client.restoreSession();
       if (!profile) throw new Error('no session');
       await this.client.loadAll();
       const notificationDenied = await this.client.notificationDenied();
-      if (!this.disposed) this.callbacks.onConfirmed({ profile, notificationDenied });
+      if (this.isCurrent(generation)) this.callbacks.onConfirmed({ profile, notificationDenied });
     } catch {
-      if (!this.disposed) this.callbacks.onInvalidated();
+      if (this.isCurrent(generation)) this.callbacks.onInvalidated();
     } finally {
       this.refreshing = false;
       if (!this.disposed && this.refreshQueued) {
@@ -103,5 +126,9 @@ export class AppResumeLifecycle {
         void this.refresh();
       }
     }
+  }
+
+  private isCurrent(generation: number): boolean {
+    return !this.disposed && this.generation === generation;
   }
 }

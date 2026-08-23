@@ -1,7 +1,7 @@
 // 앱 전역 상태 — 저장소 계층(repo)의 캐시.
 // mock 모드: 샘플 데이터 / supabase 모드: 로그인 후 서버에서 로드.
 import React, {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { AppState as NativeAppState, Linking } from 'react-native';
 import type {
@@ -122,6 +122,14 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [settings, setSettings] = useState<UserSettings>({});
   const [recoveryRequest, setRecoveryRequest] = useState<{ active: boolean; error?: string }>({ active: false });
   const [notificationDenied, setNotificationDenied] = useState(false);
+  const lifecycleRef = useRef<AppResumeLifecycle | null>(null);
+
+  const clearSession = useCallback(() => {
+    setGuardian(null); setConsented(false); setNotificationDenied(false);
+    setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+    setVaccinations([]); setCheckups([]); setCareTasks([]); setSelectedChildId(null);
+    setRoles({}); setSensitiveConsent({}); setSettings({}); setBooting(false);
+  }, []);
 
   const loadAll = useCallback(async () => {
     const all = await repo.loadAll();
@@ -140,23 +148,6 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       cur && all.children.some((c) => c.id === cur) ? cur : all.children[0]?.id ?? null);
   }, []);
 
-  // 앱 시작: 저장된 세션 복원 (supabase 모드)
-  useEffect(() => {
-    (async () => {
-      try {
-        const profile = await repo.restoreSession();
-        if (profile) {
-          setGuardian(profile);
-          setConsented(true); // 기존 계정은 가입 시 동의 완료
-          initBilling(repo.mode, profile.id).catch(() => {});
-          await loadAll();
-        }
-      } finally {
-        setBooting(false);
-      }
-    })();
-  }, [loadAll]);
-
   useEffect(() => {
     const unsubscribe = repo.subscribePasswordRecovery((error) =>
       setRecoveryRequest({ active: true, error }));
@@ -171,25 +162,26 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       onConfirmed: ({ profile, notificationDenied: denied }) => {
         setGuardian(profile);
         setConsented(true);
+        initBilling(repo.mode, profile.id).catch(() => {});
         setNotificationDenied(denied);
         setBooting(false);
       },
-      onInvalidated: () => {
-        setGuardian(null); setConsented(false); setNotificationDenied(false);
-        setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
-        setVaccinations([]); setCheckups([]); setCareTasks([]); setSelectedChildId(null);
-        setRoles({}); setSensitiveConsent({}); setSettings({}); setBooting(false);
-      },
+      onInvalidated: clearSession,
       onUrlRejected: () => setRecoveryRequest({
         active: true,
         error: '비밀번호 재설정 링크를 확인할 수 없습니다. 새 링크를 요청해 주세요.',
       }),
     });
+    lifecycleRef.current = lifecycle;
     const linkSubscription = Linking.addEventListener('url', ({ url }) => { void lifecycle.onUrl(url); });
     const appStateSubscription = NativeAppState.addEventListener('change', (state) => lifecycle.onAppStateChange(state));
     Linking.getInitialURL().then((url) => { if (url) void lifecycle.onUrl(url); }).catch(() => {});
-    return () => { lifecycle.dispose(); unsubscribe(); linkSubscription.remove(); appStateSubscription.remove(); };
-  }, [loadAll]);
+    lifecycle.start();
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current = null;
+      lifecycle.dispose(); unsubscribe(); linkSubscription.remove(); appStateSubscription.remove();
+    };
+  }, [clearSession, loadAll]);
 
   const value = useMemo<AppState>(() => ({
     mode: repo.mode,
@@ -264,14 +256,9 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     },
 
     signOut: async () => {
+      lifecycleRef.current?.invalidate();
       await endBillingSession().catch(() => {});
       await repo.signOut();
-      setGuardian(null);
-      setConsented(false);
-      setChildren([]); setRecords([]); setGrowth([]);
-      setMedications([]); setVaccinations([]); setCheckups([]);
-      setSelectedChildId(null);
-      setSettings({});
     },
 
     grantConsents: () => setConsented(true),
@@ -279,8 +266,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
     requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
     completePasswordRecovery: async (newPassword) => {
+      lifecycleRef.current?.invalidate();
       await repo.completePasswordRecovery(newPassword);
-      setGuardian(null); setConsented(false);
       setRecoveryRequest({ active: false });
     },
     recoveryRequest,

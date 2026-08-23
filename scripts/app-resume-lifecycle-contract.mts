@@ -54,18 +54,107 @@ const activeClient = (overrides: Partial<ResumeClient> = {}): ResumeClient => ({
   const lifecycle = new AppResumeLifecycle(activeClient({
     processAuthUrl: async () => { urls++; },
   }), { now: () => now, onPending: () => {}, onConfirmed: () => {}, onInvalidated: () => {} });
-  await lifecycle.onUrl('not a url');
-  await lifecycle.onUrl('https://example.test/#type=recovery');
-  await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
-  await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
-  now += 31_000;
-  await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
-  ok(urls === 2, 'malformed/non-app and duplicate URLs are ignored without leaking query values');
-  lifecycle.dispose();
-}
+ await lifecycle.onUrl('not a url');
+ await lifecycle.onUrl('https://kidcare.example/#type=recovery&access_token=secret');
+ await lifecycle.onUrl('https://kidcare.example/#type=signup&access_token=secret');
+ await lifecycle.onUrl('https://example.test/#access_token=secret');
+ await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
+ await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
+ now += 31_000;
+ await lifecycle.onUrl('carenote://#type=recovery&access_token=secret');
+ ok(urls === 3, 'HTTPS and native recovery URLs are processed, while malformed/non-recovery external URLs are ignored without leaking query values');
+ lifecycle.dispose();
+ }
 
-{
-  let rejected = 0;
+ {
+ let release!: () => void;
+ const pending = new Promise<void>((resolve) => { release = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   restoreSession: async () => { await pending; return profile; },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.start();
+ lifecycle.invalidate();
+ release();
+ await flush();
+ ok(states.join(',') === 'pending,invalidated', 'initial boot completion cannot overwrite a newer invalidation');
+ lifecycle.dispose();
+ }
+
+ {
+ let release!: () => void;
+ const pending = new Promise<void>((resolve) => { release = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   restoreSession: async () => { await pending; return profile; },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ lifecycle.invalidate();
+ release();
+ await flush();
+ ok(states.join(',') === 'pending,invalidated', 'in-flight foreground refresh cannot restore state after sign-out invalidation');
+ lifecycle.dispose();
+ }
+
+ {
+ let denied = true;
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   notificationDenied: async () => denied,
+ }), {
+   now: () => 100,
+   onPending: () => {},
+   onConfirmed: ({ notificationDenied }) => states.push(`confirmed:${notificationDenied}`),
+   onInvalidated: () => {},
+ });
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ await flush();
+ denied = false;
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ await flush();
+ denied = true;
+ lifecycle.onAppStateChange('background');
+ lifecycle.onAppStateChange('active');
+ await flush();
+ ok(states.join(',') === 'confirmed:true,confirmed:false,confirmed:true', 'foreground permission refresh reports denied↔granted transitions to mounted consumers');
+ lifecycle.dispose();
+ }
+
+ {
+ let release!: () => void;
+ const pending = new Promise<void>((resolve) => { release = resolve; });
+ const states: string[] = [];
+ const lifecycle = new AppResumeLifecycle(activeClient({
+   restoreSession: async () => { await pending; return profile; },
+ }), {
+   now: () => 100,
+   onPending: () => states.push('pending'),
+   onConfirmed: () => states.push('confirmed'),
+   onInvalidated: () => states.push('invalidated'),
+ });
+ lifecycle.start();
+ await lifecycle.onUrl('https://kidcare.example/#type=recovery&access_token=secret');
+ release();
+ await flush();
+ ok(states.join(',') === 'pending,invalidated', 'recovery URL invalidates an in-flight boot refresh before it can restore prior state');
+ lifecycle.dispose();
+ }
+
+ {
+ let rejected = 0;
   const lifecycle = new AppResumeLifecycle(activeClient({
     processAuthUrl: async () => { throw new Error('rejected'); },
   }), {

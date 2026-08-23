@@ -58,6 +58,10 @@ const appContext = read('src/context/AppContext.tsx');
 ok(appContext.includes("Linking.addEventListener('url'")
   && appContext.includes('Linking.getInitialURL()'), 'deep-link cold-start and foreground URL handlers');
 
+const vaccination = read('src/screens/vaccination/VaccinationScreen.tsx');
+ok(vaccination.includes('notificationDenied')
+  && !vaccination.includes('isNotificationDenied'), 'mounted vaccination screen consumes authoritative foreground notification state');
+
 const ui = read('src/components/ui.tsx');
 const settings = read('src/screens/settings/SettingsScreen.tsx');
 ok(ui.includes('accessibilityRole="button"')

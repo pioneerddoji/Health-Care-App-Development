@@ -2036,3 +2036,37 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   current-head CI completion marker를 확인한다.
 - Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
   production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — PR #18 P1 web recovery·foreground 권한·lifecycle race fail-closed 보완
+
+**한 일**
+- `AppResumeLifecycle` URL 경계를 recovery 파라미터 기반으로 바꿔 `carenote:`와 HTTPS web recovery를
+  처리하고, malformed/non-recovery URL은 처리하지 않는다. URL/token을 로그나 UI 오류로 노출하지 않는다.
+- 최초 boot, foreground refresh, recovery/sign-out이 한 lifecycle generation을 공유하도록 통합했다.
+  invalidate 뒤 늦게 끝난 restore/load callback은 보호자·건강 데이터·권한 상태를 다시 확정할 수 없다.
+- `VaccinationScreen`은 mount 시 자체 조회를 하지 않고 AppContext의 foreground 재확인
+  `notificationDenied`를 사용한다. 따라서 설정 앱 왕복 후 denied↔granted 배너가 mounted 화면에도 갱신된다.
+- lifecycle contract에 HTTPS recovery/non-recovery 음성 URL, boot·resume·recovery/sign-out race,
+  unmount, denied→granted→denied permission fixture를 추가했다. native preflight에는 화면이
+  authoritative context 값을 소비하는 정적 fixture를 추가했다.
+
+**결정과 이유**
+- recovery URL 파서는 기존 `processRecoveryUrl()`의 scheme-agnostic contract를 유지하므로 lifecycle은
+  URL scheme 자체가 아닌 안전한 HTTPS/native recovery 이벤트만 통과시킨다. external/non-recovery
+  URL은 auth 처리기로 보내지 않아 token 처리 면적을 늘리지 않는다.
+- boot effect와 resume effect를 별도로 두면 늦은 성공 callback이 이후 sign-out/recovery invalidation을
+  덮을 수 있다. 한 lifecycle의 generation check와 invalidate를 단일 취소 경계로 사용한다.
+
+**검증**
+- TDD RED: 새 boot invalidation fixture는 `AppResumeLifecycle.start is not a function`으로 실패했다.
+  GREEN: `npm run test:app-resume-lifecycle` **PASS 11 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13), `npm run typecheck`, analytics
+  **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**,
+  gating **PASS 41 / FAIL 0**, native preflight **PASS 12 / FAIL 0**, `git diff --check` 통과.
+- Expo web export **PASS 883 modules**. 이 runner에는 `deno`가 설치되어 있지 않아 Edge contracts/
+  `deno check`는 실행하지 못했다; 성공으로 주장하지 않으며 push 뒤 exact current-head CI/PG16 marker와
+  canonical independent review로 대조한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
