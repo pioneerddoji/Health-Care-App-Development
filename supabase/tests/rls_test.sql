@@ -33,6 +33,7 @@ create role service_role;
 \i ../schema_security.sql
 \i ../schema_consent_deletion.sql
 \i ../schema_stage4_share_security.sql
+\i ../schema_entitlement_ledger.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -139,6 +140,65 @@ reset role;
 insert into subscriptions (user_id, tier) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'standard');
 set role authenticated;
 select expect_ok($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'standard 업그레이드 후 두번째 대상자 허용');
+-- ── Entitlement ledger: provider inbox → ordered projection ──
+-- 실제 provider credential 없이도 service_role 경계, 중복/역순/환불/복원 상태 전이를 fresh DB에서 공격한다.
+set role service_role;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-initial-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'carenote.standard.monthly', '2026-08-01T00:00:00Z',
+  '{"expires_at":"2026-09-01T00:00:00Z"}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS entitlement purchase projects standard tier' else 'FAIL entitlement purchase projection' end;
+select case when (select tier = 'standard' and status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS entitlement projection is subscriptions source of truth' else 'FAIL entitlement source projection' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-initial-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'carenote.standard.monthly', '2026-08-01T00:00:00Z', '{}'::jsonb)->>'outcome') = 'duplicate'
+  then 'PASS duplicate provider event is idempotent' else 'FAIL duplicate event reapplied' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-expired-old', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'expiration', null, '2026-07-31T23:59:59Z', '{}'::jsonb)->>'outcome') = 'ignored_stale'
+  then 'PASS older expiration cannot reverse newer entitlement' else 'FAIL out-of-order entitlement reversal' end;
+select case when (select status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS stale event leaves projection active' else 'FAIL stale event mutated projection' end;
+select case when (ingest_entitlement_event(
+  'apple', 'evt-refund-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'refund', null, '2026-08-02T00:00:00Z', '{}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS refund revokes entitlement' else 'FAIL refund transition' end;
+select case when (select tier = 'free' and status = 'revoked' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS refund projection is free and revoked' else 'FAIL refund projection state' end;
+select case when (ingest_entitlement_event(
+  'google_play', 'evt-restore-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'restore', 'carenote.family.yearly', '2026-08-03T00:00:00Z',
+  '{"expires_at":"2027-08-03T00:00:00Z"}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS restore reactivates entitlement' else 'FAIL restore transition' end;
+select case when (select tier = 'family' and status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS restore projects family entitlement' else 'FAIL restore projection state' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-cancel-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'cancellation', null, '2026-08-03T12:00:00Z', '{}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS cancellation records pending non-renewal' else 'FAIL cancellation transition' end;
+select case when (select tier = 'family' and status = 'active' and auto_renew = false from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS cancellation retains entitlement until expiration' else 'FAIL cancellation prematurely revoked entitlement' end;
+select case when (ingest_entitlement_event(
+  'polar', 'evt-unknown-product', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'unregistered.product', '2026-08-04T00:00:00Z', '{}'::jsonb)->>'outcome') = 'dead_letter'
+  then 'PASS unknown product is dead-lettered without projection' else 'FAIL unknown product was projected' end;
+select case when (replay_entitlement_event((select id from billing_event_inbox where provider_event_id = 'evt-unknown-product'))->>'outcome') = 'dead_letter'
+  then 'PASS dead-letter replay preserves fail-closed projection' else 'FAIL dead-letter replay result' end;
+select case when exists (select 1 from billing_event_inbox where replay_of =
+  (select id from billing_event_inbox where provider_event_id = 'evt-unknown-product'))
+  then 'PASS replay creates linked audit delivery' else 'FAIL replay audit linkage' end;
+reset role;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select case when (select count(*) from billing_event_inbox) = 0
+  then 'PASS client cannot read provider inbox' else 'FAIL provider inbox exposed to client' end;
+select expect_error($q$select ingest_entitlement_event('revenuecat', 'forged', auth.uid(), 'purchase', 'carenote.standard.monthly', now(), '{}'::jsonb)$q$, 'authenticated entitlement ingest RPC 차단');
 select expect_error($q$select create_recipient('{"id":"66666666-6666-6666-6666-666666666666","name":"롤백검증","birth_date":"2022-06-01","sex":"female"}'::jsonb)$q$, 'children INSERT 이후 guardian 연결 실패');
 select case when
   (select count(*) from children where id = '66666666-6666-6666-6666-666666666666') = 0
@@ -454,4 +514,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=141
+\echo RLS_SUITE_COMPLETE expected=157

@@ -1,103 +1,131 @@
-// Edge Function: RevenueCat 웹훅 수신 → subscriptions 테이블 갱신.
-// 티어의 진실 원천은 subscriptions 테이블이며, 쓰기는 이 함수(service_role)만 한다
-// (RLS: 클라이언트는 자기 행 SELECT만 가능 — schema_subscriptions.sql 참조).
+// P0 unified billing webhook. Provider payloads are normalized then written only through the
+// service-role ledger RPC; clients never write subscriptions or the inbox directly.
 //
-// 배포:
-//   supabase secrets set RC_WEBHOOK_TOKEN=<임의의 긴 랜덤 문자열>
+// Deployment deliberately has no product, price, or provider secret values in source:
+//   supabase secrets set RC_WEBHOOK_TOKEN=... SANDBOX_WEBHOOK_TOKEN=...
 //   supabase functions deploy billing-webhook --no-verify-jwt
-//   RevenueCat 대시보드 → Integrations → Webhooks:
-//     URL   = {SUPABASE_URL}/functions/v1/billing-webhook
-//     Authorization 헤더 = Bearer <위 RC_WEBHOOK_TOKEN>
-//
-// 전제: 앱이 로그인 직후 Purchases.logIn(<supabase user id>)를 호출해야
-// 이벤트의 app_user_id가 auth.users.id와 일치한다 (billing.ts 교체 가이드 참조).
+// Apple App Store Server Notifications, Google RTDN, and Polar each require a verified provider
+// adapter (JWS/OAuth provider signature validation) before being enabled. This handler fails
+// closed (503, no DB write) for those sources rather than treating a bearer token as a signature.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const WEBHOOK_TOKEN = Deno.env.get('RC_WEBHOOK_TOKEN');
-
-// src/services/billing.ts의 PRODUCT_IDS와 반드시 일치 (월간/연간 → 같은 티어)
-const PRODUCT_TO_TIER: Record<string, 'standard' | 'family'> = {
-  'carenote.standard.monthly': 'standard',
-  'carenote.standard.yearly': 'standard',
-  'carenote.family.monthly': 'family',
-  'carenote.family.yearly': 'family',
+export type BillingAdmin = {
+  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message?: string } | null }>;
 };
 
-// RevenueCat 이벤트 타입 → subscriptions.status
-// (CANCELLATION은 "자동갱신 해지 예약"일 뿐 만료 전까지 이용 가능 → active 유지,
-//  실제 강등은 EXPIRATION에서. my_tier()가 expires_at 지난 행도 free로 강등한다.)
-const ACTIVATE = new Set(['INITIAL_PURCHASE', 'RENEWAL', 'UNCANCELLATION', 'PRODUCT_CHANGE']);
-const EXPIRE = new Set(['EXPIRATION']);
+type Config = { revenuecatToken?: string; sandboxToken?: string };
+type NormalizedEvent = {
+  provider: 'revenuecat' | 'sandbox';
+  id: string;
+  userId: string;
+  type: 'purchase' | 'renewal' | 'restore' | 'product_change' | 'cancellation' | 'expiration' | 'refund' | 'revoke';
+  productId: string | null;
+  effectiveAt: string;
+  payload: Record<string, unknown>;
+};
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status, headers: { 'content-type': 'application/json' },
-  });
-
-Deno.serve(async (req) => {
-  if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
-
-  // 웹훅 인증 — 토큰 불일치는 즉시 거부
-  if (!WEBHOOK_TOKEN || req.headers.get('authorization') !== `Bearer ${WEBHOOK_TOKEN}`) {
-    return json({ error: 'unauthorized' }, 401);
-  }
-
-  let event: {
-    type?: string;
-    app_user_id?: string;
-    product_id?: string;
-    store?: string;
-    expiration_at_ms?: number;
-  };
-  try {
-    event = (await req.json())?.event ?? {};
-  } catch {
-    return json({ error: 'invalid json' }, 400);
-  }
-
-  const type = event.type ?? '';
-  const userId = event.app_user_id ?? '';
-  // 익명 ID($RCAnonymousID:...)는 Purchases.logIn 누락 — 매칭 불가이므로 기록만 하고 통과
-  if (!userId || userId.startsWith('$RCAnonymousID')) {
-    console.warn('billing-webhook: app_user_id가 supabase uid가 아님', { type, userId });
-    return json({ ok: true, skipped: 'anonymous app_user_id' });
-  }
-
-  if (!ACTIVATE.has(type) && !EXPIRE.has(type)) {
-    // CANCELLATION / BILLING_ISSUE / TRANSFER 등: 상태 변경 없음 (로그만)
-    return json({ ok: true, skipped: type });
-  }
-
-  const tier = PRODUCT_TO_TIER[event.product_id ?? ''];
-  if (ACTIVATE.has(type) && !tier) {
-    return json({ error: `unknown product_id: ${event.product_id}` }, 400);
-  }
-
-  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  const row: { user_id: string; tier: 'free' | 'standard' | 'family'; status: 'active' | 'expired'; store: string | null; expires_at: string | null; updated_at: string } = ACTIVATE.has(type)
-    ? {
-        user_id: userId,
-        tier: tier!,
-        status: 'active',
-        store: event.store?.toLowerCase() === 'app_store' ? 'app_store' : 'play_store',
-        expires_at: event.expiration_at_ms ? new Date(event.expiration_at_ms).toISOString() : null,
-        updated_at: new Date().toISOString(),
-      }
-    : {
-        user_id: userId,
-        tier: 'free',
-        status: 'expired',
-        store: null,
-        expires_at: null,
-        updated_at: new Date().toISOString(),
-      };
-
-  const { error } = await admin.from('subscriptions').upsert(row, { onConflict: 'user_id' });
-  if (error) {
-    console.error('billing-webhook upsert 실패', error);
-    return json({ error: error.message }, 500); // 5xx → RevenueCat이 재시도
-  }
-  return json({ ok: true, type, tier: tier ?? null });
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
+  status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
 });
+
+const revenueCatEventType: Record<string, NormalizedEvent['type']> = {
+  INITIAL_PURCHASE: 'purchase', RENEWAL: 'renewal', UNCANCELLATION: 'restore',
+  PRODUCT_CHANGE: 'product_change', CANCELLATION: 'cancellation', EXPIRATION: 'expiration',
+  REFUND: 'refund', REVOKE: 'revoke',
+};
+
+function isoFromMs(value: unknown): string | null {
+  return typeof value === 'number' && Number.isFinite(value) ? new Date(value).toISOString() : null;
+}
+
+function normalizeRevenueCat(body: Record<string, unknown>): NormalizedEvent | null {
+  const event = body.event as Record<string, unknown> | undefined;
+  const type = typeof event?.type === 'string' ? revenueCatEventType[event.type] : undefined;
+  const id = typeof event?.id === 'string' ? event.id : null;
+  const userId = typeof event?.app_user_id === 'string' ? event.app_user_id : null;
+  const effectiveAt = isoFromMs(event?.event_timestamp_ms) ?? isoFromMs(event?.expiration_at_ms);
+  if (!type || !id || !userId || userId.startsWith('$RCAnonymousID') || !effectiveAt) return null;
+  return {
+    provider: 'revenuecat', id, userId, type,
+    productId: typeof event?.product_id === 'string' ? event.product_id : null,
+    effectiveAt,
+    payload: {
+      expires_at: isoFromMs(event?.expiration_at_ms),
+      store: typeof event?.store === 'string' ? event.store.toLowerCase() : null,
+      entitlement_id: typeof event?.entitlement_id === 'string' ? event.entitlement_id : null,
+    },
+  };
+}
+
+function normalizeSandbox(body: Record<string, unknown>): NormalizedEvent | null {
+  const event = body.event as Record<string, unknown> | undefined;
+  const allowed = new Set<NormalizedEvent['type']>(['purchase', 'renewal', 'restore', 'product_change', 'cancellation', 'expiration', 'refund', 'revoke']);
+  const type = typeof event?.type === 'string' && allowed.has(event.type as NormalizedEvent['type'])
+    ? event.type as NormalizedEvent['type'] : null;
+  const id = typeof event?.id === 'string' ? event.id : null;
+  const userId = typeof event?.user_id === 'string' ? event.user_id : null;
+  const effectiveAt = typeof event?.effective_at === 'string' ? event.effective_at : null;
+  if (!type || !id || !userId || !effectiveAt) return null;
+  return {
+    provider: 'sandbox', id, userId, type,
+    productId: typeof event?.product_id === 'string' ? event.product_id : null,
+    effectiveAt,
+    payload: {
+      expires_at: typeof event?.expires_at === 'string' ? event.expires_at : null,
+      store: 'sandbox', entitlement_id: typeof event?.entitlement_id === 'string' ? event.entitlement_id : null,
+    },
+  };
+}
+
+export function createBillingWebhookHandler(createAdmin: () => BillingAdmin, config: Config) {
+  return async (req: Request): Promise<Response> => {
+    if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+    // Provider identity is selected before reading untrusted JSON, so an unauthenticated request
+    // cannot use a malformed body as an authentication oracle. RevenueCat remains the default.
+    const requestedProvider = req.headers.get('x-entitlement-provider') ?? 'revenuecat';
+    const authorization = req.headers.get('authorization');
+    let event: NormalizedEvent | null = null;
+    if (requestedProvider === 'revenuecat') {
+      if (!config.revenuecatToken || authorization !== `Bearer ${config.revenuecatToken}`) return json({ error: 'unauthorized' }, 401);
+      let body: Record<string, unknown>;
+      try { body = await req.json(); } catch { return json({ error: 'invalid json' }, 400); }
+      event = normalizeRevenueCat(body);
+    } else if (requestedProvider === 'sandbox') {
+      if (!config.sandboxToken || authorization !== `Bearer ${config.sandboxToken}`) return json({ error: 'unauthorized' }, 401);
+      let body: Record<string, unknown>;
+      try { body = await req.json(); } catch { return json({ error: 'invalid json' }, 400); }
+      event = normalizeSandbox(body);
+    } else if (requestedProvider === 'polar' || requestedProvider === 'apple' || requestedProvider === 'google_play') {
+      // Do not accept an event until its vendor-specific cryptographic verifier is installed.
+      return json({ error: 'provider verifier is not configured' }, 503);
+    } else {
+      return json({ error: 'unknown provider' }, 400);
+    }
+    if (!event) return json({ error: 'invalid verified event' }, 400);
+
+    try {
+      const { data, error } = await createAdmin().rpc('ingest_entitlement_event', {
+        p_provider: event.provider,
+        p_provider_event_id: event.id,
+        p_user_id: event.userId,
+        p_event_type: event.type,
+        p_product_id: event.productId,
+        p_effective_at: event.effectiveAt,
+        p_payload: event.payload,
+      });
+      if (error) return json({ error: 'ledger unavailable' }, 500);
+      return json({ ok: true, result: data });
+    } catch {
+      return json({ error: 'ledger unavailable' }, 500);
+    }
+  };
+}
+
+if (import.meta.main) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  Deno.serve(createBillingWebhookHandler(
+    () => createClient(supabaseUrl, serviceRoleKey),
+    { revenuecatToken: Deno.env.get('RC_WEBHOOK_TOKEN'), sandboxToken: Deno.env.get('SANDBOX_WEBHOOK_TOKEN') },
+  ));
+}

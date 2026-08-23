@@ -85,7 +85,23 @@
 
 **안전 기본값**: env 미지정 시 실서버(supabase) 빌드는 자동으로 `hidden` —
 결제 수단 없이 구매 UI를 노출하면 Play 리젝 사유이므로, 결제 연동을 명시적으로
-켜기(`live`) 전까지 전환 버튼이 보이지 않는다. 1차 무료 출시는 그대로 빌드하면 된다.
+결제 연동을 명시적으로 켜기(`live`) 전까지 전환 버튼이 보이지 않는다. 1차 무료 출시는 그대로 빌드하면 된다.
+
+### P0 채널 통합 entitlement 처리 계약
+
+`schema_entitlement_ledger.sql`의 `billing_event_inbox` → `subscriptions` projection이
+웹(Polar)·iOS(Apple)·Android(Google Play)·RevenueCat을 위한 단일 서버 상태 머신이다.
+각 provider adapter는 검증된 event를 `provider_event_id`, `effective_at`, canonical event
+type(purchase/renewal/cancellation/refund/expiration/restore/revoke)로 정규화해 service-role
+RPC에만 전달한다. 중복은 유니크 키로 no-op, 역순/동시 delivery는 projection의 마지막
+`effective_at`보다 엄격히 최신인 경우만 전이한다. unknown product/user는 entitlement를
+변경하지 않는 dead-letter로 남긴다.
+
+현재 배포 가능 adapter는 RevenueCat의 bearer webhook과 `SANDBOX_WEBHOOK_TOKEN`으로
+격리된 테스트 double뿐이다. Polar·Apple·Google은 공급자별 서명 검증(JWS/OAuth)을 실제
+운영 키로 연결하기 전 503 fail-closed다. 그러므로 이 변경은 실제 상품/가격/키/과금/배포를
+수행하지 않으며, 운영자는 검증 adapter와 관측 가능한 dead-letter replay worker를 별도
+승인·배포해야 한다.
 
 ### 결제 수단 선택 검토 (2026-07-12, 사용자와 논의)
 
