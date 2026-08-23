@@ -190,7 +190,7 @@ export const SettingsScreen = () => {
                 <Muted>
                   {ent.maxCoGuardians === 0
                     ? '공동 보호자 초대는 스탠다드 플랜부터 가능해요.'
-                    : `현재 플랜의 공동 보호자 한도(아이당 ${ent.maxCoGuardians}명)에 도달했어요.`}
+                    : `현재 플랜의 공동 보호자 한도(대상자당 ${ent.maxCoGuardians}명)에 도달했어요.`}
                 </Muted>
                 <Button label="플랜 업그레이드 🔒" variant="ghost" onPress={() => nav.navigate('Paywall')} />
               </>
@@ -277,10 +277,10 @@ export const SettingsScreen = () => {
         <Section title="데이터 관리">
           <Card>
             <Text style={styles.body}>
-              선택된 아이: {selectedChild?.name ?? '없음'} (등록 아이 {children.length}명)
+              선택된 대상자: {selectedChild?.name ?? '없음'} (등록 대상자 {children.length}명)
             </Text>
             {isOwner ? (
-              <Button label="선택된 아이 데이터 전체 삭제" variant="danger"
+              <Button label="선택된 대상자 데이터 전체 삭제" variant="danger"
                 onPress={confirmDelete} disabled={!selectedChild} />
             ) : (
               <Muted>데이터 삭제는 소유자만 할 수 있습니다.</Muted>

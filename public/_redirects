@@ -1,0 +1,12 @@
+# Cloudflare Workers 정적 자산 리다이렉트 규칙 — 빌드 출력 루트로 복사된다.
+#
+# ⚠️ SPA 폴백 규칙(`/*  /index.html  200`)을 여기 넣지 않는다.
+# wrangler.jsonc 의 assets.not_found_handling = "single-page-application" 가
+# 이미 같은 일을 한다. 두 메커니즘을 동시에 두면 Cloudflare가 배포 시점에
+# "Invalid _redirects configuration: Infinite loop detected" (code 100324)
+# 로 배포 자체를 거부한다 — 실제로 겪었다(2026-08-12). index.html 서빙 시
+# 확장자·인덱스를 정규화하는 처리가 이 파일의 catch-all 규칙과 서로를
+# 다시 매치시켜 무한 루프로 판정되는 것으로 보인다.
+#
+# 이 파일이 필요해지는 경우: 특정 경로 하나를 다른 곳으로 보내야 할 때
+# (예: /old-path  /new-path  301). 전체 폴백은 wrangler.jsonc 쪽 설정을 쓴다.

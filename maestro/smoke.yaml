@@ -1,10 +1,10 @@
-# 아이케어 E2E 스모크 — Maestro (https://maestro.mobile.dev)
+# 케어노트 E2E 스모크 — Maestro (https://maestro.mobile.dev)
 # 실행: maestro test maestro/smoke.yaml  (에뮬레이터/실기기에서 데모 모드 기준)
 # 커버: 가입 → 동의 → 홈 → 기록 추가 → 대시보드 → 레포트 → 설정
-appId: app.kidcare.mvp
+appId: app.carenote.mvp
 ---
 - launchApp
-- assertVisible: "아이케어 🧸"
+- assertVisible: "케어노트 🧸"
 
 # 회원가입 → 동의
 - tapOn: "회원가입"

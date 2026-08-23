@@ -3,9 +3,10 @@
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
-  ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { isMockMode } from '../lib/supabase';
+import type { SocialProvider } from './socialAuth';
 import { memoryRepo } from './memoryRepo';
 import { supabaseRepo } from './supabaseRepo';
 
@@ -21,6 +22,8 @@ export interface AuthOutcome {
   profile?: Profile;
   /** 이메일 확인이 켜진 프로젝트에서 가입 직후 세션이 없는 경우 */
   needsEmailConfirm?: boolean;
+  /** 소셜 로그인 첫 진입(프로필 신규 생성) — 동의 화면을 거쳐야 한다 */
+  isNewUser?: boolean;
   error?: string;
 }
 
@@ -37,6 +40,8 @@ export interface AllData {
   sensitiveConsent: Record<string, boolean>;
   /** 현재 구독 (없으면 free) — 진실 원천은 서버 subscriptions 테이블 */
   subscription: Subscription;
+  /** 사용자별 앱 설정 (대시보드 순서 등) — 계정 단위로 저장/동기화 */
+  settings: UserSettings;
 }
 
 export interface Repo {
@@ -44,6 +49,9 @@ export interface Repo {
 
   signUp(input: SignUpInput): Promise<AuthOutcome>;
   signIn(email: string, password: string): Promise<AuthOutcome>;
+  /** 소셜 OAuth 로그인(카카오/구글) — 첫 진입이면 isNewUser=true(동의 화면 경유).
+   *  공급자별 노출 여부는 socialAuth.ts의 resolveSocialLogin() 플래그가 결정 */
+  signInWithSocial(provider: SocialProvider): Promise<AuthOutcome>;
   signOut(): Promise<void>;
   /** 앱 시작 시 저장된 세션 복원 */
   restoreSession(): Promise<Profile | null>;
@@ -53,6 +61,9 @@ export interface Repo {
   findEmailByPhone(phone: string): Promise<string | null>;
   /** 비밀번호 재설정: 이메일+연락처 일치 확인 후 새 비밀번호 저장 */
   resetPassword(email: string, phone: string, newPassword: string): Promise<void>;
+  /** 비밀번호 재설정 메일 발송 — 문자 인증이 꺼진 빌드(smsMode='off')의 대체 경로.
+   *  계정 존재 여부를 노출하지 않기 위해 미가입 이메일도 성공으로 처리한다 */
+  requestPasswordResetEmail(email: string): Promise<void>;
 
   /** 로그인한 보호자가 접근 가능한 전체 데이터 로드 */
   loadAll(): Promise<AllData>;
@@ -94,6 +105,10 @@ export interface Repo {
   // ── 구독 ──
   /** 데모(mock) 전용 티어 전환 — supabase 모드에서는 스토어 결제로만 변경 가능(오류) */
   setSubscriptionTier(tier: SubscriptionTier): Promise<Subscription>;
+
+  // ── 사용자별 설정 ──
+  /** 부분 병합 저장 — 전달한 키만 갱신하고 병합 결과를 반환한다 */
+  saveSettings(patch: Partial<UserSettings>): Promise<UserSettings>;
 
   // ── 보호자 공동 관리 (owner 전용 조작) ──
   listGuardians(childId: string): Promise<ChildGuardian[]>;

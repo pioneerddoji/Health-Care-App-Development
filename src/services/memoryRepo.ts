@@ -3,9 +3,11 @@
 // 저장되어 앱을 재시작해도 유지된다. (혼자 실사용 가능한 로컬 모드)
 import { demoStorage } from '../lib/demoStorage';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
+import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, Profile,
-  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  RecordInput, Report, ShareLinkInfo, Subscription, SubscriptionTier,
+  UserSettings, Vaccination,
 } from '../types';
 import { ENTITLEMENTS, TIER_META } from '../constants/subscription';
 import {
@@ -17,7 +19,13 @@ let idSeq = 1000;
 const newId = (prefix: string) => `${prefix}-${++idSeq}`;
 
 /** 이 이메일로 로그인하면 샘플 데이터(아이 2명 + 14일 기록)가 로드된다 — 체험/테스트용 */
-export const DEMO_EMAIL = 'demo@kidcare.app';
+export const DEMO_EMAIL = 'demo@carenote.app';
+
+// 아이케어(kidcare) 시절 데모 계정 — 기기에 저장된 구 계정도 계속 데모로 인식해야
+// 마이그레이션 로직이 샘플을 오삭제하지 않는다. 로그인도 계속 받아 준다.
+const LEGACY_DEMO_EMAILS = ['demo@kidcare.app'];
+const isDemoEmail = (email: string | null): boolean =>
+  email === DEMO_EMAIL || (email !== null && LEGACY_DEMO_EMAILS.includes(email));
 
 // 공동 관리 데모 프리셋: 하은이는 아빠가 편집자로 함께 기록하는 상태
 const DEMO_GUARDIANS: ChildGuardian[] = [
@@ -29,7 +37,7 @@ const DEMO_GUARDIANS: ChildGuardian[] = [
 let guardian: Profile | null = null;
 let accountPassword: string | null = null;   // 데모 계정 비밀번호 (재설정 검증용)
 let accountEmail: string | null = null;
-const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription'> = {
+const data: Omit<AllData, 'roles' | 'sensitiveConsent' | 'subscription' | 'settings'> = {
   children: [], records: [], growth: [],
   medications: [], vaccinations: [], checkups: [],
 };
@@ -50,14 +58,29 @@ const consentOf = (childId: string) => sensitiveConsent[childId] ?? true;
 // (설정 → 플랜 관리에서 전환하며 게이팅을 체험할 수 있다)
 let subscription: Subscription = { tier: 'standard' };
 
+// 사용자별 설정 — mock은 단일 계정 저장소라 설정도 하나만 유지
+// (실 모드는 user_settings 테이블에 계정별로 저장)
+let settings: UserSettings = {};
+
 // ── 기기 영속화 ──────────────────────────────────────────────
-const STORAGE_KEY = 'kidcare.demo.v1';
+const STORAGE_KEY = 'carenote.demo.v1';
+/** 아이케어 시절 저장 키 — 앱 이름 변경 시 기존 사용자의 기록이 사라지면 안 되므로
+ *  새 키가 비어 있을 때 1회 이관한다(구 키는 롤백 여지를 위해 남겨 둔다). */
+const LEGACY_STORAGE_KEY = 'kidcare.demo.v1';
 let hydrated = false;
 
 const hydrate = async (): Promise<void> => {
   if (hydrated) return;
   hydrated = true;
-  const raw = await demoStorage.getItem(STORAGE_KEY);
+  let raw = await demoStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    const legacy = await demoStorage.getItem(LEGACY_STORAGE_KEY);
+    if (legacy) {
+      // 이름 변경 이관: 구 저장본을 새 키로 복사한 뒤 그대로 읽어들인다
+      await demoStorage.setItem(STORAGE_KEY, legacy);
+      raw = legacy;
+    }
+  }
   if (!raw) return;
   try {
     const s = JSON.parse(raw);
@@ -75,10 +98,12 @@ const hydrate = async (): Promise<void> => {
     shareLinks = s.shareLinks ?? shareLinks;
     Object.assign(sensitiveConsent, s.sensitiveConsent ?? {});
     subscription = s.subscription ?? subscription;
+    settings = s.settings ?? settings;
     idSeq = s.idSeq ?? idSeq;
     // 마이그레이션: 일반 계정(가입 사용자) 저장본에 구버전 샘플(하은/도윤)이
-    // 남아 있으면 제거한다 — 데모 계정 데이터는 유지
-    if (accountEmail && accountEmail !== DEMO_EMAIL && stripSampleData()) persist();
+    // 남아 있으면 제거한다 — 데모 계정 데이터는 유지.
+    // 구 데모 이메일(아이케어 시절)도 데모로 인정해야 샘플이 오삭제되지 않는다.
+    if (accountEmail && !isDemoEmail(accountEmail) && stripSampleData()) persist();
   } catch { /* 손상된 저장본은 무시하고 샘플로 시작 */ }
 };
 
@@ -101,7 +126,7 @@ const stripSampleData = (): boolean => {
 const persist = (): void => {
   demoStorage.setItem(STORAGE_KEY, JSON.stringify({
     guardian, accountPassword, accountEmail, ...data, guardians, reports, shareLinks,
-    sensitiveConsent, subscription, idSeq,
+    sensitiveConsent, subscription, settings, idSeq,
   })).catch(() => {});
 };
 
@@ -114,6 +139,7 @@ const base: Repo = {
     data.medications = []; data.vaccinations = []; data.checkups = [];
     guardians = []; reports = []; shareLinks = [];
     subscription = { tier: 'free' };   // 신규 가입은 무료 플랜부터
+    settings = {};                     // 설정도 새 계정 기준으로 초기화
     accountPassword = input.password;
     accountEmail = input.email;
     guardian = {
@@ -127,7 +153,8 @@ const base: Repo = {
 
   async signIn(email: string, password: string): Promise<AuthOutcome> {
     // 데모 계정: 샘플 데이터(아이 2명 + 14일 기록)를 새로 로드
-    if (email === DEMO_EMAIL) {
+    // 구 데모 이메일로도 계속 로그인할 수 있게 한다(앱 이름 변경 전 안내를 본 사용자)
+    if (isDemoEmail(email)) {
       data.children = [...SAMPLE_CHILDREN];
       data.records = [...SAMPLE_RECORDS];
       data.growth = [...SAMPLE_GROWTH];
@@ -144,7 +171,7 @@ const base: Repo = {
       return { error: '비밀번호가 일치하지 않습니다.' };
     }
     // 일반 계정 로그인: 직전 데모 세션의 샘플/데모용 티어가 남아 있으면 정리
-    const wasDemo = accountEmail === DEMO_EMAIL;
+    const wasDemo = isDemoEmail(accountEmail);
     accountEmail = email;
     stripSampleData();
     if (wasDemo) subscription = { tier: 'free' };
@@ -152,10 +179,35 @@ const base: Repo = {
     return { profile: guardian };
   },
 
+  async signInWithSocial(provider: SocialProvider): Promise<AuthOutcome> {
+    // 데모: 소셜 OAuth를 시뮬레이션 — 공급자별 고정 데모 계정으로 로그인.
+    // 첫 진입이면 실서버(신규 프로필 생성)와 동일하게 빈 상태 + free + 동의 화면 경유.
+    // 공급자마다 계정을 나눠야 "카카오로 들어갔다가 구글로 들어오면 남의 기록이
+    // 보이는" 상황이 데모에서도 재현되지 않는다.
+    const email = `${provider}@carenote.app`;
+    const isNewUser = accountEmail !== email;
+    if (isNewUser) {
+      data.children = []; data.records = []; data.growth = [];
+      data.medications = []; data.vaccinations = []; data.checkups = [];
+      guardians = []; reports = []; shareLinks = [];
+      subscription = { tier: 'free' };
+      settings = {};
+      accountPassword = null;
+      accountEmail = email;
+      guardian = {
+        ...SAMPLE_GUARDIAN,
+        name: `${SOCIAL_PROVIDERS[provider].short} 보호자`,
+        relationship: '보호자',
+        phone: undefined,
+      };
+    }
+    return { profile: guardian!, isNewUser };
+  },
+
   async findEmailByPhone(phone: string): Promise<string | null> {
     // 데모: 저장된 보호자의 연락처와 대조 (실서버는 RPC로 조회)
     if (guardian?.phone && guardian.phone.replace(/\D/g, '') === phone.replace(/\D/g, '')) {
-      return accountEmail ?? 'demo-user@kidcare.app';
+      return accountEmail ?? 'demo-user@carenote.app';
     }
     return null;
   },
@@ -165,6 +217,10 @@ const base: Repo = {
       throw new Error('가입 시 등록한 연락처와 일치하지 않습니다.');
     }
     accountPassword = newPassword;
+  },
+
+  async requestPasswordResetEmail(): Promise<void> {
+    // 데모: 실제 메일 발송 없음 — 성공으로 처리 (실서버는 supabase가 발송)
   },
 
   async signOut() { guardian = null; },
@@ -183,15 +239,16 @@ const base: Repo = {
       sensitiveConsent: Object.fromEntries(
         data.children.map((c) => [c.id, consentOf(c.id)])),
       subscription,
+      settings: { ...settings },
     };
   },
 
   async createChild(input: ChildInput): Promise<Child> {
-    // 서버(트리거)와 동일한 아이 수 한도 — mock에서도 미러
+    // 서버(트리거)와 동일한 대상자 수 한도 — mock에서도 미러
     const owned = guardians.filter((g) => g.isMe && g.role === 'owner').length;
     const max = ENTITLEMENTS[subscription.tier].maxChildren;
     if (owned >= max) {
-      throw new Error(`${TIER_META[subscription.tier].label} 플랜에서는 아이를 ${max}명까지 등록할 수 있어요. 플랜을 업그레이드해 주세요.`);
+      throw new Error(`${TIER_META[subscription.tier].label} 플랜에서는 대상자를 ${max}명까지 등록할 수 있어요. 플랜을 업그레이드해 주세요.`);
     }
     const child: Child = { ...input, id: newId('child') };
     data.children.push(child);
@@ -260,6 +317,11 @@ const base: Repo = {
     return subscription;
   },
 
+  async saveSettings(patch: Partial<UserSettings>): Promise<UserSettings> {
+    settings = { ...settings, ...patch };
+    return { ...settings };
+  },
+
   async revokeSensitiveConsent(childId: string) {
     sensitiveConsent[childId] = false;
   },
@@ -289,7 +351,7 @@ const base: Repo = {
       id: newId('link'),
       reportId,
       childId: report.childId,
-      url: `https://kidcare.example/share/${Math.random().toString(36).slice(2, 14)}`,
+      url: `https://carenote.example/share/${Math.random().toString(36).slice(2, 14)}`,
       expiresAt: new Date(Date.now() + expiresInHours * 3600_000).toISOString(),
       periodStart: report.periodStart,
       periodEnd: report.periodEnd,
@@ -321,7 +383,7 @@ const base: Repo = {
     if (coCount >= maxCo) {
       throw new Error(maxCo === 0
         ? '공동 보호자 초대는 스탠다드 플랜부터 가능해요.'
-        : `현재 플랜에서는 아이당 공동 보호자를 ${maxCo}명까지 초대할 수 있어요.`);
+        : `현재 플랜에서는 대상자당 공동 보호자를 ${maxCo}명까지 초대할 수 있어요.`);
     }
     guardians.push({
       guardianId: newId('guardian'), childId, role,

@@ -1,4 +1,4 @@
-# kidcare — Claude Code 안내
+# carenote — Claude Code 안내
 
 **모든 프로젝트 컨텍스트는 [`AGENTS.md`](./AGENTS.md)에 있다 — 먼저 읽을 것.**
 

@@ -2,12 +2,17 @@
 // 사진은 Storage 'record-files' 버킷에 childId/recordId/파일명 경로로 올리고,
 // 화면에는 서명 URL(24시간)로 내려준다. payload JSONB는 앱과 같은 camelCase.
 import * as FileSystem from 'expo-file-system/legacy';
+import * as WebBrowser from 'expo-web-browser';
+import { makeRedirectUri } from 'expo-auth-session';
+import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
+
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
+import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
   Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
-  Subscription, SubscriptionTier, Vaccination,
+  Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 
 const sb = () => {
@@ -57,6 +62,9 @@ const childFromRow = (r: any): Child => ({
   primaryHospital: r.primary_hospital ?? undefined,
   guardianPhone: r.guardian_phone ?? undefined,
   otherNotes: r.other_notes ?? undefined,
+  // schema_recipients.sql 적용 전 저장본 호환 — 컬럼이 없으면 아이로 간주
+  recipientType: r.recipient_type ?? 'child',
+  isSelf: r.is_self ?? false,
 });
 
 const childToRow = (c: Partial<ChildInput>) => {
@@ -78,6 +86,8 @@ const childToRow = (c: Partial<ChildInput>) => {
   if (c.primaryHospital !== undefined) row.primary_hospital = c.primaryHospital ?? null;
   if (c.guardianPhone !== undefined) row.guardian_phone = c.guardianPhone ?? null;
   if (c.otherNotes !== undefined) row.other_notes = c.otherNotes ?? null;
+  if (c.recipientType !== undefined) row.recipient_type = c.recipientType;
+  if (c.isSelf !== undefined) row.is_self = c.isSelf;
   return row;
 };
 
@@ -264,6 +274,58 @@ export const supabaseRepo: Repo = {
     return { profile };
   },
 
+  async signInWithSocial(provider: SocialProvider): Promise<AuthOutcome> {
+    // Supabase OAuth: 브라우저(웹은 팝업)에서 공급자 인증 → redirect URL의
+    // 토큰으로 세션 수립. 공급자가 바뀌어도 흐름은 같아서 provider 만 갈아 끼운다.
+    // 선행 설정(공급자 콘솔 + Supabase Providers + Redirect URLs)은 docs/09 §2-2-1.
+    //
+    // ⚠️ 이 경로는 **implicit 흐름**(URL 에 access_token 이 실려 옴)을 전제한다.
+    //    supabase-js 의 기본값이라 지금은 맞지만, 클라이언트를 `flowType: 'pkce'`
+    //    로 바꾸면 code 만 오므로 exchangeCodeForSession() 으로 교체해야 한다.
+    const label = SOCIAL_PROVIDERS[provider].short;
+    const redirectTo = makeRedirectUri(); // 웹: 현재 origin / 앱: carenote:// (app.json scheme)
+    const { data, error } = await sb().auth.signInWithOAuth({
+      provider,
+      options: { redirectTo, skipBrowserRedirect: true },
+    });
+    if (error) return { error: error.message };
+
+    // 웹에서는 팝업이 열린다. 팝업이 우리 주소로 돌아오면 그 안에서 앱 번들이
+    // 다시 로드되고, App.tsx 의 WebBrowser.maybeCompleteAuthSession() 이
+    // 부모 창에 결과를 넘겨 준다 — 그 호출이 없으면 여기서 영원히 기다린다.
+    const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+    if (res.type !== 'success') return { error: `${label} 로그인이 취소되었습니다.` };
+    const { params, errorCode } = QueryParams.getQueryParams(res.url);
+    if (errorCode) return { error: errorCode };
+    if (!params.access_token || !params.refresh_token) {
+      return { error: `${label} 인증 토큰을 받지 못했습니다. 잠시 후 다시 시도해 주세요.` };
+    }
+    const { data: sess, error: sErr } = await sb().auth.setSession({
+      access_token: params.access_token, refresh_token: params.refresh_token,
+    });
+    if (sErr || !sess.user) return { error: sErr?.message ?? '세션 생성에 실패했습니다.' };
+
+    let profile = await fetchProfile(sess.user.id);
+    const isNewUser = !profile;
+    if (!profile) {
+      // 첫 소셜 로그인 — 공급자가 준 이름으로 프로필 생성, 이후 동의 화면을 거친다.
+      // 카카오는 nickname, 구글은 full_name/name 으로 온다. 이름을 아예 안 주는
+      // 경우(카카오 동의항목 미설정 등)도 있어 '보호자'로 떨어뜨린다.
+      const meta = sess.user.user_metadata as Record<string, unknown> | null;
+      const name =
+        (meta?.name as string) ??
+        (meta?.full_name as string) ??
+        (meta?.nickname as string) ??
+        '보호자';
+      profile = { id: sess.user.id, name, relationship: '보호자' };
+      const { error: pErr } = await sb().from('profiles').upsert({
+        id: profile.id, name: profile.name, relationship: profile.relationship,
+      });
+      if (pErr) return { error: pErr.message };
+    }
+    return { profile, isNewUser };
+  },
+
   async signOut() {
     await sb().auth.signOut();
   },
@@ -280,6 +342,13 @@ export const supabaseRepo: Repo = {
     throw new Error('비밀번호 재설정은 서버 연동 후 제공됩니다 (AGENTS.md §7 참조).');
   },
 
+  async requestPasswordResetEmail(email: string): Promise<void> {
+    // 재설정 링크의 도착지(redirectTo)는 Supabase 대시보드의 Site URL 설정을 따른다
+    // — 운영 프로젝트에서 재설정 웹 페이지 호스팅 후 URL 지정 필요 (docs/09 §2-3)
+    const { error } = await sb().auth.resetPasswordForEmail(email);
+    throwIf(error);
+  },
+
   async restoreSession(): Promise<Profile | null> {
     const { data } = await sb().auth.getSession();
     if (!data.session) return null;
@@ -289,7 +358,7 @@ export const supabaseRepo: Repo = {
   async loadAll(): Promise<AllData> {
     const client = sb();
     const userId = await currentUserId();
-    const [children, records, growth, medications, vaccinations, checkups, links, consents] = await Promise.all([
+    const [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow] = await Promise.all([
       client.from('children').select('*').is('deleted_at', null).order('birth_date'),
       client.from('daily_records').select('*, record_files(storage_path)')
         .order('record_date').order('record_time'),
@@ -300,8 +369,9 @@ export const supabaseRepo: Repo = {
       client.from('guardian_child').select('child_id, role').eq('guardian_id', userId),
       client.from('consents').select('child_id')
         .eq('type', 'sensitive_health').is('revoked_at', null),
+      client.from('user_settings').select('settings').eq('user_id', userId).maybeSingle(),
     ]);
-    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents]) throwIf(res.error);
+    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow]) throwIf(res.error);
 
     const consentedChildIds = new Set(
       (consents.data ?? []).map((c: { child_id: string }) => c.child_id));
@@ -331,6 +401,7 @@ export const supabaseRepo: Repo = {
         (children.data ?? []).map((c: { id: string }) => [c.id, consentedChildIds.has(c.id)]),
       ),
       subscription: await fetchSubscription(userId),
+      settings: (settingsRow.data?.settings as UserSettings | undefined) ?? {},
     };
   },
 
@@ -338,21 +409,28 @@ export const supabaseRepo: Repo = {
     throw new Error('플랜 변경은 앱스토어/플레이스토어 결제를 통해서만 가능합니다. (결제 연동은 docs/07_monetization.md 참조)');
   },
 
-  async createChild(input: ChildInput): Promise<Child> {
+  async saveSettings(patch: Partial<UserSettings>): Promise<UserSettings> {
     const userId = await currentUserId();
-    const { data, error } = await sb().from('children').insert(childToRow(input)).select().single();
+    // 서버 병합: 현재 값을 읽어 patch만 덮어쓴 뒤 upsert
+    const { data } = await sb().from('user_settings')
+      .select('settings').eq('user_id', userId).maybeSingle();
+    const merged: UserSettings = { ...((data?.settings as UserSettings | undefined) ?? {}), ...patch };
+    const { error } = await sb().from('user_settings').upsert({
+      user_id: userId, settings: merged, updated_at: new Date().toISOString(),
+    });
     throwIf(error);
-    const child = childFromRow(data);
-    // owner 관계 + 동의(가입 시 동의 완료된 내용을 아이 단위로 기록 — RLS가 요구)
-    const { error: gErr } = await sb().from('guardian_child')
-      .insert({ guardian_id: userId, child_id: child.id, role: 'owner' });
-    throwIf(gErr);
-    const { error: cErr } = await sb().from('consents').insert([
-      { child_id: child.id, guardian_id: userId, type: 'guardian_legal' },
-      { child_id: child.id, guardian_id: userId, type: 'sensitive_health' },
-    ]);
-    throwIf(cErr);
-    return child;
+    return merged;
+  },
+
+  async createChild(input: ChildInput): Promise<Child> {
+    // 대상자·최초 owner·연령별 필수 동의는 하나의 definer 트랜잭션으로 생성한다.
+    // 직접 INSERT를 나누면 중간 실패 때 고아 대상자나 동의 없는 행이 남을 수 있다.
+    const { data, error } = await sb().rpc('create_recipient', {
+      recipient: childToRow(input),
+    });
+    throwIf(error);
+    if (!data) throw new Error('대상자 생성 결과를 확인할 수 없습니다');
+    return childFromRow(data);
   },
 
   async updateChild(id: string, patch: Partial<ChildInput>) {
@@ -471,20 +549,25 @@ export const supabaseRepo: Repo = {
 
   async createShareLink(reportId: string, expiresInHours: number): Promise<ShareLinkInfo> {
     if (!supabaseUrl) throw new Error('Supabase URL이 설정되지 않았습니다');
-    const expiresAt = new Date(Date.now() + expiresInHours * 3600_000).toISOString();
-    const { data, error } = await sb().from('share_links')
-      .insert({ report_id: reportId, expires_at: expiresAt })
-      .select('id, token, expires_at, report:reports(child_id, period_start, period_end)')
-      .single();
+    const { data: issued, error } = await sb().rpc('create_secure_share_link', {
+      p_report_id: reportId,
+      p_expires_in_hours: expiresInHours,
+    });
     throwIf(error);
-    if (!data) throw new Error('공유 링크 생성 결과를 확인할 수 없습니다');
-    const report = data.report as unknown as { child_id: string; period_start: string; period_end: string };
+    const token = (issued as { id?: string; token?: string; expires_at?: string } | null);
+    if (!token?.id || !token.token || !token.expires_at) {
+      throw new Error('보안 공유 링크 발급 결과를 확인할 수 없습니다');
+    }
+    const { data: report, error: reportError } = await sb().from('reports')
+      .select('child_id, period_start, period_end').eq('id', reportId).single();
+    throwIf(reportError);
+    if (!report) throw new Error('레포트를 찾을 수 없습니다');
     return {
-      id: data.id,
+      id: token.id,
       reportId,
       childId: report.child_id,
-      url: `${supabaseUrl}/functions/v1/share-report?token=${data.token}`,
-      expiresAt: data.expires_at,
+      url: `${supabaseUrl}/functions/v1/share-report?token=${encodeURIComponent(token.token)}`,
+      expiresAt: token.expires_at,
       periodStart: report.period_start,
       periodEnd: report.period_end,
     };
@@ -493,7 +576,7 @@ export const supabaseRepo: Repo = {
   async listShareLinks(childId: string): Promise<ShareLinkInfo[]> {
     if (!supabaseUrl) throw new Error('Supabase URL이 설정되지 않았습니다');
     const { data, error } = await sb().from('share_links')
-      .select('id, report_id, token, expires_at, revoked_at, reports!inner(child_id, period_start, period_end)')
+      .select('id, report_id, expires_at, revoked_at, reports!inner(child_id, period_start, period_end)')
       .eq('reports.child_id', childId)
       .order('created_at', { ascending: false });
     throwIf(error);
@@ -502,7 +585,8 @@ export const supabaseRepo: Repo = {
       id: row.id,
       reportId: row.report_id,
       childId: row.reports.child_id,
-      url: `${supabaseUrl}/functions/v1/share-report?token=${row.token}`,
+      // 원문 token은 발급 응답에서 한 번만 반환된다. 목록/저장소에서 재구성하지 않는다.
+      url: '',
       expiresAt: row.expires_at,
       revokedAt: row.revoked_at ?? undefined,
       periodStart: row.reports.period_start,
@@ -512,8 +596,7 @@ export const supabaseRepo: Repo = {
   },
 
   async revokeShareLink(linkId: string) {
-    const { error } = await sb().from('share_links')
-      .update({ revoked_at: new Date().toISOString() }).eq('id', linkId);
+    const { error } = await sb().rpc('revoke_secure_share_link', { p_link_id: linkId });
     throwIf(error);
   },
 
@@ -543,8 +626,9 @@ export const supabaseRepo: Repo = {
   },
 
   async updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer') {
-    const { error } = await sb().from('guardian_child')
-      .update({ role }).eq('child_id', childId).eq('guardian_id', guardianId);
+    const { error } = await sb().rpc('set_guardian_role', {
+      cid: childId, target_guardian_id: guardianId, new_role: role,
+    });
     throwIf(error);
   },
 

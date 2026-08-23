@@ -1,8 +1,8 @@
 // Supabase 클라이언트. env가 비어 있으면 null을 반환하고
 // 앱은 인메모리(mock) 모드로 동작한다 — services 계층에서 분기.
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { sessionStorage } from './secureSessionStorage';
 
 const url =
   process.env.EXPO_PUBLIC_SUPABASE_URL ??
@@ -18,7 +18,8 @@ export const supabase: SupabaseClient | null =
   url && anonKey
     ? createClient(url, anonKey, {
         auth: {
-          storage: AsyncStorage,
+          // 네이티브: SecureStore 키 기반 암호화 저장 / 웹: AsyncStorage 폴백
+          storage: sessionStorage,
           autoRefreshToken: true,
           persistSession: true,
           detectSessionInUrl: false,

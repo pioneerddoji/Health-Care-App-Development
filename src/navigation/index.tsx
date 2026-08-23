@@ -58,7 +58,7 @@ export const AppNavigation = () => (
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
-      <Stack.Screen name="ChildForm" component={ChildFormScreen} options={{ title: '아이 프로필' }} />
+      <Stack.Screen name="ChildForm" component={ChildFormScreen} options={{ title: '대상자 등록 · 수정' }} />
       <Stack.Screen name="ChildProfile" component={ChildProfileScreen} options={{ title: '프로필' }} />
       <Stack.Screen name="RecordForm" component={RecordFormScreen} options={{ title: '기록 추가' }} />
       <Stack.Screen name="Calendar" component={CalendarScreen} options={{ title: '캘린더' }} />

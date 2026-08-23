@@ -34,7 +34,7 @@ const check = async (cond, label) => {
 };
 
 await page.goto('http://localhost:8321/', { waitUntil: 'networkidle' });
-await vis('아이케어 🧸').waitFor({ timeout: 20000 });
+await vis('케어노트').waitFor({ timeout: 20000 });
 
 for (let cycle = 1; cycle <= 5; cycle++) {
   console.log(`== UI Cycle ${cycle} ==`);
@@ -42,7 +42,7 @@ for (let cycle = 1; cycle <= 5; cycle++) {
 
   // 가입 → 동의
   await vis('회원가입', true).click();
-  await vis('보호자 회원가입').waitFor({ timeout: 5000 });
+  await vis('주로 기록할 대상자와의 관계').waitFor({ timeout: 5000 });
   const inputs = page.locator('input:visible, textarea:visible');
   await inputs.nth(0).fill(`cycle${cycle}@example.com`);
   await inputs.nth(1).fill('password123');
@@ -55,25 +55,28 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   await page.locator('input:visible').last().fill(code);
   await vis('인증하고 가입 완료').click();
   await vis('이용 동의', true).waitFor({ timeout: 5000 });
-  for (const t of ['서비스 이용약관', '법정대리인 확인', '건강정보(민감정보)']) {
+  for (const t of ['서비스 이용약관', '대상자 등록 권한 확인', '건강정보(민감정보)']) {
     await vis(t).click();
     await page.waitForTimeout(120);
   }
   await vis('동의하고 시작하기').click();
   await vis('안녕하세요').waitFor({ timeout: 10000 });
 
-  // 아이 추가
-  await vis('+ 아이 추가하기').click();
+  // 대상자 추가 (아이 유형 기본)
+  await vis('+ 대상자 추가하기').click();
   await vis('기본 정보').waitFor({ timeout: 5000 });
   const f = page.locator('input:visible');
   await f.nth(0).fill(`테스트${cycle}`);
   await f.nth(2).fill('2022-05-10'); // 생년월일 (별명 건너뜀)
   await page.mouse.wheel(0, 2000);
-  await vis('아이 등록').click();
+  // 대상자별 동의 확인 (만 14세 미만 → 법정대리인 확인)
+  await page.getByText(/^☐ /).first().click();
+  // 헤더 타이틀('대상자 등록 · 수정')과 겹치므로 버튼 라벨을 정확히 일치시킨다
+  await vis('대상자 등록', true).click();
   await vis('안녕하세요').waitFor({ timeout: 8000 });
   const cards = await page.getByText('프로필 ›').locator('visible=true').count();
   await check(Promise.resolve(cards === expectedChildren),
-    `C${cycle}: 아이 카드 ${expectedChildren}개 기대, 실제 ${cards}`);
+    `C${cycle}: 대상자 카드 ${expectedChildren}개 기대, 실제 ${cards}`);
 
   // 기록 추가 (새 아이가 자동 선택됨)
   await page.getByText('기록', { exact: true }).locator('visible=true').last().click();
@@ -125,7 +128,7 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   await page.mouse.wheel(0, 800);
   try {
     await vis('로그아웃').click();
-    await vis('아이케어 🧸').waitFor({ timeout: 8000 });
+    await vis('케어노트').waitFor({ timeout: 8000 });
   } catch (e) {
     await page.screenshot({ path: `${SP}/fail-c${cycle}-logout.png` });
     console.log('logout fail state saved; visible buttons:',

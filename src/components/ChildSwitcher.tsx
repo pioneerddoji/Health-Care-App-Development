@@ -1,4 +1,4 @@
-// 아이 전환 스위처 — 기록/대시보드/레포트 탭 상단에서 다자녀 간 빠른 전환
+// 대상자 전환 스위처 — 기록/대시보드/레포트 탭 상단에서 가족 구성원 간 빠른 전환
 import React from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useApp } from '../context/AppContext';

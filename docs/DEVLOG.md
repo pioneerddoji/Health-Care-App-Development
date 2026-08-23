@@ -1,4 +1,4 @@
-# 아이케어 개발 일지
+# 케어노트 개발 일지
 
 진행 내용과 결정 사항을 시간순으로 기록한다. 새 작업이 끝날 때마다 상단이 아닌
 **하단에 이어서** 엔트리를 추가한다. (형식: 날짜 / 한 일 / 결정과 이유 / 검증 / 다음)
@@ -204,7 +204,7 @@
   가입→아이/동의/기록→Storage 업로드+서명 URL→RLS 격리→초대 RPC→자기승격 차단→
   viewer 강등→레포트+공유 링크→Edge Function 응답→동의 철회→cascade 삭제까지
   자동 스모크 (앱 코드와 독립적인 순수 Node 스크립트)
-- **CI**(GitHub Actions `kidcare-ci.yml`): kidcare 경로 변경 시 타입체크 +
+- **CI**(GitHub Actions `carenote-ci.yml`): carenote 경로 변경 시 타입체크 +
   PostgreSQL 16 서비스 컨테이너에서 RLS 39건 회귀 테스트
 - 개인정보처리방침 웹 게시본(`docs/privacy_policy.html`, 호스팅만 하면 됨)
 - 배포 가이드(`docs/06_deployment.md`): 준비된 것 / 계정 소유자 체크리스트
@@ -212,7 +212,7 @@
   작성 요령, 카테고리 선택 — 의료 아닌 건강/라이프스타일 권장)
 
 **결정과 이유**
-- 번들 ID는 자리표시(`app.kidcare.mvp`) 유지 — 소유 도메인 확정 전 임의 확정 시
+- 번들 ID는 자리표시(`app.carenote.mvp`) 유지 — 소유 도메인 확정 전 임의 확정 시
   스토어 첫 업로드 후 변경 불가 리스크. 체크리스트 최상단에 명시.
 - 스토어 카테고리는 의료가 아닌 건강/라이프스타일 권장 — 의료 카테고리는 심사
   기준(의료기기 규제 검토)이 더 엄격하고, 본 앱은 진단 기능이 없음.
@@ -509,7 +509,7 @@ shift 스프링 `useNativeDriver: true`. RN 실기기는 이 조합에서 네이
 할 수 있는 모든 것을 완성 — 실연동은 `billing.ts` 함수 2개 교체 + 웹훅 배포만 남김.
 
 - **`src/services/billing.ts` 신설** (smsAuth.ts의 sendSms 패턴):
-  `PRODUCT_IDS`(kidcare.standard.monthly / kidcare.family.monthly),
+  `PRODUCT_IDS`(carenote.standard.monthly / carenote.family.monthly),
   `purchaseWithStore()`/`restorePurchases()` — RevenueCat 교체 가이드 코드를
   주석으로 내장(Configure→logIn(supabase uid)→purchasePackage→웹훅→loadAll).
   클라이언트는 티어를 직접 쓰지 않는다(진실 원천 = subscriptions 테이블) 원칙 유지.
@@ -563,7 +563,7 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   ×10 규칙은 소통("2개월 공짜")과 계산이 모두 깔끔한 것이 채택 이유.
 - `PRICING` 숫자 객체를 가격의 단일 원천으로 신설(subscription.ts) — 라벨은
   `won()` 헬퍼로 파생. `PaidTier`/`BillingPeriod` 타입을 types로 승격.
-- `PRODUCT_IDS`를 티어×주기 4개로 확장(`kidcare.*.{monthly,yearly}`),
+- `PRODUCT_IDS`를 티어×주기 4개로 확장(`carenote.*.{monthly,yearly}`),
   `purchaseWithStore(tier, period)` 시그니처 변경, billing-webhook 매핑에
   연간 ID 추가.
 - 페이월: 월간/연간 토글 칩, 연간 선택 시 월 환산가("월 ₩1,583 꼴 · 12개월")
@@ -571,27 +571,282 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - 검증: tsc, e2e 110, gating 27(가격표 일관성·상품 ID 4개 검사로 갱신),
   Playwright 11건(월간 4가격+취소선, 연간 4가격+환산가+안내) + 스크린샷 육안.
 
+## 2026-07-17 — 가입/설정/보안 저장 검토 반영: SMS 우회 플래그 + user_settings + 세션 암호화 (이번 커밋)
+
+사용자와 "회원가입·결제수단 연결·사용자별 설정/데이터 저장 방법" 검토 후,
+결정 없이 진행 가능한 3건을 우선 반영 (결제 연동 v1.1과 SMS live 전환은 추후 재논의).
+
+**① 문자 인증 우회 플래그 — 출시 차단(⛔ §1-3) 해소**
+- `EXPO_PUBLIC_SMS_MODE`(demo/off/live) 신설 — `resolveSmsMode()`, 페이월 모드와
+  같은 패턴. **미지정 시 mock=demo, supabase=off** (안전 기본값: 공급자 계약 전
+  실서버 빌드는 자동으로 문자 인증을 건너뜀 → 그대로 1차 출시 가능).
+- off 모드: 가입은 OTP 단계 없이 "가입 완료" 버튼(이메일 확인으로 검증),
+  계정 찾기는 ▸아이디 찾기=준비 중 안내 ▸비밀번호=재설정 메일
+  (`requestPasswordResetEmail` repo 신설 — supabase `resetPasswordForEmail`).
+- 검토에서 확인된 사항 문서화: 현 OTP 구현은 앱 내 생성·검증(데모 전용)이라
+  live 전환 시 서버(Edge Function) 이전 필수 — AGENTS §7, docs/09 §1-3에 기록.
+
+**② 사용자별 설정 저장 구조 (`user_settings`)**
+- 문제: 유일한 개인 설정(대시보드 그래프 순서)이 계정 구분 없는 기기 전역
+  AsyncStorage 키에 저장 — 계정 간 설정 공유·기기 변경 시 소실.
+- `schema_settings.sql` 신설: `user_settings(user_id PK, settings JSONB)` + RLS
+  본인 행만. 설정 항목이 늘어도 스키마 변경 불필요(키 규약 = `UserSettings` 타입).
+- repo에 `saveSettings`(부분 병합 저장) + `loadAll().settings`, 두 구현 미러링.
+  AppContext에 `settings`/`updateSettings` 노출, 로그아웃 시 초기화.
+- 대시보드: 순서를 계정 설정으로 이전, 구버전 기기 전역 키는 발견 시 1회
+  이관 후 제거. 저장 실패(오프라인)해도 화면 순서는 유지.
+
+**③ supabase 세션 토큰 암호화 저장**
+- 기존: 세션(리프레시 토큰 포함)이 평문 AsyncStorage — 건강정보 앱 성격에 부적합.
+- `src/lib/secureSessionStorage.ts` 신설(Supabase 권장 패턴): AES-256-CTR 키만
+  SecureStore(키체인/Keystore)에 두고 암호문은 AsyncStorage에(SecureStore 2KB
+  한도 회피). 웹은 AsyncStorage 폴백(UI 검증 전용). 구버전 평문 세션은 1회
+  수용 후 다음 저장부터 암호화(기존 로그인 유지).
+- 의존성 추가: expo-secure-store ~15.0.8, expo-crypto ~15.0.9, aes-js(순수 JS —
+  Expo Go 호환). ⚠️ expo install이 프록시 환경에서 버전 조회 실패 →
+  `expo/bundledNativeModules.json`에서 SDK 54 번들 버전을 직접 확인해 설치.
+
+**검증**
+- `tsc` 통과. `test:e2e` **113건**(설정 저장/반영/병합 3건 추가),
+  `test:gating` **31건**(SMS 모드 기본값·env 오버라이드 4건 추가) 통과.
+- **RLS 48건 통과**(로컬 PostgreSQL 16): user_settings 본인 저장/타인 비노출/
+  타인 쓰기 차단/타인 수정 무효 4건 추가.
+- 웹 빌드 + Playwright: 기본 빌드에서 영속화 5건 + UI 5사이클 회귀 통과
+  (대시보드 순서가 설정 경로로 바뀐 뒤에도 새로고침 유지 포함).
+  `EXPO_PUBLIC_SMS_MODE=off` 별도 빌드(--clear)에서 off 모드 7건
+  (가입 완료 버튼/OTP 부재/동의 진입/아이디 찾기 안내/재설정 메일 발송) 통과
+  + 스크린샷 육안 확인.
+- AES 암·복호 라운드트립(2KB급 세션 JSON·한글 포함) Node 대조 통과.
+  ⚠️ SecureStore 실동작(키체인 저장/재시작 복원)은 실기기에서만 확인 가능 —
+  supabase 모드 첫 실기기 테스트 항목에 포함할 것.
+
+**남은 것(이번 검토에서 도출, 추후 논의)**: v1.1 결제 연동(RevenueCat),
+SMS live 전환(공급자 계약 + OTP 서버 이전), 카카오 로그인 검토,
+off 모드 운영 준비물(Confirm email 켜기, 재설정 링크 도착지 설정).
+
+## 2026-07-17 — 결제(RevenueCat) 코드 연동 + 카카오 로그인 (이번 커밋)
+
+사용자 결정: 검토 항목 중 4번(결제 연동)·5번(카카오 로그인)을 진행하고
+**SMS 인증(공급자 계약·OTP 서버 이전)은 우선 제외**.
+
+**① RevenueCat 결제 — 코드 측 완전 연동 (계정 작업만 남음)**
+- react-native-purchases(v10) 설치, `billing.ts`의 `purchaseWithStore`/
+  `restorePurchases`를 실구현으로 교체: current offering에서 상품 매칭
+  (Google `상품ID:basePlanId` 형식 대응), 사용자 취소를 오류가 아닌 안내로 처리.
+- `initBilling(repoMode, uid)`/`endBillingSession()` 신설 — AppContext가
+  로그인·세션 복원 직후/로그아웃 시 호출. uid=`Purchases.logIn`의 app_user_id
+  = 웹훅 연결 고리(기존 설계 그대로).
+- **안전장치**: SDK는 live 모드 + `EXPO_PUBLIC_RC_API_KEY_*` 존재 시에만
+  지연 require — demo/hidden 빌드, Expo Go, 웹, Node 테스트는 네이티브 모듈을
+  아예 로드하지 않는다(미탑재 환경에서 구매 호출 시 docs/07 안내 오류).
+- 얼리버드 노출은 RevenueCat Targeting(가입일)으로 서버 제어 — 앱 코드는
+  current offering만 읽어 앱 업데이트 없이 전환 가능. docs/07 실연동 절차를
+  "남은 계정 작업 체크리스트"(상품 4개·RC 대시보드·env 키·웹훅 배포·샌드박스
+  테스트)로 갱신.
+
+**② 카카오 로그인 (Supabase OAuth)**
+- repo에 `signInWithKakao()` 추가. supabase: `signInWithOAuth(kakao,
+  skipBrowserRedirect)` → `WebBrowser.openAuthSessionAsync` → redirect URL의
+  토큰(`QueryParams`)으로 `setSession` — RN에 URL.searchParams가 없어
+  expo-auth-session의 파서 사용. redirect는 `makeRedirectUri()`(app.json
+  scheme=carenote, Expo Go는 exp://).
+- **첫 카카오 로그인은 `isNewUser`로 판정**(프로필 행 부재) → AppContext가
+  동의 화면을 경유시킴 — "가입은 법정대리인 본인만 + 별도 동의" 원칙이
+  소셜 로그인에도 동일 적용된다. 프로필은 카카오 닉네임으로 생성.
+- 노출 플래그 `EXPO_PUBLIC_KAKAO_LOGIN`(on/off): 기본 mock=on(시뮬레이션 —
+  고정 데모 계정, 신규 시 빈 상태+free), supabase=off(**provider 설정 전
+  버튼이 보이면 눌러도 실패하므로** 설정 완료 후 on). 로그인 화면에 카카오
+  브랜드 색(#FEE500) 버튼.
+- 선행 계정 설정 문서화(docs/09 §2-2): Kakao Developers 앱 + Redirect URI +
+  Supabase Kakao provider 키 입력.
+
+**검증**
+- `tsc` 통과. `test:e2e` **116건**(카카오 mock: 신규 판정/빈 상태+free/재로그인
+  동의 생략 3건 추가), `test:gating` **36건**(카카오 플래그 기본값·오버라이드
+  3건 + SDK 미탑재 시 구매/복원 안내 오류 2건 추가) 통과.
+- 웹 빌드 + Playwright: 영속화 5건 + UI 5사이클 회귀 통과(react-native-purchases
+  추가 후에도 웹 번들 정상 = 지연 로드 확인). 카카오 mock 플로우 4건
+  (버튼 노출/첫 로그인→동의 화면/동의 후 빈 홈/새로고침 자동 로그인) 통과
+  + 로그인 화면·빈 홈 스크린샷 육안 확인.
+- ⚠️ 미검증 잔여: 실결제(live)는 스토어 상품+RC 계정+development build 필요 —
+  docs/07 체크리스트 7번(샌드박스 사이클)로 확인 예정. 카카오 supabase 경로
+  (브라우저 OAuth 왕복)는 실프로젝트+실기기에서 1회 확인 필요.
+
+## 2026-07-29 — 8단계: 전연령 확대 (아이 + 성인 대상자) (이번 커밋)
+
+**배경과 전제 (중요)**
+사용자가 "아동 대상이라 법률 문제가 있으니 전연령으로 바꾸는 게 낫지 않나"로 검토를
+시작했고, 검토 결과를 먼저 보고했다: **대상군 확대는 법적 의무를 줄이지 않는다.**
+§22-2(만14세 미만 법정대리인 동의)는 앱의 대상군이 아니라 **처리되는 정보의 주체**가
+아동이면 적용되고, 민감정보 별도 동의는 연령 무관이며, Play Families 정책은 이미
+"사용자=성인"으로 회피돼 있다. 전연령은 의무의 **합집합**(아동 의무 유지 + 성인
+위임 동의 신규)이 된다. 이를 보고한 뒤 **사용자가 "시장 확대를 위해 진행"으로
+결정** → 그 전제(TAM 확대) 위에서 docs/08의 착수 순서 ①~⑤를 전부 진행했다.
+
+**① 대상자 유형** — `schema_recipients.sql`: `children`에 `recipient_type`
+(child|adult, 기본 child) + `is_self` 추가, `consents.type`에 `adult_delegated` 허용.
+**테이블·타입명(`children`/`Child`)은 유지** — 일괄 개명은 FK·RLS 정책·Storage 경로까지
+번지는 마이그레이션이라 비용 대비 실익이 없다(docs/08 규칙 1). 기존 행은 default로
+전부 child가 되어 마이그레이션 부담 0.
+
+**② 성인 본인 기록 모드** — 등록 폼 최상단에 유형 칩(🧸 아이 / 🧑 성인 가족),
+성인 선택 시 본인/다른 성인 가족 선택. 유형에 따라 소아 전용 필드(출생 체중)를
+숨기고 성별 라벨(여아·남아 ↔ 여성·남성)과 플레이스홀더를 바꾼다.
+
+**③ 동의 흐름 분기** — `src/lib/recipient.ts`의 `consentPlanFor()`가 단일 원천.
+**라벨이 아니라 만 나이로 판정**한다(성인 라벨 + 만 10세면 아동 기준이 우선 — 테스트로
+고정). 14세 미만=법정대리인 / 미성년=법정대리인+본인 고지 / 성인 본인=본인 동의 /
+성인 타인=위임 동의. 등록 폼에 유형별 확인 문구가 뜨고, 체크 전에는 저장 불가.
+⚠️ **`sensitive_health`는 모든 경로에 포함** — RLS의 기록 게이트가 이것 하나이므로
+대상자 유형이 늘어도 우회 경로를 만들지 않았다(RLS 테스트로 성인 경로도 검증).
+
+**④ 연령 전제 기능 스위치** — 학교/기관 기록 유형(`childOnly`), 출생 체중·재태 주수,
+키 성장 곡선을 아이 전용으로. 성인 프로필은 "성장 그래프" 대신 "체중 · BMI".
+표시 목록에만 필터를 걸고 **조회 경로(recordTypeDef)에는 걸지 않았다** — 이미 저장된
+기록은 유형과 무관하게 계속 보여야 하기 때문.
+
+**⑤ 카피·문서** — 홈/설정/구독/스위처의 "아이" → "대상자·가족", 개인정보처리방침
+(md·html·앱 내 화면 3벌)과 이용약관을 전연령 기준으로 개정(대상자 유형별 동의 근거 표,
+성인 위임 조항, 정보주체 권리에 성인 본인 요청 대응 의무 추가).
+
+**발견·수정한 UI 문제 1건**: 성인 유형의 '본인' 토글과 동의 체크박스가 **둘 다 ☐/☑
+표기**라 혼동됐다(테스트가 엉뚱한 쪽을 눌러 드러남). Chip은 선택 상태를 이미 시각적으로
+보여주므로 토글의 ☐/☑ 표기를 제거하고 '본인(나)의 기록 / 다른 성인 가족' 2칩으로 교체.
+
+**검증**
+- `tsc` 통과. `test:e2e` **128건**(동의 4경로·나이 우선 판정·게이트 포함·유형 필터·
+  성인 등록/보존 12건 추가), `test:gating` 36건 통과.
+- **RLS 58건 통과**(신규 클러스터): 성인 대상자 생성/owner 연결, 잘못된 유형 차단,
+  **동의 전 기록 차단 → 위임+민감정보 동의 후 허용 → 철회 후 재차단**, 기존 행
+  child 기본값 유지 10건 추가. 검증 중 cascade 단언이 다른 대상자 기록까지 세던
+  테스트 결함을 발견해 대상자별 범위로 수정(+보존 단언 추가).
+- 웹 빌드 + Playwright: 영속화 5건·UI 5사이클 회귀 통과(동의 단계·카피 변경 반영),
+  **성인 대상자 플로우 14건**(유형 전환 시 필드/라벨 변화, 위임 동의 문구, 등록 완료,
+  성인 프로필의 소아 항목 숨김) 통과 + 스크린샷 육안 확인.
+
+**남은 것**: 성인 특화 기능(복약 알림 강화·만성질환 추적)은 베타 후 판단. 성인 대상자
+본인의 권리 행사 창구는 계정 삭제 웹 페이지와 함께 제작 검토. 법률 검토 질의에
+전연령 관련 3개 항목을 추가해 뒀다(docs/09 §2-3).
+
+## 2026-07-30 — 앱 이름 변경: 아이케어 → 케어노트(CareNote) (이번 커밋)
+
+사용자 지적: "전연령 기준이므로 앱 이름을 아이케어로 하는 건 부적절" → 이름과
+브랜딩을 전연령 기준으로 교체. 후보 4종을 제시해 **케어노트** 확정,
+아이콘 방향은 **"나중에 결정"** 으로 보류.
+
+**전면 반영** — 27개 파일: 앱 이름/slug/스킴(`carenote`), 번들 ID
+(`app.carenote.mvp`), 스토어 상품 ID(`carenote.*` 4종), 약관·방침 문구,
+SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에 등록 전이라
+지금 바꾸는 게 무료다(등록 후에는 변경 불가).
+
+**⚠️ 기존 사용자 데이터 보존이 이번 작업의 핵심 리스크였다.** 두 겹으로 처리:
+- 저장 키 `kidcare.demo.v1` → `carenote.demo.v1` **자동 이관**(새 키가 비어
+  있을 때 구 키를 복사해 사용, 구 키는 롤백 여지로 보존).
+- 구 데모 이메일 `demo@kidcare.app`도 계속 데모로 인식. 그러지 않으면 샘플 정리
+  마이그레이션(`stripSampleData`)이 구 데모 계정을 일반 계정으로 오인해 샘플을
+  삭제해 버린다 — 실제로 이 경로를 먼저 발견해서 막았다.
+
+**브랜딩 정리** — 곰인형(🧸)은 아이 전용 상징이라 앱 내부에서 제거: 로그인 로고는
+워드마크만, 홈 빈 상태는 📋. 단 등록 폼의 `🧸 아이` 칩은 브랜드가 아니라
+**대상자 유형 라벨**이므로 유지했다. 태그라인도 "우리 아이" → "우리 가족".
+
+**전연령 잔여 카피 발견·수정** — 이름 작업 중 8단계에서 놓친 곳이 드러났다:
+가입 화면이 여전히 "만 14세 미만 아동의 법정대리인 본인만 가입"이라고 안내하고
+있었고(전연령 정책과 모순), 관계 선택지가 엄마/아빠/조부모뿐이었다 →
+"성인 본인만 가입 + 대상자 등록 시 유형별 동의" 로 문구 교체, 관계에
+배우자/자녀/본인 추가, 라벨도 "주로 기록할 대상자와의 관계"로.
+
+**검증**
+- `tsc` 통과. `test:e2e` **133건**(구/신 데모 이메일 하위호환 5건 추가),
+  `test:gating` 36건 통과.
+- Playwright **영속화 9건**(기존 5 + **이름 변경 마이그레이션 4건**: 구 키만 있는
+  기기를 재현해 자동 로그인·대상자·플랜 보존·새 키 이관 확인),
+  UI 5사이클, 성인 플로우 14건 통과.
+- 마이그레이션 테스트를 처음엔 Node로 작성했다가 **AsyncStorage가 Node에서
+  동작하지 않아 전부 실패** — 저장소 검증이 원래 Playwright 기반인 이유를
+  재확인하고 웹 경로로 옮겼다(Node에서는 데모 이메일 하위호환만 검증).
+
+**남은 것(⛔)**: `assets/`의 아이콘·스플래시가 아직 🧸 시안이다. 곰인형 아이콘 +
+"케어노트" 조합은 전연령 앱으로서 어긋나므로 출시 전 교체가 필요하다 —
+방향 결정 대기(docs/10_branding.md 신설, docs/09 §3에 차단 항목으로 등록).
+사용자 확인 필요: Play 중복 검색, 상표 검색(CareNote는 해외 의료·요양 분야에
+동명 서비스가 있어 글로벌 확장 시 충돌 가능성), 번들 ID 최종 확정.
+
+## 2026-08-23 — P0 병원 공유 링크 보안 강화
+
+- `schema_stage4_share_security.sql`을 추가해 256-bit 난수 원문 token은 발행 RPC의
+  단 한 번의 응답으로만 반환하고, DB에는 SHA-256 hash만 저장하도록 전환했다. 기존
+  원문 token 링크는 migration 시 즉시 회수한다.
+- 발행·회수는 owner/editor 및 유효 민감정보 동의를 재검사하는 definer RPC로만
+  허용한다. Edge Function은 hash를 원자 소비하여 회수·만료·대상자 삭제를
+  확인하고, 동시 replay에는 행 잠금+1초 rate limit을 적용한 뒤 5분 URL만 발급한다.
+  원문 token/IP/User-Agent는 저장·로그하지 않고 audit은 링크 id·결과·시각만 기록한다.
+- 변조/만료/회수/replay·직접 DML·viewer 권한 우회 회귀 항목을 RLS test에 추가했고,
+  운영 연결 검증 스크립트도 새 RPC 계약으로 갱신했다.
+- 검증: `npm run typecheck` 통과, `npm run test:e2e` **110/0**, `npm run test:gating`
+  **27/0**, `npx expo export --platform web` 통과, `npx deno@2.2.2 check` 통과,
+  `git diff --check` 통과. fresh PostgreSQL 16 RLS와 실제 Supabase Edge 수신자 검증은
+  이 브랜치에서 재실행한다.
+
+---
+
+## 2026-08-23 — P0 채널 통합 entitlement ledger·웹훅 상태 머신
+
+**한 일**
+- `schema_entitlement_ledger.sql`에 provider event inbox(유니크 idempotency key,
+  effective_at, 처리 상태/dead-letter audit)와 service_role 전용 projection RPC를 추가.
+  앱의 티어 원천은 계속 `subscriptions` 하나이며, refund/revoke/expiration/restore와
+  cancellation의 auto-renew 상태를 ledger가 순서대로 투영한다.
+- `billing-webhook`을 주입 가능한 handler contract로 바꾸고 RevenueCat event 정규화,
+  sandbox token test double, 미구현 Polar/Apple/Google verifier의 fail-closed 503을 추가.
+- fresh PostgreSQL RLS 공격 회귀(중복/역순/refund/restore/dead-letter/클라이언트 차단)와
+  Deno Edge handler contracts를 CI에 연결했다.
+
+**결정과 이유**
+- provider별 webhook이 subscriptions를 직접 upsert하면 순서 역전과 부분 실패를 복구할
+  감사 근거가 없으므로 inbox를 먼저 남기고 projection은 단일 RPC로 제한했다.
+- 실제 provider JWS/OAuth 검증 키·상품·가격·배포는 운영 승인 범위다. 검증기가 없는
+  production provider event는 수락하지 않고 503으로 실패 폐쇄한다.
+
+**검증**
+- 로컬: typecheck, E2E 137/137, gating 41/41, Expo web export 통과.
+- 로컬 Docker daemon/psql/Deno가 없어 fresh PG16 RLS 및 Deno handler 계약은 PR CI에서
+  확인해야 한다.
+
+**다음**
+- Draft PR CI에서 RLS 157건과 Edge contracts를 확인한 뒤, Polar/Apple/Google의 실제
+  서명 verifier와 replay worker는 운영 credential 승인 후 별도 카드로 진행한다.
+
 ---
 
 # 앞으로 진행할 내용
 
 ## 최우선: 안드로이드 출시 준비 — `docs/09_android_release.md`가 단일 기준 문서
-사용자 결정 대기 3건(⛔): ① 번들 ID ② 1차 출시 구독 정책(무료 출시 vs 결제 연동 후)
-③ SMS 인증(공급자 계약 vs 1차 우회). 결정되는 대로 §3의 개발 반영 착수.
+구독 정책(무료 출시+얼리버드, 07-12)과 SMS 인증(우회 플래그 off 기본값, 07-17)은
+결정·구현 완료. 남은 사용자 결정(⛔): **① 번들 ID** — 확정 즉시 app.json 반영.
 
 ## 사용자 실기기 확인 대기 (피드백 1~3차 반영분)
 - 대시보드 드래그 순서 변경(setValue 재작성 후), 사진 뷰어 스와이프,
   레포트 PDF 2배 폰트(expo-print 실출력), 샘플 잔재 마이그레이션.
 
-## 결제 연동 (§1-2에서 B안 선택 시 또는 v1.1 — docs/07_monetization.md)
-- [ ] Play Console 구독 상품 등록 → RevenueCat(react-native-purchases,
-      development build 필요) → 웹훅 Edge Function → 가격 확정
+## 결제 연동 (v1.1 — docs/07_monetization.md)
+- [x] 코드 측 연동(react-native-purchases + billing.ts 실구현 + initBilling) — 07-17
+- [ ] 계정 작업: Play Console 상품 4개 등록 → RevenueCat 대시보드/Targeting →
+      env 키 주입 → 웹훅 배포 → development build로 샌드박스 결제 사이클 확인
+
+## 카카오 로그인 (코드 완료 — 계정 설정 후 켜기)
+- [x] signInWithKakao(supabase OAuth + mock 시뮬레이션), 신규 사용자 동의 경유 — 07-17
+- [ ] Kakao Developers 앱 + Supabase provider 설정 → `EXPO_PUBLIC_KAKAO_LOGIN=on`
+      → 실기기에서 OAuth 왕복 1회 확인
+
+## SMS 인증 (사용자 결정: 우선 제외 — 07-17)
+- 1차 출시는 off 모드(이메일 확인만) 유지. 재개 시: 공급자 계약 + OTP 서버 이전.
 
 ## 남은 마감 품질 항목
 - [ ] 접근성/한국어 카피 정리, 온보딩/빈 상태 다듬기
 - [ ] Maestro 스모크 실기기 실행·보정
 - [ ] 사진 서명 URL 재발급 로직(출시 전 권장)
-- [x] RLS 테스트 CI 연결 — `.github/workflows/kidcare-ci.yml`
+- [x] RLS 테스트 CI 연결 — `.github/workflows/carenote-ci.yml`
 
 ## 백로그 (MVP 이후)
 - 성장 백분위 곡선 (질병관리청 소아 성장도표 데이터 연동)
@@ -613,3 +868,637 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - Storage 재귀 완전 삭제는 실 Supabase 미검증 (list API 페이지네이션 1000개 한도 —
   기록이 매우 많은 아이는 반복 호출 필요할 수 있음)
 - 개인정보처리방침은 초안 — 배포 전 법률 검토 필수
+
+---
+
+## 2026-08-04 — 랜딩 페이지에 실제 앱 화면 데모 이미지 추가
+
+**한 일**
+- 랜딩 페이지가 텍스트 설명 위주라 "처음 접한 사람이 어떤 화면으로 기록하고
+  병원에 전달하는지" 알 수 없다는 문제. **목업을 새로 그리지 않고**
+  `scripts/screenshot-all.mjs`가 뽑아 둔 실제 앱 캡처 8장을 배치했다.
+  - `#record` — 기록 추가 폼(유형 칩·체온) + 사진 첨부/자동 분류 디테일
+  - `#flow` — 단계 01~04에 각각 하루 기록 / 기간별 그래프 / 레포트 미리보기 /
+    발급된 만료형 공유 링크
+  - `#recipients` — 홈 대상자 목록 + 성인 가족 등록 폼(유형 칩 2단)
+- 랜딩 소스를 저장소로 이관: `web/landing.html`(단일 원본) →
+  `scripts/build-landing.py` → `docs/index.html` + `docs/shots/*.webp`
+- 스크린샷 파이프라인: 크롭 → 리사이즈 → WebP q75. 8장 합계 **104KB**.
+  `--inline` 옵션은 같은 소스에서 base64 인라인본을 만든다(Artifact CSP가
+  외부 이미지를 막으므로 그쪽 배포에만 필요).
+
+**결정과 이유**
+- **실제 캡처 > 목업.** 앱이 바뀌면 재캡처만으로 랜딩이 따라 갱신되고,
+  없는 기능을 그려 넣을 여지가 없다.
+- **원본 폭을 넘겨 확대하지 않는다**(`.shot { max-width: 390px }`).
+  첫 배치에서 390px 캡처를 600px로 늘려 글씨가 뭉갰다. 24·26번 캡처는
+  1배율이라 확대 여지가 아예 없다.
+- **앱은 웜톤 파랑, 랜딩은 흑백+그린.** 색을 맞추지 않고 헤어라인 프레임과
+  "실제 앱 화면" 캡션 바로 경계를 명시했다 — 마케팅 면과 제품 면의 구분.
+- 좁은 화면에서 4단 격자로 쪼개면 폰 화면 글씨가 안 보이므로,
+  ≤768px에서는 **가로 스와이프 스트립**(264px 고정폭)으로 바꿨다.
+- `width`/`height` 속성은 빌드가 인코딩 결과에서 직접 써 넣는다. 손으로 관리하면
+  크롭을 바꿀 때마다 어긋나 로드 전 레이아웃이 튄다.
+- 텍스트는 **한 글자도 바꾸지 않았다**(사용자 요청). 배치만 재구성했다.
+
+**같이 고친 것**
+- `.type-cell`에 `flex-wrap` + 이름 `nowrap`: 모바일 2단에서 "학교·기관"이
+  글자 단위로 쪼개지던 것을 배지가 아랫줄로 흐르게 수정.
+
+**검증**
+- Playwright 1440·900·390 3종: 가로 오버플로 없음(scrollWidth == clientWidth),
+  이미지 8장 전부 로드, **원본보다 확대되는 이미지 0건**,
+  `.shot-cap` 텍스트 대비 전부 4.5:1 이상(WCAG AA).
+- 데스크톱·모바일 섹션별 렌더 육안 확인.
+
+**다음**
+- 앱 아이콘·스플래시 교체(아직 아이케어 시절 🧸) — 출시 전 필수, docs/10
+- GitHub Pages Settings → Pages → Source를 `claude/repo-progress-review-mvaiat` /
+  `/docs`로 지정해야 실제 공개됨
+
+---
+
+## 2026-08-04 — 랜딩 흐름 섹션을 스티키 스크롤 시퀀스로
+
+**한 일**
+- "이미지를 붙여 놓기만 해서 촌스럽다"는 지적. 원인을 넷으로 진단했다 —
+  ① 프레임이 없어 앱 화면과 페이지 배경이 구분되지 않음 ② 8장이 전부 동등한
+  위계 ③ 죽은 여백 ④ 움직임 없음. 넷 다 손봤다.
+- **디바이스 프레임 규칙**: 화면 *전체*를 담은 캡처만 검은 베젤 + 그림자를
+  두른다(`.device`). 화면 일부만 자른 것은 하드웨어 테두리를 두르면 거짓말이
+  되므로 헤어라인 프레임을 유지한다(`.shot`).
+- **흐름 섹션 = 스티키 스크롤 시퀀스**: 섹션 제목 + 네 단계 목록 + 폰을 통째로
+  화면에 고정하고, 스크롤이 만드는 것은 "지금 몇 단계인가"뿐이다. 폰 안의
+  화면이 교체되고 녹색 진행 레일이 찬다.
+- 4단계용 화면을 새로 캡처(`scripts/capture-share-link.mjs`) — 실제로 발급된
+  공유 링크가 보이는 상태. 기존 `c3-report-link.png` 에는 테스트 문구가
+  남아 있었고, `15-share-link.png` 는 레포트 화면과 거의 같았다.
+- 전역 절제 모션: 섹션 진입 시 10px 상승.
+
+**결정과 이유**
+- **외부 라이브러리 없이 CSS만.** `animation-timeline: view()` 가 Chrome/Edge
+  115+, Firefox 132+, Safari 18+ 에서 지원된다(전역 약 84%). JS 를 안 쓰므로
+  Artifact 의 CSP(script/connect 차단)에 걸리지 않고, GitHub Pages 단일 파일
+  구조도 그대로 유지된다.
+- **폴백이 기본값이다.** `@supports` 밖의 CSS 만으로 페이지는 이미 완성돼
+  있다(가로 스와이프 스트립 + 4단 목록). 시퀀스는 지원 + 1024px 이상 +
+  `prefers-reduced-motion: no-preference` 일 때만 얹힌다. 같은 `<img>` 를
+  재사용하므로 폴백 때문에 바이트가 늘지 않는다.
+- **리빌에 불투명도를 쓰지 않는다.** 처음엔 페이드+이동으로 만들었는데,
+  `view()` 는 아직 진입하지 않은 요소를 진행도 0 에 묶어 두므로 스크롤이
+  일어나지 않는 맥락(인쇄, 페이지 전체 캡처)에서 그대로 고정된다. fullPage
+  캡처에서 6개 블록이 통째로 비는 것을 확인하고 이동만 남겼다. 최악의
+  경우에도 10px 내려가 있을 뿐 항상 읽힌다.
+- **단계 텍스트를 흐리게 만들지 않는다.** 비활성 단계를 흐리게 하면 대비가
+  4.5:1 아래로 떨어진다. 색 대신 녹색 레일이 차오르는 것으로 표시한다.
+- **단계마다 텍스트를 흩뿌리는 방식은 접었다.** 한 화면에 문장 하나만 남아
+  칼럼이 텅 비어 보였다. 목록이 통째로 보이면 흐름 전체가 한눈에 들어온다.
+
+**막혔던 것 두 가지**
+1. `animation-range: contain` — 대상이 뷰포트보다 크면 "완전히 담긴" 상태가
+   성립하지 않아 Chromium 에서 진행도가 뷰포트 높이마다 제멋대로 나왔다.
+   `cover` 의 앞뒤를 100vh 씩 잘라내면 고정 구간과 정확히 일치하고, 뷰포트
+   높이가 달라져도 성립한다.
+2. 검증 스크립트가 계속 흔들렸는데 원인은 페이지의 `scroll-behavior: smooth`
+   였다 — `scrollTo` 가 목표에 닿기 전에 값을 읽고 있었다. `behavior:'instant'`
+   로 고정하니 측정이 재현된다.
+   (같이: flex 아이템의 `min-width:auto` 가 이미지 원본 폭이라 `flex-basis`
+   264px 를 눌러 버리던 것도 수정)
+
+**검증**
+- 뷰포트 높이 640·760·900·1000·1400 에서 네 사분면 모두 단계 N ↔ 화면 N 일치,
+  레일도 순서대로 참. 고정 위치 top=88px, 고정 블록 높이 436~744px 로 항상
+  뷰포트 안.
+- desktop 1440 / tablet 1000 / mobile 390 / reduced-motion 4종: 가로 오버플로
+  없음, 깨진 이미지 0, 원본보다 확대되는 이미지 0, 캡션·본문 대비 전부 4.5:1
+  이상, 콘솔 에러 없음.
+- 시퀀스 미승격(폴백) 3종에서 네 화면이 모두 노출되는지 확인 — 정보 손실 없음.
+- 전체 9,510px 스크롤하며 scrollWidth 1440 유지, fullPage 캡처에서 모든
+  리빌 블록이 정상 렌더.
+
+**다음**
+- 앱 아이콘·스플래시 교체(아직 아이케어 시절 🧸) — 출시 전 필수, docs/10
+- GitHub Pages Settings → Pages → Source 를 `claude/repo-progress-review-mvaiat` /
+  `/docs` 로 지정해야 실제 공개됨
+
+---
+
+## 2026-08-06 — 베타 대기자 페이지 신설 (SNS 유입 전용)
+
+**한 일**
+- MVP가 아직 개발 중이므로, 출시 전 대기자 명단을 받을 **별도 페이지**를 만들었다.
+  기존 랜딩(`web/landing.html` → `docs/index.html`)은 **한 글자도 건드리지 않았다** —
+  사용자 지시. 새 경로는 `/beta/`.
+  - `web/beta.html`(단일 원본) → `scripts/build-beta.py` → `docs/beta/index.html`
+    + `docs/beta/media/*` + `docs/beta/og.png`
+- **동적 이미지 3컷을 실제 앱을 조작해 녹화**했다(`scripts/record-beta-clips.mjs`).
+  목업이 아니다. `dist-web`(Expo 웹 빌드)을 띄우고 Playwright로:
+  ① 밤중 발열 기록(시간 21:30 · 증상 발열 · 38.2℃ · 심한 정도 3 → 저장 →
+  목록 맨 위에 추가) ② 대시보드 기간 칩 14일↔7일 전환으로 그래프 재렌더
+  ③ 병원 제출용 레포트 미리보기.
+- 신청 폼: 이메일 1개만 필수 + **수신 동의 체크박스**(필수) + 개인정보 안내.
+  Formspree 특수 필드 3종(`_subject` / `_next` / `_gotcha`)과 `utm_source`
+  숨은 필드(유입 경로 측정).
+
+**결정과 이유**
+- **`<video>`가 아니라 애니메이션 WebP.** 자동재생은 `muted`+`playsinline`을
+  붙여도 iOS 저전력 모드에서 막힌다. SNS 유입은 대부분 모바일이라 그 실패가
+  곧 첫인상이 된다. `<img>`의 애니메이션 WebP는 자동재생 정책을 아예 타지
+  않는다. (부수적으로 Playwright 번들 ffmpeg는 VP8/PNG만 낼 수 있어 mp4를
+  만들 수도 없었다. 인코더 목록으로 확인.)
+  - 3컷 합계 **253KB**(q60, 8fps). q45면 30% 작아지지만 앱 화면의 작은 한글이
+    뭉개진다 — 이 소재는 "글씨가 읽히는 것"이 전부라 여기서 아끼지 않았다.
+- **`prefers-reduced-motion`은 CSS가 아니라 마크업으로 지킨다.** 애니메이션
+  WebP는 CSS로 멈출 수 없다. `<picture>`의 `media` 질의로 정지 포스터를 먼저
+  고르게 했다. 포스터는 **마지막 프레임**을 쓴다 — 이 사람에게는 한 장이
+  전부이므로 시작 상태(빈 폼)보다 끝 상태(저장된 기록)가 많은 것을 말해 준다.
+- **선착순 100명**으로 잡고 **완성 날짜는 약속하지 않는다.** 출시 차단 항목
+  (번들 ID·Supabase 운영·법률 검토)이 남아 날짜를 못 박을 수 없다.
+  **실시간 카운터는 만들지 않았다** — 정적 페이지 + Formspree로는 실제
+  집계가 불가능하고, 가짜 카운터는 건강 기록 앱에서 들키면 신뢰가 끝난다.
+- **웹폰트를 싣지 않는다.** SNS 유입은 첫 로딩이 전부고, 랜딩의 서브셋 폰트는
+  이 페이지의 새 문장에서 글리프가 빠진다. 시스템 폰트 스택으로 간다.
+- OG 이미지는 **Chromium으로 그린다**(`scripts/make-beta-og.mjs`). 이 환경에는
+  PIL이 쓸 한글 폰트가 없다(DejaVu/Liberation뿐).
+- 컷2에서 대상자 전환(도도)은 뺐다 — 도도는 체온 기록이 없어 그래프가 비고,
+  빈 화면으로 끝나는 클립은 안 쓰느니만 못하다.
+
+**검증 중 발견해 고친 것**
+- **완료 배너가 항상 노출됐다.** `hidden` 속성은 UA 스타일시트의
+  `display:none`으로 동작하는데 `.done { display:flex }`가 명시도에서 이긴다.
+  `[hidden] { display:none !important }`로 막았다. 이것 때문에 히어로의 이메일
+  입력창이 모바일에서 첫 화면 밖으로 밀려나 있었다 — 이 페이지의 존재 이유가
+  가려진 셈이라 가장 치명적이었다.
+- **레포트 클립 캡션의 숫자가 화면과 달랐다.** 캡션은 "발열 4일"인데 클립에는
+  **5일**로 찍혀 있었다 — 컷1에서 38.2℃ 기록을 하나 넣었기 때문이다. 같은
+  세션에서 이어 녹화하면 앞 컷의 조작이 뒤 컷에 반영된다. 캡션과 alt를 화면에
+  맞췄다.
+- 데스크톱 헤드라인이 네 줄로 쪼개졌다(왼쪽 칼럼 폭 초과). 46px로 내리고
+  히어로 격자를 1.25:0.75로 바꿔 의도한 두 줄로 앉혔다.
+- OG 이미지 경로가 상대경로였다 — 크롤러가 못 찾아 카드가 빈다. 빌드가 절대
+  URL로 써 넣게 했다(`og:url`, `og:image`, `twitter:image`).
+
+**검증**
+- desktop 1440 / tablet 820 / mobile 390 / mobile+reduced-motion 4종:
+  가로 오버플로 0, 깨진 이미지 0, 요청 실패 0, 콘솔 에러 0,
+  **대비 미달 0건**(큰 글씨 3:1 / 본문 4.5:1 기준으로 판정).
+- reduced-motion에서 4장 전부 `-poster.webp`로 교체되는 것 확인
+  (`currentSrc` 실측).
+- `?joined=1` → 완료 배너 노출 + 주소창 정리 확인.
+  `?utm_source=threads` → 두 폼 모두 유입경로 필드에 반영 확인.
+- `/beta/`, `og.png`, 클립·포스터 6종, 기존 랜딩(`/`),
+  `privacy_policy.html` 전부 200.
+- `git status`로 기존 랜딩 무손상 확인 — 전부 신규 파일.
+
+**남은 것 (공개 전 반드시)**
+- ⛔ **자리표시자 2종 교체** — 빌드가 매번 경고한다.
+  - `__BETA_FORM_ID__`(3곳): **제휴 폼 `xwvggbbk`와 다른 새 Formspree 엔드포인트**.
+    같은 것을 쓰면 병원 문의가 신청 알림에 묻힌다.
+  - `__CONTACT_EMAIL__`(5곳): carenote.app 도메인 미보유 — 실제 받는 주소로.
+- ⚠️ Formspree 무료 한도(월 50건 수준). SNS에서 조금만 터지면 첫날 넘기고,
+  넘으면 제출이 조용히 막힌다. 페이지에 "안 되면 메일로" 대체 경로는 넣어
+  뒀지만, 게시 전 유료 전환이나 대체 수단을 준비해 둘 것.
+- GitHub Pages Settings → Pages → Source 미설정 — 지금은 저장소 안에만 있다.
+
+---
+
+## 2026-08-06 — 카카오 로그인 켜기 준비: 웹 OAuth 팝업 완결 처리
+
+**한 일**
+- 카카오 로그인을 실제로 켜기로 하고, 켜기 전에 코드 경로를 점검했다.
+  네이티브 경로는 정상이었지만 **웹에서는 절대 로그인되지 않는 상태**였다.
+- `App.tsx` 모듈 스코프에 `WebBrowser.maybeCompleteAuthSession()` 추가.
+- `docs/09` 에 §2-2-1 신설 — 카카오 설정 절차 전문(계정 작업 ①~④).
+
+**왜 웹에서 안 됐나**
+- 웹 소셜 로그인은 팝업으로 돈다. 팝업이 인증을 마치고 우리 주소로 돌아오면
+  **팝업 안에서 앱 번들이 다시 로드**되는데, 이때 부모 창에 `postMessage` 로
+  결과를 넘겨 주는 것이 `maybeCompleteAuthSession()` 이다. 이 호출이 없으면
+  부모의 `openAuthSessionAsync()` 가 영원히 기다리고, 사용자가 팝업을 닫으면
+  `dismiss` 로 떨어져 **"카카오 로그인이 취소되었습니다"** 가 뜬다.
+  Kakao·Supabase 설정을 아무리 정확히 해도 웹에서는 로그인이 안 됐을 것이다.
+- 라이브러리 구현으로 확인한 사실:
+  - `ExpoWebBrowser.web.js` 의 `maybeCompleteAuthSession` 이
+    `parent.postMessage({url, expoSender}, ...)` 로 결과를 넘긴다.
+  - 네이티브에는 이 API 자체가 없고 래퍼가
+    `if (ExponentWebBrowser.maybeCompleteAuthSession)` 로 감싸므로 **무해**하다.
+    그래서 플랫폼 분기 없이 모듈 스코프에서 한 번 호출한다.
+  - `normalizeUrl()` 이 origin+pathname 만 쓰므로 해시(`#access_token=...`)가
+    붙어도 리다이렉트 일치 검사를 통과한다 → `skipRedirectCheck` 불필요.
+
+**점검했지만 문제 없던 것 (기록해 둔다)**
+- `flowType` 미지정이라 PKCE 로 동작해 `access_token` 대신 `code` 가 오는 것
+  아닌가 의심했으나, 설치된 `@supabase/auth-js@2.110.2` 의 기본값이
+  `implicit` 임을 소스에서 확인했다. 현재 코드의
+  `QueryParams.getQueryParams(res.url)` → `setSession()` 경로가 맞다.
+  **다만 나중에 `flowType: 'pkce'` 로 바꾸면 이 경로가 통째로 깨진다** —
+  그때는 `exchangeCodeForSession()` 으로 바꿔야 한다.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- 웹 재빌드(`--clear`) 후 번들에 호출 포함 확인, 로드 시 콘솔 에러 0.
+- 브라우저에서 카카오 버튼 노출 → 클릭 → mock 로그인 성공 →
+  **신규 사용자라 동의 화면으로 이어지는 것까지 확인**(설계대로).
+- 노출 게이트 4종 실행 확인:
+  `(미지정, mock)=노출 / (미지정, supabase)=숨김 / (on, supabase)=노출 /
+   (off, mock)=숨김` — 설정 전 운영 빌드에 깨진 버튼이 나가지 않는다.
+- **실제 OAuth 왕복은 Kakao·Supabase 계정 설정 후에만 검증 가능** — 그 절차와
+  확인 방법을 docs/09 §2-2-1 ④에 적어 뒀다.
+
+**다음 (사용자 계정 작업)**
+- Kakao Developers 앱 생성 → REST API 키·Client Secret
+- Supabase Providers → Kakao 입력 + **Redirect URLs 에 웹·앱 주소 모두 등록**
+  (이게 빠지면 인증은 되는데 앱으로 못 돌아온다)
+- `EXPO_PUBLIC_KAKAO_LOGIN=on` + `expo export --clear`
+
+---
+
+## 2026-08-06 — 소셜 로그인 일반화(카카오+구글) + Cloudflare Pages 배포 준비
+
+**왜 이 순서인가 (방향 재검토)**
+- 카카오를 켜려는데 **로그인할 앱이 어디에도 배포돼 있지 않다**는 것을 뒤늦게
+  발견했다. `dist-web/` 은 gitignore 이고, GitHub Pages 는 `docs/` 의 정적
+  마케팅 페이지만 서빙한다. Supabase·Kakao 설정을 완벽히 해도 시도할 화면이
+  없었다 — 설정보다 배포처 결정이 먼저였다.
+- 사용자는 로컬 개발 환경이 없고(이 컨테이너에서만 작업), 이 컨테이너에서는
+  사용자의 Supabase 로 **egress 가 막혀** 검증도 대신 못 한다. 그래서 "로컬 PC
+  없이 push 만으로 배포되는 경로"가 필요했다.
+
+**한 일 1 — 소셜 로그인 일반화 + 구글 추가**
+- `signInWithKakao()` → `signInWithSocial(provider)` 로 일반화.
+  공급자 정의는 `socialAuth.ts` 의 `SOCIAL_PROVIDERS` 한 곳에 모았다
+  (라벨·짧은 이름·버튼 색). 화면은 `enabledSocialProviders()` 로 목록을 받아
+  버튼을 그리므로, 공급자를 늘려도 **목록 한 줄 + env 플래그**가 전부다.
+- 구글 추가. 카카오와 OAuth 흐름이 완전히 같아 코드 중복이 30줄 가까이 생길
+  뻔했다. **iOS 출시 때 Apple 로그인도 붙여야 하므로**(심사지침 4.8 — 서드파티
+  소셜 로그인을 제공하면 Apple 로그인 병행 필수) 지금 일반화하는 게 맞다.
+- 프로필 이름 폴백을 넓혔다: 카카오는 `nickname`, 구글은 `full_name`/`name`
+  으로 온다. 아무것도 안 주면 '보호자'.
+- mock 저장소도 **공급자별로 계정을 분리**했다(`kakao@` / `google@`). 같은
+  데모 계정을 공유하면 "카카오로 들어갔다 구글로 들어오면 남의 기록이 보이는"
+  상황을 데모가 못 잡는다. e2e 에 전환 테스트를 넣었다.
+- env 플래그는 **공급자별로 독립**이다(`EXPO_PUBLIC_KAKAO_LOGIN` /
+  `EXPO_PUBLIC_GOOGLE_LOGIN`). 하나만 먼저 켤 수 있다.
+- 주의로 남김: Metro 는 `process.env.EXPO_PUBLIC_*` 를 **정적 치환**하므로
+  `process.env[key]` 동적 접근이 통하지 않는다. `rawFlag()` 에서 공급자별로
+  하나씩 적어 둔 이유다.
+
+**한 일 2 — Cloudflare Pages 배포 준비**
+- `npm run build:web` (= `expo export --platform web --output-dir dist`) 추가.
+  출력 폴더를 호스팅 관례인 `dist` 로 통일했다.
+- `public/_headers` — X-Frame-Options DENY, nosniff, Referrer-Policy,
+  Permissions-Policy, HSTS + 정적 자산 영구 캐시 / index.html no-cache.
+  **CSP 는 일부러 뺐다** — Supabase(REST/Realtime/Storage 서명 URL)·소셜
+  로그인 팝업·data URI 가 얽혀 잘못 쓰면 앱이 조용히 깨진다. 실배포에서 실제
+  요청 목록을 본 뒤 `connect-src` 를 좁히는 순서가 맞다.
+- `public/_redirects` — SPA 폴백.
+- `public/` 내용이 빌드 출력 루트로 복사되는 것을 실제 빌드로 확인했다.
+- **Vercel 대신 Cloudflare 인 이유**: Vercel Hobby 는 Fair Use 지침상
+  비상업·개인용 전용이고 금지 예시에 "결제 처리"가 있다. 구독을 붙일 제품이라
+  결제를 켜는 순간 위반이 된다. Cloudflare Pages 무료 티어는 상업적 이용 허용.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- `npm run test:e2e` **PASS 137 / FAIL 0** (기존 133 + 소셜 4건).
+- `npm run test:gating` **PASS 41 / FAIL 0** (기존 36 + 플래그 5건 —
+  공급자별 독립 on/off, 설정 전 실서버 빌드에 버튼 0개).
+- `npm run build:web` 성공 → `dist/` 에 `_headers`·`_redirects` 복사 확인.
+- 브라우저에서 두 버튼 노출 확인, **각각 클릭 → mock 로그인 → 동의 화면 진입**
+  까지 확인, pageerror 0.
+
+**다음 (사용자 작업, docs/06 B-3 → docs/09 §2-2-1 순서)**
+1. Cloudflare Pages 저장소 연결 + 환경변수(소셜 플래그는 비워 둔 채) → 배포 주소 확보
+2. Supabase Redirect URLs 에 그 주소 등록
+3. Kakao / Google 콘솔 설정 → Supabase Providers 입력
+4. 환경변수 `on` → 재배포 → 실제 로그인 왕복 확인
+
+---
+
+## 2026-08-12 — Cloudflare 배포 흐름이 Workers로 바뀌어 wrangler.jsonc 추가
+
+**무슨 일이었나**
+- 사용자가 Cloudflare 대시보드에서 B-3 절차대로 진행했는데 화면이 문서와
+  달랐다 — "Pages → Connect to Git" 이 아니라 **"Create a Worker"** 흐름이었고,
+  Deploy command 가 `npx wrangler deploy` 로 채워져 있었다. Deploy를 눌러도
+  넘어가지 않았다.
+- 원인: Cloudflare가 2026년부터 신규 정적 사이트를 Workers(정적 자산 서빙)
+  흐름으로 유도한다. 이 흐름은 **저장소에 `wrangler.jsonc`(또는 `.toml`) 가
+  있어야** `wrangler deploy` 가 무엇을 어디로 배포할지 안다. 파일이 없으니
+  배포 대상이 없어 진행이 안 됐다 — 사용자 실수가 아니라 문서가 구 UI 기준
+  이었다.
+
+**한 일**
+- `wrangler.jsonc` 신설: `assets.directory: "./dist"`,
+  `assets.not_found_handling: "single-page-application"`.
+- `docs/06_deployment.md` B-3 를 새 흐름 기준으로 갱신 — 버튼 경로, Build/Deploy
+  명령, 배포 후 나오는 주소 형식(`*.pages.dev` → `*.workers.dev`).
+- **`public/_headers`·`public/_redirects` 는 그대로 둔다** — 검색 결과로
+  확인: Workers 정적 자산이 두 파일을 네이티브로 지원하고, 자산 디렉터리에
+  있기만 하면 별도 설정 없이 적용된다. `not_found_handling` 과
+  `_redirects` 의 SPA 폴백이 같은 역할을 중복으로 하게 됐지만 충돌은 없다.
+
+**검증**
+- `tsc --noEmit` 에러 0.
+- `npm run build:web` 재실행 → `dist/_headers`, `dist/_redirects` 여전히
+  자동 복사되는 것 확인 (wrangler.jsonc 추가가 기존 정적 파일 복사 경로에
+  영향 없음).
+
+## 2026-08-12 — 웹 배포 완결 + 5가지 시행착오 해결
+
+**날짜**: KST 8/12 (UTC+9)
+**목표**: Cloudflare에서 웹 앱 실배포 & 환경변수 주입으로 Supabase 백엔드 연동
+
+**한 일**
+사용자가 Cloudflare B-3 절차대로 진행했다가 "Deploy를 눌러도 진행이 안 됨" 로 보고.
+이후 5번의 빌드 시도와 시행착오 끝에 완전 배포 성공. 각 단계별 원인·해결을 기록함.
+
+**시행착오 5가지**
+
+① **Cloudflare UI가 구식 문서와 달랐다**
+- 예상: "Pages → Connect to Git" (2022년 UI)
+- 실제: "Workers & Pages → Create a Worker" (2026년 신 UI)
+- 원인: Cloudflare가 정적 사이트를 Pages → Workers로 전환중
+- 해결: `wrangler.jsonc`(또는 `.toml`)이 필수 — 이 파일이 없으면 deploy 대상이 없어 진행 불가
+
+② **wrangler.jsonc의 `name` 필드가 틀렸다**
+- 처음: `"name": "carenote"` (앱 이름)
+- 대시보드 경고: "Update to health-care-app-development" (저장소명)
+- 원인: 프로젝트를 만들 때 저장소명으로 자동 명명, 우리는 앱 이름으로 시도
+- 해결: 저장소명으로 변경 후 정상 진행
+- ⚠️ 프로젝트 이름은 코드로 못 바꾼다 — 대시보드에서 새 프로젝트 생성해야 함
+
+③ **SPA 라우팅 무한 루프 (code 100324)**
+- 빌드 성공, 배포 단계에서 거부: "Invalid _redirects configuration: Infinite loop detected"
+- 원인: 두 곳에서 404→index.html을 하고 있었다
+  ```
+  1. public/_redirects: /*  /index.html  200
+  2. wrangler.jsonc: assets.not_found_handling = "single-page-application"
+  ```
+  Cloudflare 검증이 이중 규칙을 감지해 무한 루프 판정
+- 해결: 단일 메커니즘 선택 → public/_redirects에서 SPA 폴백 규칙만 제거
+  (wrangler.jsonc의 not_found_handling 하나로 통일)
+- 배운 점: "두 메커니즘이 있으니 한 번에" 는 위험 — 자동 검증이 설정 충돌을 감지
+
+④ **환경변수 입력 위치 헷갈림**
+- 사용자가 Settings → Variables and secrets에 NODE_VERSION을 넣으려니:
+  ```
+  "Variables cannot be added to a Worker that only has static assets."
+  ```
+- 원인: 두 가지가 헷갈린다
+  - Settings → Variables and secrets (사이드바 최상단) = Worker 런타임용 ❌
+  - Settings → Build → Variables and secrets = 빌드 타임용 ✅
+- Expo의 EXPO_PUBLIC_* 는 빌드할 때 정적 치환되므로 Build 섹션에만 먹힌다
+- 해결: 올바른 위치(Build 섹션)에 변수 저장 후 설명 추가
+
+⑤ **"New deployment" 버튼 ≠ Git rebuild**
+- 사용자: "환경변수 저장했으니 재배포하는데, New deployment 버튼 누르면?"
+- 실제 동작: "Upload static files" (수동 업로드, Git rebuild 아님)
+- 정확한 방법: `git push` 해야 Cloudflare가 감지해 자동 빌드
+- 원인: Cloudflare UI 용어가 명확하지 않음 (버튼 이름만으로는 구분 불가)
+- 해결: 문서에 명시 — "New deployment" ≠ rebuild, 새 commit push 필수
+
+**최종 배포 확인**
+
+링크: https://health-care-app-development.impact2027.workers.dev/
+
+검증 사항:
+- 앱 로드 정상
+- Supabase 백엔드 연동 확인 ("Supabase 연동 모드" 메시지)
+- 이메일/비밀번호 로그인 작동
+- 소셜 로그인 버튼 노출(provider 설정 전이라 미활성)
+- Response 헤더 정상 (X-Frame-Options DENY, HSTS, etc.)
+
+**검증 수치**
+
+```
+타입 체크:        tsc --noEmit         PASS
+E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
+게이팅 테스트:    npm run test:gating   41 PASS (플래그 5건 추가)
+웹 빌드 산출물:   npm run build:web     dist/ ~2.1MB
+```
+
+**소셜 로그인 아키텍처 (부수적 완성)**
+
+이전 단계에서 카카오를 추가했고, 이번에 구글도 지원하도록 일반화:
+
+- `signInWithSocial(provider: 'kakao' | 'google' | 'apple')`
+- `SOCIAL_PROVIDERS` 맵에 메타데이터 집중 (라벨, 색, 프로필명 폴백)
+- 화면은 `enabledSocialProviders()` 로 활성 목록을 받아 버튼 동적 생성
+- mock 저장소도 공급자별 계정 분리 (kakao@, google@)
+  — 같은 계정으로 공유하면 provider 전환 시 다른 사람 기록이 보이는 버그 가능
+
+효과: 공급자 추가 = env 플래그 한 줄 + map 한 줄. 향후 Apple 로그인도 최소 변경.
+
+**문서 반영**
+
+- `docs/06_deployment.md` B-3 전면 갱신 — 2026년 Cloudflare Workers 흐름 기준
+- `docs/09_android_release.md` 에 Redirect URL 등록 단계 추가
+
+**다음 (사용자 계정 작업)**
+
+1. Supabase → Authentication → URL Configuration
+   - Redirect URLs: https://health-care-app-development.impact2027.workers.dev/
+   - 모바일: carenote://
+
+2. Kakao / Google Console → Supabase Providers 설정
+   - REST API 키, Redirect URI 등록
+
+3. 환경변수 `EXPO_PUBLIC_KAKAO_LOGIN=on` / `EXPO_PUBLIC_GOOGLE_LOGIN=on`
+   - git push → 자동 재배포
+
+4. 실제 로그인 테스트 (웹 + 모바일)
+
+**특이사항**
+
+- wrangler.jsonc는 이미 있던 public/_headers, _redirects와 함께 Cloudflare가
+  자동으로 처리한다 — Workers 정적 자산이 두 파일을 네이티브 지원하므로
+  wrangler.jsonc에서 따로 설정할 필요 없음.
+- 오늘 배포 중 Cloudflare 프로젝트명 미매칭 = 네이티브 드라이버 문제처럼 보였지만
+  실은 설정 불일치 문제였음. 정확히 읽는 것이 중요.
+- 우리 앱은 Supabase (REST 도메인) + 소셜 OAuth (팝업) + 서명 URL (data URI)
+  을 함께 쓰므로 CSP를 일부러 넣지 않았다 (실배포에서 실제 요청을 본 뒤
+  connect-src만 좁혀야 함).
+---
+
+## 2026-08-23 — GitHub 개발 버전관리·체크포인트 품질 게이트 정착 (이번 커밋)
+
+**한 일**
+- `docs/development-workflow.md`에 에이전트별 worktree·전용 브랜치, `feat`/`fix`/
+  `chore` 등 브랜치 규칙, 작은 원자 커밋과 검증 가능한 체크포인트 push, 장기 작업의
+  Draft PR 운영 기준을 문서화.
+- PR 증거(기준/최종 SHA·검증·위험·롤백), rebase/충돌/rollback, secrets·건강정보
+  노출 금지, 구현자/리뷰어 분리 및 `main` 병합·settings 변경의 캡틴 승인 원칙을 명시.
+- PR 템플릿을 추가하고 CI에 독립 `e2e-tests`·`gating-tests` 상태를 추가해 E2E 137건과
+  구독 게이팅 41건을 PR 자동 검증에 포함. branch protection의 필수 상태·별도 승인 권고도 문서화.
+
+**결정과 이유**
+- 큰 단일 커밋과 로컬에만 남은 작업으로 인한 손실을 피하기 위해, 독립적으로 검증 가능한
+  작은 단위마다 원격 checkpoint를 남기고 장기 작업은 Draft PR로 조기 가시화한다.
+- 기존 `typecheck`/RLS CI만으로는 저장소 계층과 구독 게이팅 회귀를 막지 못하므로,
+  이미 로컬에서 유지되는 두 스모크를 **서로 독립된** required-status 후보로 추가했다.
+
+**검증**
+- `npm ci` 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
+  권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 공동관리 RLS·대상자 생성 원자성·감사 무결성 강화 (이번 커밋)
+
+**한 일**
+- `schema_security.sql`을 추가해 `children` 직접 INSERT와 `guardian_child` 직접
+  INSERT/UPDATE 정책을 제거하고, `create_recipient(jsonb)` 단일 definer RPC가
+  대상자·최초 owner·만 나이 기준 필수 동의를 원자적으로 생성하도록 변경했다.
+- 초대/역할 변경은 `invite_guardian`/`set_guardian_role` RPC로 강제했다. caller·owner·
+  역할·구독 한도를 검증하고 advisory transaction lock으로 동시 요청을 직렬화하며,
+  재초대는 멱등적으로 처리한다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하고 이후 변경할 수 없도록 RLS + trigger를 추가했다. Supabase repo도 새 대상자
+  생성/역할 변경 RPC를 사용하도록 바꿨다.
+- 적용 순서, 기존 데이터 호환, 비상 롤백 SQL과 제한을 `docs/11_rls_data_integrity.md`에
+  문서화하고 DB 스키마 문서에서 링크했다. RLS 통합 테스트는 직접 삽입/권한 변경,
+  부분 실패 고아 행, 비소유자, 작성자 위조 INSERT/UPDATE 공격을 포함하도록 확장했다.
+
+**결정과 이유**
+- 대상자·owner·동의를 클라이언트의 여러 요청으로 나누면 네트워크/한도 실패가 고아
+  행 또는 동의 누락으로 남을 수 있으므로 서버 트랜잭션이 경계를 소유한다.
+- 감사 작성자는 UI가 아니라 DB가 신뢰 경계여야 하므로, 앱이 임의 UUID를 보내도
+  `auth.uid()`와 불일치하면 거부한다. owner 이전은 별도 보안 설계가 필요한 범위라
+  계속 비범위로 유지한다.
+
+**검증**
+- `npm ci` 완료 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (`dist/`, web bundle 2.54 MB), `git diff --check` 통과.
+- 로컬 PostgreSQL/`psql`이 없고 Docker daemon도 실행 중이 아니어서, 확장된
+  `supabase/tests/rls_test.sql`의 실제 PostgreSQL 16 실행은 이 작업 환경에서
+  수행하지 못했다. 스테이징/CI의 fresh DB에서 반드시 먼저 실행한다.
+
+**다음**
+- 스테이징 Supabase 또는 PostgreSQL 16에서 `rls_test.sql`을 실행해 migration SQL과
+  실제 auth/storage 권한을 검증한 뒤, 운영 적용은 별도 승인으로 진행한다.
+
+---
+
+## 2026-08-23 — P0 RLS 원격 체크포인트·GitHub PostgreSQL 16 검증 (이번 커밋)
+
+**한 일**
+- 공용 GitHub credential helper를 사용해 `fix/p0-rls-data-integrity`의 원격 SHA가
+  로컬 구현 커밋과 일치함을 확인하고, 검증된 PR #2 브랜치 대상으로 Draft PR #3을 유지했다.
+- GitHub CI fresh PostgreSQL 16 환경에서 확장한 `rls_test.sql`을 포함한 전체 품질 게이트를
+  재확인했다. 이는 이 작업 환경에서 `psql`/Docker daemon 부재로 남아 있던 로컬 SQL 실행
+  제약을 해소하는 원격 검증 증거다.
+
+**검증**
+- 구현 체크포인트(불변): `563abe982b543fccee374b8988d1f9e5fcfe38bd`.
+- PR HEAD는 후속 검증·문서 커밋에 따라 이동하므로 GitHub PR의 현재 head SHA를 기준으로 확인한다.
+- Draft PR #3: `fix/p0-rls-data-integrity` → `chore/git-development-workflow`.
+- 당시 GitHub `rls-test` green은 `psql | tee`의 종료 상태 누락으로 SQL 조기 종료를 숨긴
+  false-green이었다. 후속 보정에서 pipefail·완료 마커·정확한 PASS 수 검증을 추가한다.
+- Cloudflare Workers build PASS.
+
+**다음**
+- 독립 라쳇 보안 리뷰에서 RPC 권한·원자성·감사 위조 공격 시나리오를 별도 clean checkout으로
+  재검증한다. 운영 migration 적용과 `main` 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — RLS CI false-green 제거·공격 회귀 보강
+
+**한 일**
+- RLS CI에 `pipefail`을 적용하고 stderr까지 캡처해 `psql` 오류가 즉시 job 실패가 되도록 했다.
+  SQL 끝의 `RLS_SUITE_COMPLETE expected=68` 도달 1회, `PASS 68/68`, `FAIL 0`을 모두 검증해
+  조기 종료나 일부 실행이 green이 될 수 없게 했다.
+- Supabase 권한 모델처럼 `authenticated`에 `auth` schema USAGE를 부여하고 `anon` 역할을
+  별도로 셈했다. 신규 SECURITY DEFINER RPC 3개의 고정 search_path, authenticated 전용
+  EXECUTE grant, anon의 실제 호출 거부를 실행형 테스트로 검증한다.
+- 동일 id 네트워크 재시도의 중복 없음과, test-only guardian trigger가 children INSERT 다음에
+  실패할 때 children/관계/동의가 모두 rollback되는 실제 중간 실패를 추가했다.
+
+**결정과 이유**
+- 로그에 `FAIL` 문자열이 없다는 것만으로는 테스트 완주를 증명하지 못한다. 실행기 종료 상태,
+  명시적 마지막 마커, 예상 assertion 수를 독립적으로 모두 확인해야 한다.
+- 기존 quota 실패는 children INSERT 전에 발생하므로 트랜잭션 rollback 증거가 아니었다.
+  이번 fault injection은 다음 쓰기에서 실패시켜 PostgreSQL 함수 호출 전체 원자성을 직접 검증한다.
+
+**검증**
+- 이 엔트리의 수치는 현재 PR HEAD를 로컬 및 GitHub fresh PostgreSQL 16에서 재검증한 뒤
+  PR 본문과 CI 로그 URL에 기록한다. 운영 DB에는 적용하지 않는다.
+
+---
+
+## 2026-08-23 — P0 서버 동의 증빙·완전 탈퇴 backend 계약 (이번 커밋)
+
+**한 일**
+- `schema_consent_deletion.sql`에 버전형 문서 레지스트리와 계정/대상자 불변 동의 증빙을 추가했다. 새 대상자 동의는 trigger로 자동 캡처하고, 재동의·철회·계정 약관 동의는 authenticated RPC로만 수행하게 했다.
+- `request_account_deletion(dry_run)`이 `sub` 일치 및 10분 이내 `reauthenticated_at` JWT claim을 확인하고, dry-run·멱등 job·비식별 감사·partial retry 경계를 만들도록 구현했다.
+- `delete-account` Edge Function이 공유 token 회수 → Storage → 소유 관계형 데이터 → Auth 순서를 수행한다. 공동 관리 대상자는 보존하되 탈퇴 계정이 작성한 records/reports와 파일은 제거해 FK로 Auth 삭제가 막히지 않게 했다.
+- fresh PG 공격 회귀(직접 증빙 쓰기, viewer 증빙 생성, 알려지지 않은 문서 버전, 재인증 없는 요청, dry-run, 멱등성, 타인 job 비노출, claim 주체 바꿔치기, 탈퇴 뒤 쓰기 차단)를 추가하고 CI의 RLS expected count를 83으로 올렸다. 배포/claim hook/롤백은 `docs/12_consent_account_deletion.md`에 문서화했다.
+
+**결정과 이유**
+- 과거 동의의 의미를 현재 앱 라벨로 해석하지 않도록 동의 당시의 항목 배열을 snapshot으로 남긴다. 확인할 수 없는 과거 문서 버전은 임의 증빙을 만들지 않는다.
+- Storage signed URL은 이미 발급된 뒤 즉시 회수할 수 없으므로 새 URL 발행을 먼저 막는 share token 회수를 첫 단계로 둔다. 완료 job에서 user UUID를 NULL로 소거해 운영 감사가 불필요한 식별자를 장기 보관하지 않게 했다.
+
+**검증**
+- `npm ci` 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (web bundle 2.54 MB), `git diff --check` 통과.
+- 이 환경에는 `psql`/PostgreSQL 16 및 `deno`/Supabase CLI가 없어 새 `rls_test.sql` 83건과 Edge Function은 로컬 실행하지 못했다. Draft PR의 GitHub PostgreSQL 16 CI와 스테이징 dry-run에서 반드시 확인한다.
+
+**다음**
+- client UI/repo 호출을 새 동의 RPC와 탈퇴 Edge Function 계약으로 바꾸는 작업은 PR #4 충돌 방지를 위해 별도 카드에서 수행한다. 운영 migration·실사용자 삭제·secrets 설정·main 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — P0 동의/탈퇴 RLS false-green 직접 복구
+
+**한 일**
+- `record_recipient_consent`와 `record_account_consent`의 함수 인자 `document_version`을 명시적으로 분리하고 문서 테이블 별칭을 사용해 PL/pgSQL column/parameter ambiguity를 제거했다.
+- 계정 약관 증빙 UPDATE는 명시적인 실패 `WITH CHECK (false)` RLS 정책으로 append-only를 강제했다. 성인 대상자 철회 fixture는 직접 UPDATE가 아니라 권한 검증 RPC를 호출하도록 맞췄다.
+- `RLS_SUITE_COMPLETE`와 CI expected count를 모두 93으로 동기화했다. Edge Function Deno typecheck도 delete-account client 타입과 expiration webhook row를 보정해 통과시켰다.
+
+**검증**
+- GitHub Actions child run `32643540040`의 `rls-test` REST API 로그를 직접 읽어 8개 FAIL의 원인을 확인했다.
+- `npm run typecheck` 통과, `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npm run build:web` 통과, Deno Edge checks 통과, `git diff --check` 통과.
+- 이 환경에는 local PostgreSQL/psql 및 실행 중인 Docker daemon이 없어 fresh PostgreSQL 16 RLS는 실행하지 못했다. push 후 GitHub Actions의 fresh PostgreSQL 16 job을 실제 근거로 확인한다.
+
+**다음**
+- CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.
+
+---
+
+## 2026-08-23 — 공유 링크 발행자 회수·트래픽 독립 audit 보존 계약
+
+**한 일**
+- 공유 링크에 서버가 결정한 `issued_by`를 기록하고, guardian 관계 제거 trigger가 같은 트랜잭션에서 해당 발행자의 활성 링크를 회수하도록 했다. consume은 발행자가 현재 owner/editor인지도 재검사한다.
+- fresh PG 공격 회귀로 owner 제거, editor self-leave, Auth 계정 삭제 cascade 뒤의 service-role consume 차단을 각각 검증한다.
+- 성공/거절 audit은 링크별 분당 한 표본으로 제한하고, `run_scheduled_share_link_audit_retention()`은 1,000행 배치를 최대 100회(시간당 100,000행) drain한다. `supabase/retention_schedule.sql`은 pg_cron 시간당 실행을 별도 승인 배포 계약으로 버전 관리한다. 이 변경은 스케줄을 배포하거나 운영 DB를 변경하지 않는다.
+- 내부 SECURITY DEFINER helper는 PUBLIC/anon/authenticated에서 EXECUTE를 회수하고, idle expiry, backlog>1,000 반복 drain, helper privilege denial을 fresh PG 회귀에 추가했다.
+
+**결정과 이유**
+- bearer URL의 발행 당시 권한만 신뢰하지 않는다. 관계 해제·계정 삭제에 연결된 즉시 회수와 consume 시점 재검사를 함께 적용해 cascade 누락이나 비정상 삭제 경로도 차단한다.
+- retention은 성공 트래픽에 의존하지 않으며, 예약 작업의 bounded 실행은 WAL/락을 제한하면서 단일 링크의 허용 최대 audit 입력(성공/거절 각 60, 총 120행/시간)을 크게 상회한다.
+
+**검증**
+- 아래 커밋의 로컬/원격 실행 결과와 PR #6 CI run은 Kanban handoff에 정확히 기록한다.
+- 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — 공유 링크 legacy fail-closed·전역 aggregate audit 입력 계약
+
+**한 일**
+- stage4 migration은 `issued_by IS NULL`인 활성 hashed legacy link를 report 작성자에게 추정 귀속하지 않고 즉시 revoke한다. consume은 NULL issuer를 계속 fail-closed로 처리한다.
+- 신규 audit은 link별 raw INSERT 대신 UTC 시간대별 전역 outcome aggregate(issued/granted/rate_limited/revoked) upsert로 기록한다. 따라서 허용된 새 audit 행 입력은 전역 정확히 최대 4행/시간이며, event count만 증가한다.
+- hourly scheduled retention은 aggregate 최대 1,000행과 legacy raw audit 최대 100×1,000행을 bounded drain한다. `share_link_audit_max_rows_per_hour() = 4` 계약을 runner 및 fresh-PG regression으로 확인한다.
+- fresh-PG에 legacy NULL-issuer migration 재적용 후 revoke/consume 차단, 200회 issuance flood의 한 aggregate row 수렴, idle aggregate retention, helper privilege denial, capacity contract를 추가했다. CI RLS expected assertion count를 141로 동기화했다.
+
+**결정과 이유**
+- 과거 link의 실제 issuer를 증명할 수 없으면 작성자 귀속은 권한 인수 정책이 아니라 stale authorization 재부여다. 기존 bearer URL은 안전하게 폐기하고 재발급만 허용한다.
+- 사용자·대상자 수가 커질 수 있는 환경에서 link별 sampling 상한의 합은 전역 drain과 비교할 수 없다. 식별자 없는 전역 hourly aggregate는 tenant 수·발급률과 무관하게 row admission을 수학적으로 제한한다.
+
+**검증**
+- 로컬: `npm run typecheck`, `npm run test:e2e` (137/0), `npm run test:gating` (41/0), Deno share-report contracts (6/0), Deno check, Expo web export, `git diff --check`을 실행했다.
+- local PostgreSQL 16/psql 및 Docker daemon은 사용할 수 없으므로 fresh-PG regression은 push 뒤 GitHub CI로 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.

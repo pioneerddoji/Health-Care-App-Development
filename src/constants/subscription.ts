@@ -1,12 +1,12 @@
 // 구독 3티어 정의 — 게이팅 원칙: 핵심 안전 기능(기록, 차트, 알레르기, 접종 알림,
 // PDF 직접 공유, 동의/삭제)은 전 티어 무료. 규모·편의 기능만 티어로 나눈다.
-// 서버 강제: 아이 수(children 트리거), 공동 보호자 수(invite_guardian RPC).
+// 서버 강제: 대상자 수(children 트리거), 공동 보호자 수(invite_guardian RPC).
 import type { SubscriptionTier } from '../types';
 
 export interface TierEntitlements {
-  /** 등록 가능한 아이 수 (Infinity = 무제한) */
+  /** 등록 가능한 대상자 수 — 아이·성인 합산 (Infinity = 무제한) */
   maxChildren: number;
-  /** 아이당 초대 가능한 공동 보호자 수 */
+  /** 대상자당 초대 가능한 공동 보호자 수 */
   maxCoGuardians: number;
   /** 기록당 사진 첨부 장수 */
   maxPhotosPerRecord: number;
@@ -51,15 +51,15 @@ export const TIER_META: Record<SubscriptionTier, {
 }> = {
   free: {
     label: '무료', emoji: '🌱', priceLabel: '₩0',
-    tagline: '아이 1명의 기록·그래프·레포트, 핵심 기능 전부',
+    tagline: '가족 1명의 기록·그래프·레포트, 핵심 기능 전부',
   },
   standard: {
     label: '스탠다드', emoji: '🌿', priceLabel: `월 ${won(PRICING.standard.monthly.early)}`,
-    tagline: '아이 셋까지 + 배우자와 함께 기록',
+    tagline: '가족 셋까지 + 배우자와 함께 기록',
   },
   family: {
     label: '패밀리', emoji: '🌳', priceLabel: `월 ${won(PRICING.family.monthly.early)}`,
-    tagline: '아이·보호자 무제한 + 긴 공유 링크',
+    tagline: '가족·보호자 무제한 + 긴 공유 링크',
   },
 };
 
@@ -102,8 +102,8 @@ export const ENTITLEMENTS: Record<SubscriptionTier, TierEntitlements> = {
 
 /** 페이월 비교표용 행 정의 */
 export const FEATURE_ROWS: { label: string; value: (e: TierEntitlements) => string }[] = [
-  { label: '아이 등록', value: (e) => (e.maxChildren === Infinity ? '무제한' : `${e.maxChildren}명`) },
-  { label: '공동 보호자 초대', value: (e) => (e.maxCoGuardians === Infinity ? '무제한' : e.maxCoGuardians === 0 ? '—' : `아이당 ${e.maxCoGuardians}명`) },
+  { label: '대상자 등록', value: (e) => (e.maxChildren === Infinity ? '무제한' : `${e.maxChildren}명`) },
+  { label: '공동 보호자 초대', value: (e) => (e.maxCoGuardians === Infinity ? '무제한' : e.maxCoGuardians === 0 ? '—' : `대상자당 ${e.maxCoGuardians}명`) },
   { label: '기록당 사진', value: (e) => `${e.maxPhotosPerRecord}장` },
   { label: '대시보드 기간', value: (e) => e.dashboardPeriods.map((d) => `${d}일`).join('/') },
   { label: '레포트 기간', value: (e) => e.reportPeriods.map((d) => `${d}일`).join('/') },
