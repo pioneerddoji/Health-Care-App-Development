@@ -74,6 +74,10 @@ create policy "read recipient consent evidence" on recipient_consent_evidence
   for select using (my_role(child_id) is not null);
 create policy "read own account consent evidence" on account_consent_evidence
   for select using (subject_id = auth.uid());
+-- An explicit failed UPDATE check turns a client mutation into an RLS error rather
+-- than a silent zero-row update; evidence is append-only after server capture.
+create policy "account consent evidence is immutable" on account_consent_evidence
+  for update using (subject_id = auth.uid()) with check (false);
 
 create or replace function expected_recipient_consent_subject(cid uuid, consent_type text)
 returns text
@@ -144,7 +148,7 @@ drop policy if exists "grant own consent" on consents;
 drop policy if exists "revoke own consent" on consents;
 
 create or replace function record_recipient_consent(
-  cid uuid, consent_type text, document_version text, subject_role text
+  cid uuid, consent_type text, p_document_version text, subject_role text
 ) returns public.consents
 language plpgsql security definer set search_path = public as $$
 declare
@@ -159,8 +163,8 @@ begin
      or subject_role not in ('guardian', 'self', 'delegated_adult') then
     raise exception '동의 유형 또는 주체가 올바르지 않습니다' using errcode = '22023';
   end if;
-  select * into doc from consent_documents
-    where scope = 'recipient' and document_type = consent_type and document_version = record_recipient_consent.document_version;
+  select * into doc from consent_documents d
+    where d.scope = 'recipient' and d.document_type = consent_type and d.document_version = p_document_version;
   if not found then
     raise exception '서버에 등록되지 않은 동의 문서 버전입니다' using errcode = '22023';
   end if;
@@ -168,7 +172,7 @@ begin
     raise exception '동의 유형과 주체가 일치하지 않습니다' using errcode = '22023';
   end if;
   insert into consents(child_id, guardian_id, type, doc_version)
-  values (cid, actor, consent_type, document_version)
+  values (cid, actor, consent_type, p_document_version)
   returning * into created;
   return created;
 end $$;
@@ -193,7 +197,7 @@ begin
 end $$;
 
 create or replace function record_account_consent(
-  consent_type text, document_version text, subject_role text
+  consent_type text, p_document_version text, subject_role text
 ) returns public.account_consent_evidence
 language plpgsql security definer set search_path = public as $$
 declare
@@ -204,13 +208,13 @@ begin
   if actor is null or subject_role <> 'self' then
     raise exception '본인 약관 동의만 기록할 수 있습니다' using errcode = '42501';
   end if;
-  select * into doc from consent_documents
-    where scope = 'account' and document_type = consent_type and document_version = record_account_consent.document_version;
+  select * into doc from consent_documents d
+    where d.scope = 'account' and d.document_type = consent_type and d.document_version = p_document_version;
   if not found then
     raise exception '서버에 등록되지 않은 약관 문서 버전입니다' using errcode = '22023';
   end if;
   insert into account_consent_evidence(subject_id, document_type, document_version, document_items, subject_role, accepted_at)
-  values (actor, consent_type, document_version, doc.document_items, subject_role, now())
+  values (actor, consent_type, p_document_version, doc.document_items, subject_role, now())
   returning * into created;
   return created;
 end $$;

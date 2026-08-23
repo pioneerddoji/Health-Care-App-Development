@@ -76,10 +76,10 @@ Deno.serve(async (req) => {
   }
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  const row = ACTIVATE.has(type)
+  const row: { user_id: string; tier: 'free' | 'standard' | 'family'; status: 'active' | 'expired'; store: string | null; expires_at: string | null; updated_at: string } = ACTIVATE.has(type)
     ? {
         user_id: userId,
-        tier,
+        tier: tier!,
         status: 'active',
         store: event.store?.toLowerCase() === 'app_store' ? 'app_store' : 'play_store',
         expires_at: event.expiration_at_ms ? new Date(event.expiration_at_ms).toISOString() : null,
@@ -87,7 +87,10 @@ Deno.serve(async (req) => {
       }
     : {
         user_id: userId,
+        tier: 'free',
         status: 'expired',
+        store: null,
+        expires_at: null,
         updated_at: new Date().toISOString(),
       };
 

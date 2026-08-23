@@ -3,7 +3,7 @@
 // 배포: supabase functions deploy delete-account
 // 이 함수는 JWT 검증을 켠 상태로 배포한다. service role key는 서버 내부에서만 사용하며
 // 응답/로그/감사 detail에 건강정보·경로·토큰을 기록하지 않는다.
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
@@ -19,7 +19,7 @@ const json = (body: Record<string, unknown>, status = 200) =>
 
 const unique = <T>(values: T[]) => [...new Set(values)];
 
-async function removePrefix(admin: ReturnType<typeof createClient>, bucket: string, prefix: string) {
+async function removePrefix(admin: SupabaseClient<any, 'public', 'public', any, any>, bucket: string, prefix: string) {
   const files: string[] = [];
   let offset = 0;
   while (true) {

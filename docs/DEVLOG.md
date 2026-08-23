@@ -1404,3 +1404,20 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - client UI/repo 호출을 새 동의 RPC와 탈퇴 Edge Function 계약으로 바꾸는 작업은 PR #4 충돌 방지를 위해 별도 카드에서 수행한다. 운영 migration·실사용자 삭제·secrets 설정·main 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — P0 동의/탈퇴 RLS false-green 직접 복구
+
+**한 일**
+- `record_recipient_consent`와 `record_account_consent`의 함수 인자 `document_version`을 명시적으로 분리하고 문서 테이블 별칭을 사용해 PL/pgSQL column/parameter ambiguity를 제거했다.
+- 계정 약관 증빙 UPDATE는 명시적인 실패 `WITH CHECK (false)` RLS 정책으로 append-only를 강제했다. 성인 대상자 철회 fixture는 직접 UPDATE가 아니라 권한 검증 RPC를 호출하도록 맞췄다.
+- `RLS_SUITE_COMPLETE`와 CI expected count를 모두 93으로 동기화했다. Edge Function Deno typecheck도 delete-account client 타입과 expiration webhook row를 보정해 통과시켰다.
+
+**검증**
+- GitHub Actions child run `32643540040`의 `rls-test` REST API 로그를 직접 읽어 8개 FAIL의 원인을 확인했다.
+- `npm run typecheck` 통과, `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npm run build:web` 통과, Deno Edge checks 통과, `git diff --check` 통과.
+- 이 환경에는 local PostgreSQL/psql 및 실행 중인 Docker daemon이 없어 fresh PostgreSQL 16 RLS는 실행하지 못했다. push 후 GitHub Actions의 fresh PostgreSQL 16 job을 실제 근거로 확인한다.
+
+**다음**
+- CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.
