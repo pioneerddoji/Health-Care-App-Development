@@ -285,6 +285,25 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
   await repo.completeCareTask(task.id);
   const completed = await repo.listCareTasks(child.id);
   ok(!!completed.find((t) => t.id === task.id)?.completedAt, '진료 후 지시 완료 추적');
+  const pendingBeforeRevocation = await repo.createCareTask({
+    childId: child.id, recordId: record.id, title: '동의 철회 전 생성한 안내', assigneeId: assignee.guardianId,
+  });
+
+  // RLS와 동일하게 민감정보 동의가 철회되면 공동 확인/후속 조치도 성공으로
+  // 보이면 안 된다. 재동의 뒤에만 다시 진행할 수 있어야 한다.
+  const rejects = async (operation: () => Promise<void>) => {
+    try { await operation(); return false; } catch { return true; }
+  };
+  await repo.revokeSensitiveConsent(child.id);
+  ok(await rejects(() => repo.acknowledgeRecord(record.id)),
+    '동의 철회 뒤 기록 확인은 fail-closed');
+  ok(await rejects(() => repo.completeCareTask(pendingBeforeRevocation.id)),
+    '동의 철회 뒤 기존 진료 후 안내 완료도 fail-closed');
+  const revokedTask = await repo.createCareTask({
+    childId: child.id, recordId: record.id, title: '철회 전 생성한 안내', assigneeId: assignee.guardianId,
+  }).catch(() => undefined);
+  ok(revokedTask === undefined, '동의 철회 뒤 진료 후 안내 생성은 fail-closed');
+  await repo.grantSensitiveConsent(child.id);
 }
 
 // ── 인증 계약 직접 테스트: 외부 SDK 대신 주입 가능한 최소 test double 사용 ──

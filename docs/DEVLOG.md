@@ -1730,3 +1730,35 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   (891 modules), `git diff --check` 통과.
 - 이 runner에는 `psql` 및 Docker daemon이 없어 fresh PostgreSQL 16 fixture는 로컬 실행할 수 없다.
   push 뒤 current-head GitHub `rls-test`가 `PASS 181/181, FAIL 0, COMPLETION 1`을 충족해야 한다.
+
+---
+
+## 2026-08-24 — P0 내부 WOW 여정 fail-closed mock 정합성 보강
+
+**한 일**
+- 승인된 PR #13 head `f14081e`를 기준으로 공동 확인·진료 후 안내의 UI/Repo/RLS 경계를
+  재감사했다. 기존 화면은 기록 확인, editor/viewer 구분, 담당/기한/완료, 수정 가능한
+  병원 전달 메모 미리보기와 의료 판단 아님 고지를 이미 제공하며, 서버 RLS는
+  acknowledgement/task 생성·완료에 유효한 민감정보 동의를 요구한다.
+- `memoryRepo`도 RLS와 같게 동의 철회 후 기록 확인 acknowledgement와 기존 care-task의
+  완료 전이를 모두 차단하도록 보강했다. 이로써 데모 fixture가 서버에서 실패할 동작을
+  성공으로 보이는 경로를 만들지 않는다.
+- E2E에 두 회귀를 추가했다: 동의 철회 뒤 acknowledgement, 그리고 철회 전에 만든
+  care-task의 완료가 모두 fail-closed여야 하며 재동의 뒤에만 후속 진행이 가능하다.
+
+**결정과 이유**
+- P0 범위에서는 이미 존재하는 공동관리·브리핑 경로를 재작성하지 않았다. 최소 변경으로
+  mock/RLS의 동의 게이트를 일치시켜, 내부 비파괴 fixture의 성공 표시가 서버 확정 전에는
+  절대 나오지 않게 했다.
+- 실제 참여자 모집·사례비·외부 테스트, 운영 DB migration/data access, OAuth/결제,
+  secrets/DNS, production/store 배포와 main 병합은 수행하지 않았다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, `npm run test:e2e` **PASS 182 / FAIL 0**,
+  `npm run test:gating` **PASS 41 / FAIL 0**, analytics contract **PASS 37 / FAIL 0**.
+- `npx --yes deno test` Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check`,
+  `npx expo export --platform web --output-dir /tmp/carenote-p0-wow-web --clear`
+  **PASS 891 modules**, `git diff --check` 통과.
+- 이 runner에는 native `deno`/`psql`이 없어 Deno는 `npx --yes deno`로 실행했고 fresh
+  PostgreSQL 16 RLS fixture는 로컬 실행하지 못했다. current-head GitHub CI의 fresh PG16
+  completion marker 재확인이 후속 독립 ratchet review의 필수 조건이다.

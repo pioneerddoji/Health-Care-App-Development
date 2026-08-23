@@ -357,6 +357,9 @@ const base: Repo = {
     if (!record) throw new Error('기록을 찾을 수 없습니다');
     const guardianId = guardian?.id ?? 'guardian-1';
     if (!guardians.some((g) => g.childId === record.childId && g.guardianId === guardianId)) throw new Error('이 기록을 확인할 권한이 없습니다');
+    // Supabase RLS의 has_sensitive_consent(record.child_id)와 같은 gate다.
+    // 동의를 철회한 뒤에는 기존 건강 기록의 전달 상태도 새로 남기지 않는다.
+    if (!consentOf(record.childId)) throw new Error('건강정보 수집 동의가 철회된 상태입니다. 재동의 후 기록을 확인할 수 있어요.');
     if (!data.recordAcknowledgements.some((a) => a.recordId === recordId && a.guardianId === guardianId)) {
       data.recordAcknowledgements.push({ recordId, guardianId, acknowledgedAt: new Date().toISOString() });
     }
@@ -388,6 +391,8 @@ const base: Repo = {
     const guardianId = guardian?.id ?? 'guardian-1';
     const role = myRoles()[task.childId] ?? 'owner';
     if (role === 'viewer' || (task.assigneeId && task.assigneeId !== guardianId && role !== 'owner')) throw new Error('이 지시를 완료할 권한이 없습니다');
+    // RLS update policy의 has_sensitive_consent(child_id)를 mock에도 보존한다.
+    if (!consentOf(task.childId)) throw new Error('건강정보 수집 동의가 철회된 상태입니다. 재동의 후 안내를 완료할 수 있어요.');
     task.completedAt = new Date().toISOString();
   },
 
