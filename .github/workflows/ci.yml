@@ -69,9 +69,10 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Run RLS integration tests
+      - name: Run PostgreSQL 16 RLS + account-deletion fixture
         working-directory: supabase/tests
         run: |
+          echo "RLS_PG16_ACCOUNT_DELETION_FIXTURE=enabled"
           psql "postgresql://postgres:postgres@localhost:5432/postgres" \
             -v ON_ERROR_STOP=1 -f rls_test.sql | tee rls_out.txt
           echo "PASS=$(grep -c PASS rls_out.txt || true) FAIL=$(grep -c FAIL rls_out.txt || true)"

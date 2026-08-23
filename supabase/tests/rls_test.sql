@@ -13,6 +13,8 @@
 -- ── Supabase 환경 셈 (auth / storage 스키마) ──
 create schema auth;
 create table auth.users (id uuid primary key, email text unique);
+-- Session sentinel makes retry safety observable in the local PostgreSQL fixture.
+create table auth.sessions (id uuid primary key default gen_random_uuid(), user_id uuid not null references auth.users(id) on delete cascade);
 create function auth.uid() returns uuid language sql stable
   as $$ select nullif(current_setting('test.uid', true), '')::uuid $$;
 create schema storage;
@@ -166,3 +168,73 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 -- 삭제한 대상자의 기록만 사라져야 한다 (다른 대상자의 기록은 남아 있어야 정상)
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
+
+-- ── 계정 탈퇴: 실제 FK/RLS fixture (A-owned + B-owned shared) ──
+-- 서비스 역할 Edge Function의 DB 단계와 같은 명시 삭제 정책을 실제 PostgreSQL 16 FK에서
+-- 검증한다. 공유 대상자는 보존하고 A가 작성한 행/Storage만 지우며, 작성자를 재귀속하지 않는다.
+reset role;
+insert into profiles(id, name) values ('cccccccc-cccc-cccc-cccc-cccccccccccc', '외부인') on conflict do nothing;
+insert into children(id, name, birth_date, sex) values
+  ('66666666-6666-6666-6666-666666666666', 'B 소유 공유 대상자', '2018-01-01', 'female'),
+  ('77777777-7777-7777-7777-777777777777', 'A 소유 탈퇴 대상자', '2019-01-01', 'male');
+insert into guardian_child(guardian_id, child_id, role) values
+  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', '66666666-6666-6666-6666-666666666666', 'owner'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '66666666-6666-6666-6666-666666666666', 'editor'),
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', '66666666-6666-6666-6666-666666666666', 'viewer'),
+  ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '77777777-7777-7777-7777-777777777777', 'owner');
+-- A의 초대 출처는 nullable metadata라 안전하게 NULL로 바꿔야 profile FK가 남지 않는다.
+update guardian_child set invited_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  where guardian_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc' and child_id = '66666666-6666-6666-6666-666666666666';
+insert into consents(child_id, guardian_id, type) values
+  ('66666666-6666-6666-6666-666666666666', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'sensitive_health'),
+  ('77777777-7777-7777-7777-777777777777', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health');
+insert into daily_records(id, child_id, author_id, record_date, type) values
+  ('10101010-1010-1010-1010-101010101010', '66666666-6666-6666-6666-666666666666', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note'),
+  ('20202020-2020-2020-2020-202020202020', '66666666-6666-6666-6666-666666666666', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'meal'),
+  ('30303030-3030-3030-3030-303030303030', '77777777-7777-7777-7777-777777777777', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note');
+insert into record_files(record_id, storage_path, mime_type) values
+  ('10101010-1010-1010-1010-101010101010', '66666666-6666-6666-6666-666666666666/10101010-1010-1010-1010-101010101010/a.jpg', 'image/jpeg'),
+  ('20202020-2020-2020-2020-202020202020', '66666666-6666-6666-6666-666666666666/20202020-2020-2020-2020-202020202020/b.jpg', 'image/jpeg');
+insert into reports(id, child_id, created_by, period_start, period_end, storage_path) values
+  ('40404040-4040-4040-4040-404040404040', '66666666-6666-6666-6666-666666666666', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, current_date, '66666666-6666-6666-6666-666666666666/40404040-4040-4040-4040-404040404040.pdf'),
+  ('50505050-5050-5050-5050-505050505050', '66666666-6666-6666-6666-666666666666', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, current_date, '66666666-6666-6666-6666-666666666666/50505050-5050-5050-5050-505050505050.pdf');
+insert into storage.objects(bucket_id, name) values
+  ('record-files', '66666666-6666-6666-6666-666666666666/10101010-1010-1010-1010-101010101010/a.jpg'),
+  ('record-files', '66666666-6666-6666-6666-666666666666/20202020-2020-2020-2020-202020202020/b.jpg'),
+  ('reports', '66666666-6666-6666-6666-666666666666/40404040-4040-4040-4040-404040404040.pdf'),
+  ('reports', '66666666-6666-6666-6666-666666666666/50505050-5050-5050-5050-505050505050.pdf');
+insert into auth.sessions(id, user_id) values ('aaaaaaaa-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+
+-- Intermediate DB failure: A's first DB operation may have completed, but Auth/session survive.
+delete from record_files where record_id = '10101010-1010-1010-1010-101010101010';
+delete from daily_records where id = '10101010-1010-1010-1010-101010101010';
+select expect_error($q$do $body$ begin raise exception 'injected database failure'; end $body$$q$, '탈퇴 DB 중간 실패 주입');
+select case when (select count(*) from auth.users where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 1 then 'PASS DB 실패 후 Auth 미삭제' else 'FAIL DB 실패가 Auth를 삭제함' end;
+select case when (select count(*) from auth.sessions where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 1 then 'PASS DB 실패 후 session 유지' else 'FAIL DB 실패가 session을 지움' end;
+
+-- Retry: exact authored Storage/rows are deleted, nullable invitation provenance is nulled,
+-- then owned descendants are removed. B-owned shared recipient and B-authored data remain.
+delete from storage.objects where bucket_id = 'record-files' and name = '66666666-6666-6666-6666-666666666666/10101010-1010-1010-1010-101010101010/a.jpg';
+delete from storage.objects where bucket_id = 'reports' and name = '66666666-6666-6666-6666-666666666666/40404040-4040-4040-4040-404040404040.pdf';
+delete from record_files where record_id in (select id from daily_records where author_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+delete from daily_records where author_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+delete from share_links where report_id in (select id from reports where created_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+delete from reports where created_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+update guardian_child set invited_by = null where invited_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+delete from children where id = '77777777-7777-7777-7777-777777777777';
+select case when (select count(*) from daily_records where author_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 0
+  and (select count(*) from reports where created_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 0
+  and (select count(*) from guardian_child where invited_by = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 0
+  then 'PASS Auth 전 profile FK 참조 0' else 'FAIL Auth 전 profile FK 참조 남음' end;
+delete from auth.users where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+select case when (select count(*) from auth.users where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 0 then 'PASS 재시도 후 Auth 삭제' else 'FAIL 재시도 Auth 삭제 실패' end;
+select case when (select count(*) from children where id = '77777777-7777-7777-7777-777777777777') = 0
+  and (select count(*) from daily_records where id = '30303030-3030-3030-3030-303030303030') = 0 then 'PASS A 소유 대상자와 descendant 삭제' else 'FAIL A 소유 descendant 잔존' end;
+select case when (select count(*) from children where id = '66666666-6666-6666-6666-666666666666') = 1
+  and (select count(*) from daily_records where id = '20202020-2020-2020-2020-202020202020') = 1
+  and (select count(*) from reports where id = '50505050-5050-5050-5050-505050505050') = 1
+  and (select count(*) from storage.objects where name like '66666666-6666-6666-6666-666666666666/20202020%') = 1
+  and (select count(*) from storage.objects where name like '66666666-6666-6666-6666-666666666666/50505050%') = 1
+  then 'PASS B 대상자와 타인 데이터 보존' else 'FAIL B 공유 데이터가 삭제됨' end;
+select case when (select count(*) from guardian_child where guardian_id = 'cccccccc-cccc-cccc-cccc-cccccccccccc' and invited_by is null) = 1
+  then 'PASS invited_by 안전 NULL 처리' else 'FAIL invited_by 정책 위반' end;

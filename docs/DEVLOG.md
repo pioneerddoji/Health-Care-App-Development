@@ -1341,3 +1341,25 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **다음**
 - 운영 Supabase에는 `delete-account`를 **아직 배포하지 않았다**. 실제 recovery URL의 Supabase
   allow-list, native 실기기, Kakao/Google OAuth, 실사용자 삭제는 별도 안전 검증이 남아 있다.
+
+---
+
+## 2026-08-23 — Ratchet round-3: 공유 대상자 탈퇴 FK 안전성
+
+**한 일 / 정책**
+- 탈퇴자는 본인이 소유한 대상자와 descendant를 삭제하되, 타인이 소유한 공유 대상자는 보존한다.
+  공유 대상자에서 탈퇴자가 작성한 `daily_records`/`reports`와 해당 정확한 Storage 경로만 완전 삭제하며,
+  작성자를 다른 보호자에게 재귀속하지 않는다.
+- `guardian_child.invited_by`는 작성자 기록이 아닌 nullable 초대 출처 메타데이터이므로 `NULL`로
+  안전하게 해제하고 FK도 `ON DELETE SET NULL`로 명시했다. DB 단계 뒤 `author_id`/`created_by`/
+  `invited_by` 참조가 0인지 확인한 뒤에만 Auth를 삭제한다.
+
+**검증**
+- Deno contract: 공유 대상자 보존·작성 data/Storage 삭제, DB 실패 시 Auth/session 보존·재시도,
+  잔여 profile FK 차단을 검증한다.
+- PostgreSQL 16 RLS fixture에 A-owned descendant, B-owned shared 대상자, A/B 작성 record/report/
+  Storage, A 초대 출처를 추가하고 보존/삭제/FK/Auth/실패 재시도를 검증한다. CI marker:
+  `RLS_PG16_ACCOUNT_DELETION_FIXTURE=enabled`.
+
+**운영 범위**
+- migration·운영 배포·실사용자 삭제·OAuth·main 병합은 수행하지 않았다.

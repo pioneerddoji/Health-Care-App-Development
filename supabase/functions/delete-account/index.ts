@@ -35,20 +35,16 @@ Deno.serve(async (request) => {
     }
     return files;
   };
-  const removeStorage: AccountDeletionService['removeStorage'] = async (bucket, childIds) => {
-    for (const childId of childIds) {
-      const files = await collectFiles(bucket, childId);
-      if (files.length) {
-        const { error } = await service.storage.from(bucket).remove(files);
-        if (error) throw error;
-      }
-    }
-  };
-  const idsFor = async (table: string, childIds: string[], column: string): Promise<string[]> => {
-    if (!childIds.length) return [];
-    const { data, error } = await service.from(table).select('id').in(column, childIds);
+  const idsFor = async (table: 'daily_records' | 'reports', column: 'author_id' | 'created_by'): Promise<string[]> => {
+    const { data, error } = await service.from(table).select('id').eq(column, userId);
     if (error) throw error;
     return (data ?? []).map((row: { id: string }) => row.id);
+  };
+  const pathsFor = async (table: 'record_files' | 'reports', ids: string[], column: 'record_id' | 'id'): Promise<string[]> => {
+    if (!ids.length) return [];
+    const { data, error } = await service.from(table).select('storage_path').in(column, ids).not('storage_path', 'is', null);
+    if (error) throw error;
+    return (data ?? []).map((row: { storage_path: string }) => row.storage_path);
   };
   const deletionService: AccountDeletionService = {
     listOwnedChildIds: async () => {
@@ -57,13 +53,41 @@ Deno.serve(async (request) => {
       if (error) throw error;
       return (data ?? []).map((row: { child_id: string }) => row.child_id);
     },
-    listRecordIds: (childIds) => idsFor('daily_records', childIds, 'child_id'),
-    listReportIds: (childIds) => idsFor('reports', childIds, 'child_id'),
-    removeStorage,
+    listAuthoredRecordIds: () => idsFor('daily_records', 'author_id'),
+    listAuthoredReportIds: () => idsFor('reports', 'created_by'),
+    listRecordStoragePaths: (recordIds) => pathsFor('record_files', recordIds, 'record_id'),
+    listReportStoragePaths: (reportIds) => pathsFor('reports', reportIds, 'id'),
+    removeOwnedStorage: async (bucket, childIds) => {
+      for (const childId of childIds) {
+        const files = await collectFiles(bucket, childId);
+        if (!files.length) continue;
+        const { error } = await service.storage.from(bucket).remove(files);
+        if (error) throw error;
+      }
+    },
+    removeStoragePaths: async (bucket, paths) => {
+      if (!paths.length) return;
+      const { error } = await service.storage.from(bucket).remove(paths);
+      if (error) throw error;
+    },
     deleteRows: async (table, ids, column) => {
       if (!ids.length) return;
       const { error } = await service.from(table).delete().in(column, ids);
       if (error) throw error;
+    },
+    // Invitation provenance is nullable metadata: nulling it preserves no false author.
+    clearInvitedBy: async () => {
+      const { error } = await service.from('guardian_child').update({ invited_by: null }).eq('invited_by', userId);
+      if (error) throw error;
+    },
+    countProfileReferences: async () => {
+      const checks = await Promise.all([
+        service.from('daily_records').select('*', { count: 'exact', head: true }).eq('author_id', userId),
+        service.from('reports').select('*', { count: 'exact', head: true }).eq('created_by', userId),
+        service.from('guardian_child').select('*', { count: 'exact', head: true }).eq('invited_by', userId),
+      ]);
+      for (const check of checks) if (check.error) throw check.error;
+      return checks.reduce((total, check) => total + (check.count ?? 0), 0);
     },
     deleteAuthUser: async () => {
       const { error } = await service.auth.admin.deleteUser(userId);
