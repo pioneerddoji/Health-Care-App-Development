@@ -134,6 +134,8 @@ export interface Repo {
   /** 가입된 이메일로 초대 — supabase 모드는 invite_guardian RPC */
   inviteGuardian(childId: string, email: string, role: 'editor' | 'viewer'): Promise<void>;
   updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer'): Promise<void>;
+  /** 기존 editor에게만 owner를 원자적으로 이전하고, 호출자는 editor로 강등된다. */
+  transferGuardianOwnership(childId: string, guardianId: string): Promise<void>;
   removeGuardian(childId: string, guardianId: string): Promise<void>;
 }
 

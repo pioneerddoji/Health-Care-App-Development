@@ -142,6 +142,24 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   ok(!(child.id in end.roles) || end.roles[child.id] === undefined, `C${cycle} 삭제 후 역할 정리`);
 }
 
+// ── 단일 owner 소유권 이전 — 기존 editor에게만 원자적으로 넘기며 owner 공백을 만들지 않는다 ──
+{
+  const transferChild = await repo.createChild({
+    name: '소유권 이전 검증', birthDate: '2021-03-15', sex: 'female', isPreterm: false,
+    allergies: [], chronicConditions: [], surgeries: [], hospitalizations: [],
+  });
+  await repo.inviteGuardian(transferChild.id, 'ownership-helper@example.com', 'editor');
+  const target = (await repo.listGuardians(transferChild.id)).find((guardian) => !guardian.isMe)!;
+  await repo.transferGuardianOwnership(transferChild.id, target.guardianId);
+  const afterTransfer = await repo.listGuardians(transferChild.id);
+  ok(afterTransfer.filter((guardian) => guardian.role === 'owner').length === 1
+    && afterTransfer.find((guardian) => guardian.guardianId === target.guardianId)?.role === 'owner'
+    && afterTransfer.find((guardian) => guardian.isMe)?.role === 'editor',
+  '소유권 이전은 target 단일 owner와 이전 owner editor를 원자적으로 보존');
+  // 이 메모리 테스트의 현재 주체는 이제 editor다. 데모 재로그인으로 독립 후속 fixture를 복원한다.
+  await repo.signIn('demo@kidcare.app', 'password123');
+}
+
 // ── 사용자별 설정 (saveSettings 병합 저장 / loadAll 반영) ──
 const s1 = await repo.saveSettings({ dashboardOrder: ['sleep', 'temp'] });
 ok(JSON.stringify(s1.dashboardOrder) === JSON.stringify(['sleep', 'temp']), '설정 저장(dashboardOrder)');

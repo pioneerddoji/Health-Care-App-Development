@@ -482,6 +482,20 @@ const base: Repo = {
       g.childId === childId && g.guardianId === guardianId ? { ...g, role } : g);
   },
 
+  async transferGuardianOwnership(childId: string, guardianId: string) {
+    const actorId = guardian?.id ?? 'guardian-1';
+    const actor = guardians.find((g) => g.childId === childId && g.guardianId === actorId);
+    const target = guardians.find((g) => g.childId === childId && g.guardianId === guardianId);
+    if (actor?.role !== 'owner') throw new Error('대상자의 소유자만 소유권을 이전할 수 있습니다');
+    if (!target || target.role !== 'editor') throw new Error('소유권은 현재 편집자에게만 이전할 수 있습니다');
+    guardians = guardians.map((g) => {
+      if (g.childId !== childId) return g;
+      if (g.guardianId === actorId) return { ...g, role: 'editor' };
+      if (g.guardianId === guardianId) return { ...g, role: 'owner' };
+      return g;
+    });
+  },
+
   async removeGuardian(childId: string, guardianId: string) {
     guardians = guardians.filter(
       (g) => !(g.childId === childId && g.guardianId === guardianId));

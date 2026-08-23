@@ -128,4 +128,6 @@ create policy "reports rw" on reports for all using (my_role(child_id) is not nu
   확인해야 한다.
 - 성인 대상자 본인의 동의는 현재 보호자의 확인 기록(`adult_delegated`)이다. 독립적인
   성인 본인 인증/철회 요청 창구는 기존 백로그이며 이 마이그레이션이 대체하지 않는다.
-- 소유권 이전은 비범위다. owner 행은 이 RPC들로 만들거나 변경할 수 없다.
+- 소유권 이전은 `transfer_guardian_ownership(cid, target_guardian_id)`로만 수행한다.
+  현재 owner는 기존 editor에게만 원자적으로 이전할 수 있고, 이전 owner는 editor로
+  강등된다. 대상자당 owner는 항상 정확히 한 명이어야 한다.

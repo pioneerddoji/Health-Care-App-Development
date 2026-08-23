@@ -1677,3 +1677,35 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - 별도 Expo SDK migration 카드에서 Expo 호환 매트릭스에 따라 SDK·모듈·React Native를 함께
   올린 뒤 full verification과 native smoke를 거쳐 audit을 재측정한다. 그 전에는 lockfile을
   기준으로 설치하고 신뢰되지 않은 build input을 Expo CLI/Metro/prebuild에 전달하지 않는다.
+
+---
+
+## 2026-08-24 — P0 권한·삭제·내보내기 신뢰 게이트 감사·최소 보강
+
+**한 일**
+- `docs/16_trust_controls_audit.md`에 공동관리 공유 범위·권한·초대 해제·소유권 이전,
+  공유 링크 scope/authorization/expiry/revoke, 대상자/계정 삭제 dry-run·재인증·partial/retry를
+  UI·서버 계약·공격 회귀별로 대조했다.
+- 초대 버튼은 확인 전에 공유되는 건강 기록·사진·레포트·전달 상태와 editor/viewer의 차이를
+  표시하게 바꿨다. 서버 성공 전 완료를 표시하지 않는다.
+- `transfer_guardian_ownership` SECURITY DEFINER RPC를 추가했다. 현재 owner는 기존 editor에게만
+  advisory lock 아래 owner→editor/editor→owner로 원자 이전할 수 있어, owner 0명/2명의 중간
+  상태가 없다. repo의 mock/Supabase 구현, Context, 설정 UI도 같은 계약으로 연결했다.
+- RLS fixture에 anonymous EXECUTE 차단, editor의 소유권 이전 시도 차단, 이전/되돌림의 단일 owner
+  불변식을 추가해 completion marker를 179로 갱신했다.
+
+**결정과 이유**
+- 소유권 이전은 삭제나 계정 탈퇴 전에 사용 가능한 통제여야 한다. 새 owner 후보를 임의 이메일이나
+  viewer가 아닌 이미 접근 중인 editor로 한정해, 초대/권한 확인을 우회한 권한 상승을 막는다.
+- 공유 링크는 기존 hash-only token과 소비 시점 권한·동의 재검사를 유지했다. 범위를 넘는 운영
+  migration·실사용자 삭제·OAuth/결제·비밀키·main 병합은 수행하지 않았다.
+
+**검증**
+- RED: 새 E2E fixture가 `Repo.transferGuardianOwnership` 부재로 TypeScript 오류를 냈다.
+  GREEN: `npm run typecheck`, `npm run test:e2e` **PASS 175 / FAIL 0**,
+  `npm run test:gating` **PASS 41 / FAIL 0**, `npm run test:analytics` **PASS 37 / FAIL 0**.
+- Deno Edge contracts **PASS 11 / FAIL 0**, 세 Edge Function `deno check` 통과,
+  `npx expo export --platform web --output-dir /tmp/carenote-trust-web --clear` 통과(891 modules).
+- 이 runner에는 PostgreSQL client가 없고 Docker daemon도 연결되지 않아 fresh PG16 RLS는 실행하지
+  못했다. `rls_test.sql` completion marker는 `expected=181`로 보강했으며, 독립 review CI의 fresh PG16
+  gate가 반드시 재실행해야 한다.

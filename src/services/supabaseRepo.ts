@@ -791,6 +791,13 @@ export const supabaseRepo: Repo = {
     throwIf(error);
   },
 
+  async transferGuardianOwnership(childId: string, guardianId: string) {
+    const { error } = await sb().rpc('transfer_guardian_ownership', {
+      cid: childId, target_guardian_id: guardianId,
+    });
+    throwIf(error);
+  },
+
   async removeGuardian(childId: string, guardianId: string) {
     const { error } = await sb().from('guardian_child')
       .delete().eq('child_id', childId).eq('guardian_id', guardianId);

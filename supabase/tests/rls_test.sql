@@ -85,22 +85,32 @@ select case when (
   where oid in (
     'create_recipient(jsonb)'::regprocedure,
     'invite_guardian(uuid,text,text)'::regprocedure,
-    'set_guardian_role(uuid,uuid,text)'::regprocedure
+    'set_guardian_role(uuid,uuid,text)'::regprocedure,
+    'transfer_guardian_ownership(uuid,uuid)'::regprocedure
   ) and prosecdef and proconfig = array['search_path=public']
-) = 3 then 'PASS SECURITY DEFINER RPC는 고정 search_path 사용' else 'FAIL SECURITY DEFINER/search_path 설정' end;
+) = 3 then 'PASS 기존 SECURITY DEFINER RPC는 고정 search_path 사용' else 'FAIL 기존 SECURITY DEFINER/search_path 설정' end;
+select case when (select proconfig from pg_proc where oid = 'transfer_guardian_ownership(uuid,uuid)'::regprocedure)
+  = array['search_path=pg_catalog, public, pg_temp']
+  then 'PASS 소유권 이전 RPC는 pg_temp shadowing을 막는 search_path 사용' else 'FAIL 소유권 이전 RPC search_path' end;
+select case when exists (
+  select 1 from pg_trigger where tgname = 'guardian_child_exactly_one_owner' and tgdeferrable and tginitdeferred
+) then 'PASS guardian_child 단일 owner deferred constraint trigger' else 'FAIL guardian_child 단일 owner constraint trigger' end;
 select case when
   has_function_privilege('authenticated', 'create_recipient(jsonb)', 'EXECUTE')
   and has_function_privilege('authenticated', 'invite_guardian(uuid,text,text)', 'EXECUTE')
   and has_function_privilege('authenticated', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'transfer_guardian_ownership(uuid,uuid)', 'EXECUTE')
   and not has_function_privilege('anon', 'create_recipient(jsonb)', 'EXECUTE')
   and not has_function_privilege('anon', 'invite_guardian(uuid,text,text)', 'EXECUTE')
   and not has_function_privilege('anon', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'transfer_guardian_ownership(uuid,uuid)', 'EXECUTE')
   then 'PASS RPC EXECUTE는 authenticated에만 최소 부여' else 'FAIL RPC EXECUTE 권한 범위' end;
 
 set role anon;
 select expect_error($q$select create_recipient('{}'::jsonb)$q$, 'anon EXECUTE 차단 — create_recipient');
 select expect_error($q$select invite_guardian(gen_random_uuid(), 'x@example.com', 'viewer')$q$, 'anon EXECUTE 차단 — invite_guardian');
 select expect_error($q$select set_guardian_role(gen_random_uuid(), gen_random_uuid(), 'viewer')$q$, 'anon EXECUTE 차단 — set_guardian_role');
+select expect_error($q$select transfer_guardian_ownership(gen_random_uuid(), gen_random_uuid())$q$, 'anon EXECUTE 차단 — transfer_guardian_ownership');
 
 set role authenticated;
 
@@ -256,6 +266,23 @@ select expect_error($q$update care_tasks set assignee_id = null where id = '8888
 select expect_ok($q$update care_tasks set completed_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 완료 전이 허용');
 select expect_error($q$update care_tasks set completed_at = null where id = '88888888-8888-8888-8888-888888888888'$q$, '완료 care-task 재개방 차단');
 select expect_rows($q$update guardian_child set role = 'owner' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 0, 'B 자기승격(구멍②) 무효');
+
+-- ── 단일 owner 소유권 이전: 기존 editor에게만 원자적으로 넘기고 항상 owner 1명을 유지 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select invite_guardian('33333333-3333-3333-3333-333333333333'::uuid, 'dad@example.com', 'editor')$q$, 'A가 둘째 대상자 소유권 이전용 B를 editor로 초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_error($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'editor B의 소유권 이전 시도 차단');
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid)$q$, 'A가 기존 editor B에게 소유권 이전');
+select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
+  and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+  and (select role = 'editor' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 소유권 이전은 단일 owner를 보존하고 이전 owner를 editor로 강등' else 'FAIL 소유권 이전 owner 불변식' end;
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'B가 A에게 소유권 되돌림');
+select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
+  and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 소유권 이전 재시도도 단일 owner 보존' else 'FAIL 소유권 되돌림 owner 불변식' end;
 
 -- ── A가 B를 열람자로 강등 → B 기록 차단 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
@@ -553,4 +580,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=172
+\echo RLS_SUITE_COMPLETE expected=181

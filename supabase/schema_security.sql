@@ -234,10 +234,67 @@ begin
   return json_build_object('guardian_id', target_guardian_id, 'role', new_role);
 end $$;
 
+-- 소유권 이전은 기존 editor에게만 허용한다. 두 UPDATE는 한 SECURITY DEFINER 함수 안에서
+-- 실행되므로 owner가 0명/2명인 중간 상태를 클라이언트가 관찰하거나 재사용할 수 없다.
+create or replace function transfer_guardian_ownership(cid uuid, target_guardian_id uuid)
+returns json
+language plpgsql security definer set search_path = pg_catalog, public, pg_temp as $$
+declare
+  actor uuid := auth.uid();
+begin
+  if actor is null or my_role(cid) is distinct from 'owner' then
+    raise exception '대상자의 소유자만 소유권을 이전할 수 있습니다' using errcode = '42501';
+  end if;
+  if target_guardian_id = actor then
+    raise exception '본인에게 소유권을 이전할 수 없습니다' using errcode = '22023';
+  end if;
+  perform pg_advisory_xact_lock(hashtext(cid::text));
+  if not exists (
+    select 1 from guardian_child
+    where child_id = cid and guardian_id = target_guardian_id and role = 'editor'
+  ) then
+    raise exception '소유권은 현재 편집자에게만 이전할 수 있습니다' using errcode = 'P0001';
+  end if;
+  update guardian_child set role = 'editor'
+    where child_id = cid and guardian_id = actor and role = 'owner';
+  if not found then
+    raise exception '현재 소유자 관계를 찾을 수 없습니다' using errcode = 'P0001';
+  end if;
+  update guardian_child set role = 'owner'
+    where child_id = cid and guardian_id = target_guardian_id and role = 'editor';
+  if not found then
+    raise exception '소유권을 받을 편집자 관계를 찾을 수 없습니다' using errcode = 'P0001';
+  end if;
+  return json_build_object('previous_owner_id', actor, 'owner_id', target_guardian_id);
+end $$;
+
+-- FK cascade로 대상자가 삭제되는 경우를 제외하고 모든 care circle은 commit 시 owner 정확히
+-- 한 명을 가져야 한다. DEFERRABLE이므로 소유권 이전 RPC의 두 행 swap은 중간 상태 없이
+-- 하나의 트랜잭션으로 검증된다.
+create or replace function enforce_guardian_child_exactly_one_owner() returns trigger
+language plpgsql security definer set search_path = pg_catalog, public, pg_temp as $$
+declare
+  affected_child_id uuid := case when tg_op = 'DELETE' then old.child_id else new.child_id end;
+begin
+  if exists (select 1 from children where id = affected_child_id)
+     and (select count(*) from guardian_child where child_id = affected_child_id and role = 'owner') <> 1 then
+    raise exception '대상자에는 정확히 한 명의 소유자가 필요합니다' using errcode = '23514';
+  end if;
+  return null;
+end $$;
+drop trigger if exists guardian_child_exactly_one_owner on guardian_child;
+create constraint trigger guardian_child_exactly_one_owner
+after insert or update or delete on guardian_child
+deferrable initially deferred for each row
+execute function enforce_guardian_child_exactly_one_owner();
+
 -- RPC는 authenticated 클라이언트만 실행한다. public 기본 EXECUTE를 명시적으로 제거한다.
 revoke all on function create_recipient(jsonb) from public;
 revoke all on function invite_guardian(uuid, text, text) from public;
 revoke all on function set_guardian_role(uuid, uuid, text) from public;
+revoke all on function transfer_guardian_ownership(uuid, uuid) from public;
+revoke all on function enforce_guardian_child_exactly_one_owner() from public;
 grant execute on function create_recipient(jsonb) to authenticated;
 grant execute on function invite_guardian(uuid, text, text) to authenticated;
 grant execute on function set_guardian_role(uuid, uuid, text) to authenticated;
+grant execute on function transfer_guardian_ownership(uuid, uuid) to authenticated;
