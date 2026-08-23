@@ -229,6 +229,20 @@ select case when purge_share_link_access_audit(interval '30 days') >= 1
 reset role;
 select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
   then 'PASS 만료 audit 보존 purge 확인' else 'FAIL 만료 audit 보존' end;
+-- 자동 경로: 허용된 소비는 전역 시간당 1회 bounded purge를 실행한다.
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '자동 purge 회귀용 공유 링크 발행');
+select set_config('test.auto_purge_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
+reset role;
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+values ((select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days');
+update share_link_audit_maintenance set last_purged_at = null where singleton;
+set role service_role;
+select consume_share_link_token(current_setting('test.auto_purge_share_token_hash'));
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS 허용 consume은 bounded retention purge를 자동 실행' else 'FAIL 자동 retention purge 누락' end;
 update share_links set expires_at = now() - interval '1 second'
 where id = (select id from share_links order by created_at offset 1 limit 1);
 set role service_role;
@@ -346,4 +360,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=115
+\echo RLS_SUITE_COMPLETE expected=117

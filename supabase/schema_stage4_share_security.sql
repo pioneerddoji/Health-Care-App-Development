@@ -39,6 +39,14 @@ create index if not exists share_link_access_audit_retention
   on share_link_access_audit(occurred_at);
 alter table share_link_access_audit enable row level security;
 
+-- 서비스가 살아 있는 동안 자동 보존 작업은 전역적으로 시간당 한 번만 실행한다.
+create table if not exists share_link_audit_maintenance (
+  singleton boolean primary key default true check (singleton),
+  last_purged_at timestamptz
+);
+insert into share_link_audit_maintenance(singleton) values (true) on conflict do nothing;
+alter table share_link_audit_maintenance enable row level security;
+
 -- 최소 보존: service_role의 예약 작업만 오래된 비식별 접근 표본을 지운다.
 create or replace function purge_share_link_access_audit(
   p_retention interval default interval '30 days',
@@ -62,6 +70,22 @@ begin
   );
   get diagnostics deleted_count = row_count;
   return deleted_count;
+end;
+$$;
+
+create or replace function maybe_purge_share_link_access_audit() returns integer
+language plpgsql security definer set search_path = public as $$
+declare
+  claimed boolean;
+begin
+  update share_link_audit_maintenance
+  set last_purged_at = clock_timestamp()
+  where singleton and (last_purged_at is null or last_purged_at <= clock_timestamp() - interval '1 hour')
+  returning true into claimed;
+  if coalesce(claimed, false) then
+    return purge_share_link_access_audit(interval '30 days', 1000);
+  end if;
+  return 0;
 end;
 $$;
 
@@ -166,6 +190,9 @@ begin
   set last_access_at = clock_timestamp(), access_count = access_count + 1
   where id = v_link.id;
   insert into share_link_access_audit(share_link_id, outcome) values (v_link.id, 'granted');
+  -- 별도 운영 스케줄러 누락으로 보존이 무한해지지 않게, 허용된 접근에서만 시간당 1회
+  -- 최대 1,000행 purge를 자동 수행한다.
+  perform maybe_purge_share_link_access_audit();
   return jsonb_build_object('storage_path', v_link.storage_path);
 end;
 $$;
