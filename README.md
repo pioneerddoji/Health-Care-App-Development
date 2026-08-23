@@ -60,7 +60,7 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 ```
 
 1. [supabase.com](https://supabase.com) 프로젝트 생성
-2. SQL Editor에서 `supabase/schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` 순서 실행
+2. SQL Editor에서 `supabase/schema.sql` → `schema_stage3.sql` → `schema_subscriptions.sql` → `schema_settings.sql` → `schema_recipients.sql` → `schema_security.sql` → `schema_consent_deletion.sql` → `schema_stage4_share_security.sql` 순서 실행
 3. 공유 링크 Edge Function 배포: `supabase functions deploy share-report --no-verify-jwt --project-ref <ref>`
 4. `SUPABASE_URL=... SUPABASE_ANON_KEY=... npm run verify:supabase`로 가입→기록→Storage→RLS→공유 링크→삭제 자동 검증
 

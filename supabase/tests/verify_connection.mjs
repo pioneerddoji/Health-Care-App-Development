@@ -123,12 +123,13 @@ const report = (await a.from('reports').insert({
 const pdfPath = `${child.id}/${report.id}.pdf`;
 await a.storage.from('reports').upload(pdfPath, new Uint8Array([0x25, 0x50, 0x44, 0x46]), { contentType: 'application/pdf' });
 await a.from('reports').update({ storage_path: pdfPath }).eq('id', report.id);
-const link = (await a.from('share_links').insert({
-  report_id: report.id, expires_at: new Date(Date.now() + 3600_000).toISOString(),
-}).select('token').single()).data;
-ok(!!link?.token, '공유 링크 생성');
+const issued = (await a.rpc('create_secure_share_link', {
+  p_report_id: report.id, p_expires_in_hours: 24,
+})).data;
+const token = issued?.token;
+ok(typeof token === 'string' && /^[0-9a-f]{64}$/.test(token), 'hash-only 공유 링크 생성');
 try {
-  const fnRes = await fetch(`${URL}/functions/v1/share-report?token=${link.token}`, { redirect: 'manual' });
+  const fnRes = await fetch(`${URL}/functions/v1/share-report?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
   if (fnRes.status === 302) ok(true, 'Edge Function: 유효 토큰 → 서명 URL 리다이렉트');
   else if (fnRes.status === 404 && (await fnRes.text()).includes('NOT_FOUND')) {
     console.log('  ⚠️ Edge Function 미배포 — supabase functions deploy share-report --no-verify-jwt 후 재실행');

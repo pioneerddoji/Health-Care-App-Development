@@ -193,6 +193,15 @@ begin
   if not found then
     raise exception '철회할 유효 동의를 찾을 수 없습니다' using errcode = 'P0001';
   end if;
+  -- stage4 공유 링크는 매 소비 시에도 동의를 재검사하지만, 철회 즉시 활성 링크를
+  -- 회수해 보존된 URL의 재시도/열거 표면도 없앤다. stage4 적용 전에는 테이블이 없다.
+  if consent_type = 'sensitive_health' and to_regclass('public.share_links') is not null then
+    execute $sql$
+      update share_links l set revoked_at = coalesce(l.revoked_at, now())
+      from reports r
+      where l.report_id = r.id and r.child_id = $1 and l.revoked_at is null
+    $sql$ using cid;
+  end if;
   return revoked;
 end $$;
 

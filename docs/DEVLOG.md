@@ -772,6 +772,22 @@ SMS 발신명, 문의 이메일, 문서 전반. 상품 ID는 아직 스토어에
 사용자 확인 필요: Play 중복 검색, 상표 검색(CareNote는 해외 의료·요양 분야에
 동명 서비스가 있어 글로벌 확장 시 충돌 가능성), 번들 ID 최종 확정.
 
+## 2026-08-23 — P0 병원 공유 링크 보안 강화
+
+- `schema_stage4_share_security.sql`을 추가해 256-bit 난수 원문 token은 발행 RPC의
+  단 한 번의 응답으로만 반환하고, DB에는 SHA-256 hash만 저장하도록 전환했다. 기존
+  원문 token 링크는 migration 시 즉시 회수한다.
+- 발행·회수는 owner/editor 및 유효 민감정보 동의를 재검사하는 definer RPC로만
+  허용한다. Edge Function은 hash를 원자 소비하여 회수·만료·대상자 삭제를
+  확인하고, 동시 replay에는 행 잠금+1초 rate limit을 적용한 뒤 5분 URL만 발급한다.
+  원문 token/IP/User-Agent는 저장·로그하지 않고 audit은 링크 id·결과·시각만 기록한다.
+- 변조/만료/회수/replay·직접 DML·viewer 권한 우회 회귀 항목을 RLS test에 추가했고,
+  운영 연결 검증 스크립트도 새 RPC 계약으로 갱신했다.
+- 검증: `npm run typecheck` 통과, `npm run test:e2e` **110/0**, `npm run test:gating`
+  **27/0**, `npx expo export --platform web` 통과, `npx deno@2.2.2 check` 통과,
+  `git diff --check` 통과. fresh PostgreSQL 16 RLS와 실제 Supabase Edge 수신자 검증은
+  이 브랜치에서 재실행한다.
+
 ---
 
 # 앞으로 진행할 내용
@@ -1421,3 +1437,39 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - CI green 확인 전 운영 migration, 실사용자 삭제, main 병합은 금지한다.
+
+---
+
+## 2026-08-23 — 공유 링크 발행자 회수·트래픽 독립 audit 보존 계약
+
+**한 일**
+- 공유 링크에 서버가 결정한 `issued_by`를 기록하고, guardian 관계 제거 trigger가 같은 트랜잭션에서 해당 발행자의 활성 링크를 회수하도록 했다. consume은 발행자가 현재 owner/editor인지도 재검사한다.
+- fresh PG 공격 회귀로 owner 제거, editor self-leave, Auth 계정 삭제 cascade 뒤의 service-role consume 차단을 각각 검증한다.
+- 성공/거절 audit은 링크별 분당 한 표본으로 제한하고, `run_scheduled_share_link_audit_retention()`은 1,000행 배치를 최대 100회(시간당 100,000행) drain한다. `supabase/retention_schedule.sql`은 pg_cron 시간당 실행을 별도 승인 배포 계약으로 버전 관리한다. 이 변경은 스케줄을 배포하거나 운영 DB를 변경하지 않는다.
+- 내부 SECURITY DEFINER helper는 PUBLIC/anon/authenticated에서 EXECUTE를 회수하고, idle expiry, backlog>1,000 반복 drain, helper privilege denial을 fresh PG 회귀에 추가했다.
+
+**결정과 이유**
+- bearer URL의 발행 당시 권한만 신뢰하지 않는다. 관계 해제·계정 삭제에 연결된 즉시 회수와 consume 시점 재검사를 함께 적용해 cascade 누락이나 비정상 삭제 경로도 차단한다.
+- retention은 성공 트래픽에 의존하지 않으며, 예약 작업의 bounded 실행은 WAL/락을 제한하면서 단일 링크의 허용 최대 audit 입력(성공/거절 각 60, 총 120행/시간)을 크게 상회한다.
+
+**검증**
+- 아래 커밋의 로컬/원격 실행 결과와 PR #6 CI run은 Kanban handoff에 정확히 기록한다.
+- 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — 공유 링크 legacy fail-closed·전역 aggregate audit 입력 계약
+
+**한 일**
+- stage4 migration은 `issued_by IS NULL`인 활성 hashed legacy link를 report 작성자에게 추정 귀속하지 않고 즉시 revoke한다. consume은 NULL issuer를 계속 fail-closed로 처리한다.
+- 신규 audit은 link별 raw INSERT 대신 UTC 시간대별 전역 outcome aggregate(issued/granted/rate_limited/revoked) upsert로 기록한다. 따라서 허용된 새 audit 행 입력은 전역 정확히 최대 4행/시간이며, event count만 증가한다.
+- hourly scheduled retention은 aggregate 최대 1,000행과 legacy raw audit 최대 100×1,000행을 bounded drain한다. `share_link_audit_max_rows_per_hour() = 4` 계약을 runner 및 fresh-PG regression으로 확인한다.
+- fresh-PG에 legacy NULL-issuer migration 재적용 후 revoke/consume 차단, 200회 issuance flood의 한 aggregate row 수렴, idle aggregate retention, helper privilege denial, capacity contract를 추가했다. CI RLS expected assertion count를 141로 동기화했다.
+
+**결정과 이유**
+- 과거 link의 실제 issuer를 증명할 수 없으면 작성자 귀속은 권한 인수 정책이 아니라 stale authorization 재부여다. 기존 bearer URL은 안전하게 폐기하고 재발급만 허용한다.
+- 사용자·대상자 수가 커질 수 있는 환경에서 link별 sampling 상한의 합은 전역 drain과 비교할 수 없다. 식별자 없는 전역 hourly aggregate는 tenant 수·발급률과 무관하게 row admission을 수학적으로 제한한다.
+
+**검증**
+- 로컬: `npm run typecheck`, `npm run test:e2e` (137/0), `npm run test:gating` (41/0), Deno share-report contracts (6/0), Deno check, Expo web export, `git diff --check`을 실행했다.
+- local PostgreSQL 16/psql 및 Docker daemon은 사용할 수 없으므로 fresh-PG regression은 push 뒤 GitHub CI로 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.

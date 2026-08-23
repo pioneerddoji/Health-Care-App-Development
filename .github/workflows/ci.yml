@@ -42,6 +42,22 @@ jobs:
       - run: npm ci
       - run: npm run test:gating
 
+  edge-share-report-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Execute share-report handler contracts with Supabase/storage doubles
+        run: deno test --allow-env --allow-net supabase/functions/share-report/index_test.ts
+
   rls-test:
     runs-on: ubuntu-latest
     services:
@@ -61,7 +77,7 @@ jobs:
         working-directory: supabase/tests
         run: |
           set -Eeuo pipefail
-          expected_passes=93
+          expected_passes=141
           psql "postgresql://postgres:postgres@localhost:5432/postgres" \
             -v ON_ERROR_STOP=1 -f rls_test.sql 2>&1 | tee rls_out.txt
 

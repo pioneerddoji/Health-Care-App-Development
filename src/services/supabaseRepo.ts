@@ -549,20 +549,25 @@ export const supabaseRepo: Repo = {
 
   async createShareLink(reportId: string, expiresInHours: number): Promise<ShareLinkInfo> {
     if (!supabaseUrl) throw new Error('Supabase URL이 설정되지 않았습니다');
-    const expiresAt = new Date(Date.now() + expiresInHours * 3600_000).toISOString();
-    const { data, error } = await sb().from('share_links')
-      .insert({ report_id: reportId, expires_at: expiresAt })
-      .select('id, token, expires_at, report:reports(child_id, period_start, period_end)')
-      .single();
+    const { data: issued, error } = await sb().rpc('create_secure_share_link', {
+      p_report_id: reportId,
+      p_expires_in_hours: expiresInHours,
+    });
     throwIf(error);
-    if (!data) throw new Error('공유 링크 생성 결과를 확인할 수 없습니다');
-    const report = data.report as unknown as { child_id: string; period_start: string; period_end: string };
+    const token = (issued as { id?: string; token?: string; expires_at?: string } | null);
+    if (!token?.id || !token.token || !token.expires_at) {
+      throw new Error('보안 공유 링크 발급 결과를 확인할 수 없습니다');
+    }
+    const { data: report, error: reportError } = await sb().from('reports')
+      .select('child_id, period_start, period_end').eq('id', reportId).single();
+    throwIf(reportError);
+    if (!report) throw new Error('레포트를 찾을 수 없습니다');
     return {
-      id: data.id,
+      id: token.id,
       reportId,
       childId: report.child_id,
-      url: `${supabaseUrl}/functions/v1/share-report?token=${data.token}`,
-      expiresAt: data.expires_at,
+      url: `${supabaseUrl}/functions/v1/share-report?token=${encodeURIComponent(token.token)}`,
+      expiresAt: token.expires_at,
       periodStart: report.period_start,
       periodEnd: report.period_end,
     };
@@ -571,7 +576,7 @@ export const supabaseRepo: Repo = {
   async listShareLinks(childId: string): Promise<ShareLinkInfo[]> {
     if (!supabaseUrl) throw new Error('Supabase URL이 설정되지 않았습니다');
     const { data, error } = await sb().from('share_links')
-      .select('id, report_id, token, expires_at, revoked_at, reports!inner(child_id, period_start, period_end)')
+      .select('id, report_id, expires_at, revoked_at, reports!inner(child_id, period_start, period_end)')
       .eq('reports.child_id', childId)
       .order('created_at', { ascending: false });
     throwIf(error);
@@ -580,7 +585,8 @@ export const supabaseRepo: Repo = {
       id: row.id,
       reportId: row.report_id,
       childId: row.reports.child_id,
-      url: `${supabaseUrl}/functions/v1/share-report?token=${row.token}`,
+      // 원문 token은 발급 응답에서 한 번만 반환된다. 목록/저장소에서 재구성하지 않는다.
+      url: '',
       expiresAt: row.expires_at,
       revokedAt: row.revoked_at ?? undefined,
       periodStart: row.reports.period_start,
@@ -590,8 +596,7 @@ export const supabaseRepo: Repo = {
   },
 
   async revokeShareLink(linkId: string) {
-    const { error } = await sb().from('share_links')
-      .update({ revoked_at: new Date().toISOString() }).eq('id', linkId);
+    const { error } = await sb().rpc('revoke_secure_share_link', { p_link_id: linkId });
     throwIf(error);
   },
 
