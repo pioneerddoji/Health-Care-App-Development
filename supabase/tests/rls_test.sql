@@ -28,6 +28,7 @@ create role authenticated;
 \i ../schema_subscriptions.sql
 \i ../schema_settings.sql
 \i ../schema_recipients.sql
+\i ../schema_care_handoff.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
@@ -64,8 +65,11 @@ select expect_ok($q$insert into profiles(id, name) values ('aaaaaaaa-aaaa-aaaa-a
 select expect_ok($q$insert into children(id, name, birth_date, sex) values ('11111111-1111-1111-1111-111111111111', '하은', '2023-01-01', 'female')$q$, 'A 아이 생성');
 select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'owner')$q$, 'A owner 부트스트랩');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '민감정보 동의 전 기록 차단');
+select expect_error($q$insert into care_tasks(child_id, title, created_by) values ('11111111-1111-1111-1111-111111111111', '동의 전 안내', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$q$, '민감정보 동의 전 진료 후 안내 차단');
 select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'guardian_legal'), ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 동의 기록');
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '동의 후 기록 허용');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id) select id, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' from daily_records limit 1$q$, 'A 기록 확인 상태 저장');
+select expect_ok($q$insert into care_tasks(child_id, title, assignee_id, due_date, created_by) values ('11111111-1111-1111-1111-111111111111', '진료 후 안내 확인', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date + 1, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$q$, 'A 진료 후 안내 담당·기한 저장');
 
 -- ── 구독 한도 (free → standard 업그레이드) ──
 select expect_ok($q$insert into children(id, name, birth_date, sex) values ('33333333-3333-3333-3333-333333333333', '둘째', '2024-06-01', 'male')$q$, 'A 두번째 아이 행 생성');

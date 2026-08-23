@@ -12,9 +12,9 @@ import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from 
 import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
 import { parseDeletionResponse, runAccountDeletion } from './accountDeletion';
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
-  Subscription, SubscriptionTier, UserSettings, Vaccination,
+  RecordAcknowledgement, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 
 const sb = () => {
@@ -159,6 +159,14 @@ const reportFromRow = (r: any): Report => ({
   questionsForDoctor: r.questions_for_doctor ?? [],
   storagePath: r.storage_path ?? undefined,
   createdAt: r.created_at,
+});
+const acknowledgementFromRow = (r: any): RecordAcknowledgement => ({
+  recordId: r.record_id, guardianId: r.guardian_id, acknowledgedAt: r.acknowledged_at,
+});
+const careTaskFromRow = (r: any): CareTask => ({
+  id: r.id, childId: r.child_id, recordId: r.record_id ?? undefined, title: r.title,
+  note: r.note ?? undefined, assigneeId: r.assignee_id ?? undefined, dueDate: r.due_date ?? undefined,
+  completedAt: r.completed_at ?? undefined, createdBy: r.created_by, createdAt: r.created_at,
 });
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -465,7 +473,7 @@ export const supabaseRepo: Repo = {
   async loadAll(): Promise<AllData> {
     const client = sb();
     const userId = await currentUserId();
-    const [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow] = await Promise.all([
+    const [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow, acknowledgements, careTasks] = await Promise.all([
       client.from('children').select('*').is('deleted_at', null).order('birth_date'),
       client.from('daily_records').select('*, record_files(storage_path)')
         .order('record_date').order('record_time'),
@@ -477,8 +485,10 @@ export const supabaseRepo: Repo = {
       client.from('consents').select('child_id')
         .eq('type', 'sensitive_health').is('revoked_at', null),
       client.from('user_settings').select('settings').eq('user_id', userId).maybeSingle(),
+      client.from('record_acknowledgements').select('record_id, guardian_id, acknowledged_at'),
+      client.from('care_tasks').select('*').order('created_at', { ascending: false }),
     ]);
-    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow]) throwIf(res.error);
+    for (const res of [children, records, growth, medications, vaccinations, checkups, links, consents, settingsRow, acknowledgements, careTasks]) throwIf(res.error);
 
     const consentedChildIds = new Set(
       (consents.data ?? []).map((c: { child_id: string }) => c.child_id));
@@ -501,6 +511,8 @@ export const supabaseRepo: Repo = {
       medications: (medications.data ?? []).map(medicationFromRow),
       vaccinations: (vaccinations.data ?? []).map(vaccinationFromRow),
       checkups: (checkups.data ?? []).map(checkupFromRow),
+      recordAcknowledgements: (acknowledgements.data ?? []).map(acknowledgementFromRow),
+      careTasks: (careTasks.data ?? []).map(careTaskFromRow),
       roles: Object.fromEntries(
         (links.data ?? []).map((l: { child_id: string; role: GuardianRole }) => [l.child_id, l.role]),
       ),
@@ -608,6 +620,44 @@ export const supabaseRepo: Repo = {
 
   async deleteRecord(id: string) {
     const { error } = await sb().from('daily_records').delete().eq('id', id);
+    throwIf(error);
+  },
+
+  async acknowledgeRecord(recordId: string) {
+    const guardianId = await currentUserId();
+    const { error } = await sb().from('record_acknowledgements').upsert({
+      record_id: recordId, guardian_id: guardianId, acknowledged_at: new Date().toISOString(),
+    }, { onConflict: 'record_id,guardian_id', ignoreDuplicates: true });
+    throwIf(error);
+  },
+
+  async listRecordAcknowledgements(childId: string): Promise<RecordAcknowledgement[]> {
+    const { data, error } = await sb().from('record_acknowledgements')
+      .select('record_id, guardian_id, acknowledged_at, daily_records!inner(child_id)')
+      .eq('daily_records.child_id', childId);
+    throwIf(error);
+    return (data ?? []).map(acknowledgementFromRow);
+  },
+
+  async createCareTask(input): Promise<CareTask> {
+    const userId = await currentUserId();
+    const { data, error } = await sb().from('care_tasks').insert({
+      child_id: input.childId, record_id: input.recordId ?? null, title: input.title.trim(),
+      note: input.note?.trim() || null, assignee_id: input.assigneeId ?? null,
+      due_date: input.dueDate ?? null, created_by: userId,
+    }).select().single();
+    throwIf(error);
+    return careTaskFromRow(data);
+  },
+
+  async listCareTasks(childId: string): Promise<CareTask[]> {
+    const { data, error } = await sb().from('care_tasks').select('*').eq('child_id', childId).order('created_at', { ascending: false });
+    throwIf(error);
+    return (data ?? []).map(careTaskFromRow);
+  },
+
+  async completeCareTask(taskId: string) {
+    const { error } = await sb().from('care_tasks').update({ completed_at: new Date().toISOString() }).eq('id', taskId);
     throwIf(error);
   },
 

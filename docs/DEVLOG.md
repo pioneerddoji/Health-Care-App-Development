@@ -1363,3 +1363,30 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **운영 범위**
 - migration·운영 배포·실사용자 삭제·OAuth·main 병합은 수행하지 않았다.
+
+---
+
+## 2026-08-23 — P0 공동 확인·담당·병원 브리핑·진료 후 안내 루프
+
+**한 일**
+- `Repo` 계약과 memory/Supabase 구현에 기록 확인(`record_acknowledgements`) 및 진료 후 안내
+  (`care_tasks`)를 추가했다. 안내는 연결 기록(선택), 담당 보호자, 기한, 완료 시각만 보관하며
+  관찰 기록의 전달 상태를 관리한다.
+- 레포트 화면에서 보호자가 직접 수정하는 전달 메모를 PDF에 포함하고, 기존 질문·타임라인·그래프·
+  만료형 안전 공유 흐름은 그대로 유지했다. 새 공동 확인 화면에서 최근 기록 확인, 안내 등록,
+  담당 선택, 기한 알림 예약, 완료 처리를 제공한다.
+- `schema_care_handoff.sql`과 RLS fixture를 추가했다. 공동 보호자만 확인 상태를 읽고 본인 확인을
+  기록하며, 안내는 owner/editor만 만들고 담당자 또는 owner만 완료할 수 있다.
+
+**결정과 이유**
+- 진료 내용을 앱이 의료적으로 해석하지 않도록 자유 텍스트 전달·담당·기한·완료 상태로 한정했다.
+  PDF에도 “보호자가 직접 수정”한 메모만 넣고 진단/처방 생성은 하지 않는다.
+
+**검증**
+- `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 170 / FAIL 0** — 전달 메모 PDF 반영, 기록 확인, 담당·기한 저장,
+  완료 추적 3건을 추가했다.
+- `npm run test:gating` **PASS 41 / FAIL 0**, `npx expo export --platform web --output-dir dist-web` 통과,
+  `git diff --check` 통과.
+- 로컬 runner에는 `psql`이 없어 RLS fixture를 실행하지 못했다. 새 schema/RLS 계약은 fixture에
+  연결했으며 PostgreSQL 16 CI에서 재검증이 필요하다. 운영 migration, 배포, 고객 메시지, main 병합은 하지 않았다.

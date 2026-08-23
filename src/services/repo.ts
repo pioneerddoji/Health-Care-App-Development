@@ -1,8 +1,8 @@
 // 저장소 계층 — 화면/컨텍스트는 이 인터페이스만 사용한다.
 // env(EXPO_PUBLIC_SUPABASE_*)가 있으면 Supabase, 없으면 인메모리(mock)로 동작.
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
-  GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  GuardianRole, ISODate, Medication, Profile, RecordAcknowledgement, RecordInput, Report,
   ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { isMockMode } from '../lib/supabase';
@@ -35,6 +35,8 @@ export interface AllData {
   medications: Medication[];
   vaccinations: Vaccination[];
   checkups: Checkup[];
+  recordAcknowledgements: RecordAcknowledgement[];
+  careTasks: CareTask[];
   /** 아이별 내 역할 — viewer면 읽기 전용 UI */
   roles: Record<string, GuardianRole>;
   /** 아이별 민감정보(건강정보) 동의 유효 여부 — false면 새 기록 입력 차단 */
@@ -93,6 +95,13 @@ export interface Repo {
    *  표시용(서명) URL로 치환된 레코드를 반환한다 */
   createRecord(childId: string, input: RecordInput): Promise<DailyRecord>;
   deleteRecord(id: string): Promise<void>;
+  acknowledgeRecord(recordId: string): Promise<void>;
+  listRecordAcknowledgements(childId: string): Promise<RecordAcknowledgement[]>;
+
+  // ── 공동 확인 / 진료 후 지시 ──
+  createCareTask(input: Omit<CareTask, 'id' | 'createdBy' | 'createdAt' | 'completedAt'>): Promise<CareTask>;
+  listCareTasks(childId: string): Promise<CareTask[]>;
+  completeCareTask(taskId: string): Promise<void>;
 
   addVaccination(v: Omit<Vaccination, 'id'>): Promise<Vaccination>;
   updateVaccination(id: string, patch: Partial<Vaccination>): Promise<void>;
