@@ -2200,3 +2200,21 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - Red-capability: guard를 임시로 제거했을 때 새 fixture가 `ACCESSIBILITY_CONTRACT PASS=10 FAIL=1`과 duplicate-open assertion으로 예상대로 실패했다. guard 복원 뒤 GREEN: `npm run test:accessibility` **PASS 11 / FAIL 0**, `npm run test:native-preflight` **PASS 13 / FAIL 0**, `npm run typecheck`, `git diff --check` 통과.
 - 이번 최소 수정은 기존 Draft PR #19 branch에만 반영한다. 이후 전체 clean regression·exact-head CI 재검증은 push 뒤 수행하며, Android/iOS 기기·에뮬레이터, EAS/store/signing/bundle ID, OAuth/payment/운영 Supabase, production migration/data, 외부 메시지, DNS/secrets/cost, 배포/main 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-24 — P1 iOS internal preview 재현성·스토어 진입 전 증거
+
+**한 일**
+- PR #19 승인 implementation exact head `ee9a88fde5c190e38dbceb8ef23b74b8fa1e1ba0`을 별도 evidence branch에서 fast-forward하고, public GitHub API와 protected credential helper 기반 refs로 base/head·check-run을 대조했다. exact head의 8개 check는 모두 success였으며, GitHub formal review API의 author-identity `COMMENTED` 응답과 선행 same-card ratchet approval을 서로 바꾸어 주장하지 않았다.
+- `scripts/ios-preview-readiness.mts`와 `npm run test:ios-preview-readiness`를 추가했다. 이 결정론 static preflight는 iOS scheme/permission/export compliance, internal preview profile, committed config의 빈 Supabase 값, hidden payment/OAuth default를 검사하고 placeholder bundle ID·ASC app ID·billing/OAuth/privacy·needs-device 항목을 expected blocked gate로 출력한다.
+- `docs/19_ios_preview_readiness.md`에 재현 결과, current-head CI/PG16 marker 근거, iOS preview에서 금지한 EAS/Apple/device actions, 캡틴 승인 게이트와 rollback을 분리해 기록했다.
+
+**결정과 이유**
+- credentialless static preflight는 iOS build 가능성을 가장하지 않는다. `eas init/login/build/submit`, Apple signing, TestFlight upload와 device 연결은 인증·비용·외부 연결 경계이므로 실행하지 않고 blocker로 보존했다.
+- `app.carenote.mvp`와 `TODO_APP_STORE_CONNECT_APP_ID`를 fail-open으로 제거하지 않고 명시적으로 blocked로 검사해, 승인이 없는 identifier/store setup 확정을 방지했다. VoiceOver 발화·OS picker focus trap·native focus delivery도 static PASS가 아닌 `needs-device`로 유지한다.
+
+**검증**
+- clean lockfile `npm ci` 성공(기존 advisory 24건: moderate 11, high 13; pending esbuild install script 1건), typecheck 통과, analytics **37/0**, five-minute WOW **41/0**, E2E **189/0**, gating **41/0**, app-resume **14/0**, native preflight **13/0**, accessibility **11/0**, iOS readiness **8/0**(expected blocked gates 6) 통과.
+- Deno share-report/billing-webhook/delete-account contracts **10/0**(share 6 + billing 3 + delete-account 1) 및 세 entrypoint `deno check`, Expo web export **833 modules**, `git diff --check` 통과. fresh PostgreSQL 16은 이 runner에서 local 실행하지 않고 exact-head CI/선행 handoff의 `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS FAIL=0 COMPLETION=1` 근거로만 분리했다.
+- iOS/Android 기기·에뮬레이터, EAS/store build·upload, signing/Apple login, bundle ID 확정, OAuth/payment/운영 Supabase 연결·migration/data access, DNS/secrets/cost, 고객 메시지·광고·가격/브랜딩 결정, production/main 병합은 실행하지 않았다.
