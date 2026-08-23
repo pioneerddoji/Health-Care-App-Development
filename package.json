@@ -16,7 +16,8 @@
     "test:analytics": "tsx scripts/analytics-contract.mts",
     "test:native-preflight": "tsx scripts/native-runtime-preflight.mts",
     "test:app-resume-lifecycle": "tsx scripts/app-resume-lifecycle-contract.mts",
-    "test:accessibility": "tsx scripts/accessibility-contract.mts"
+    "test:accessibility": "tsx scripts/accessibility-contract.mts",
+    "test:ios-preview-readiness": "tsx scripts/ios-preview-readiness.mts"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
