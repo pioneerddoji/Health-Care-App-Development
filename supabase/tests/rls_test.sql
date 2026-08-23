@@ -1,5 +1,5 @@
 -- RLS 통합 테스트 — 로컬 PostgreSQL에서 Supabase 환경(auth/storage)을 셈으로 만들어
--- schema.sql부터 schema_settings.sql까지 전부 적용하고 2계정 권한 시나리오를 검증한다.
+-- schema.sql부터 schema_security.sql까지 전부 적용하고 2계정 권한 시나리오를 검증한다.
 --
 -- 실행 (이 디렉터리 carenote/supabase/tests 에서 — \i 경로 기준):
 --   initdb로 임시 클러스터를 만든 뒤:
@@ -10,6 +10,8 @@
 -- editor/viewer 권한, 공동 보호자 프로필 열람, Storage 경로 정책,
 -- 나가기/외부인 차단, owner 삭제 cascade.
 \set ON_ERROR_STOP on
+\pset format unaligned
+\pset tuples_only on
 -- ── Supabase 환경 셈 (auth / storage 스키마) ──
 create schema auth;
 create table auth.users (id uuid primary key, email text unique);
@@ -20,17 +22,22 @@ create table storage.buckets (id text primary key, name text, public boolean);
 create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
 alter table storage.objects enable row level security;
 create role authenticated;
+create role anon;
 
 \i ../schema.sql
 \i ../schema_stage3.sql
 \i ../schema_subscriptions.sql
 \i ../schema_settings.sql
 \i ../schema_recipients.sql
+\i ../schema_security.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
+grant usage on schema auth to authenticated;
 grant usage on schema storage to authenticated;
 grant all on storage.objects, storage.buckets to authenticated;
+-- Supabase의 anon 역할은 스키마 이름을 해석할 수 있지만 인증 전용 RPC EXECUTE는 없어야 한다.
+grant usage on schema public, auth to anon;
 
 -- 테스트 사용자
 insert into auth.users values
@@ -54,26 +61,78 @@ begin execute stmt; get diagnostics n = row_count;
   else return 'FAIL ' || label || ' — rows=' || n || ', expected ' || expected; end if;
 end $fn$;
 
+-- create_recipient가 children INSERT를 마친 뒤 다음 쓰기에서 실패하도록 만드는 테스트 전용 fault.
+-- quota 선검사 실패가 아니라 실제 트랜잭션 중간 실패의 rollback을 검증한다.
+create function fail_guardian_link_after_child_insert() returns trigger language plpgsql as $fn$
+begin
+  if new.child_id = '66666666-6666-6666-6666-666666666666'::uuid then
+    raise exception 'TEST_ONLY failure after children INSERT';
+  end if;
+  return new;
+end $fn$;
+create trigger test_fail_guardian_link_after_child_insert
+  before insert on guardian_child
+  for each row execute function fail_guardian_link_after_child_insert();
+
+-- ── SECURITY DEFINER 메타데이터·익명 실행 경계 ──
+select case when (
+  select count(*) from pg_proc
+  where oid in (
+    'create_recipient(jsonb)'::regprocedure,
+    'invite_guardian(uuid,text,text)'::regprocedure,
+    'set_guardian_role(uuid,uuid,text)'::regprocedure
+  ) and prosecdef and proconfig = array['search_path=public']
+) = 3 then 'PASS SECURITY DEFINER RPC는 고정 search_path 사용' else 'FAIL SECURITY DEFINER/search_path 설정' end;
+select case when
+  has_function_privilege('authenticated', 'create_recipient(jsonb)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'invite_guardian(uuid,text,text)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'create_recipient(jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'invite_guardian(uuid,text,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  then 'PASS RPC EXECUTE는 authenticated에만 최소 부여' else 'FAIL RPC EXECUTE 권한 범위' end;
+
+set role anon;
+select expect_error($q$select create_recipient('{}'::jsonb)$q$, 'anon EXECUTE 차단 — create_recipient');
+select expect_error($q$select invite_guardian(gen_random_uuid(), 'x@example.com', 'viewer')$q$, 'anon EXECUTE 차단 — invite_guardian');
+select expect_error($q$select set_guardian_role(gen_random_uuid(), gen_random_uuid(), 'viewer')$q$, 'anon EXECUTE 차단 — set_guardian_role');
+
 set role authenticated;
 
--- ── A(엄마): 가입 → 아이 → 동의 → 기록 ──
+-- ── A(엄마): 원자적 대상자 생성 → 동의 → 기록 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_ok($q$insert into profiles(id, name) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '엄마')$q$, 'A 프로필 생성');
-select expect_ok($q$insert into children(id, name, birth_date, sex) values ('11111111-1111-1111-1111-111111111111', '하은', '2023-01-01', 'female')$q$, 'A 아이 생성');
-select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'owner')$q$, 'A owner 부트스트랩');
-select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '민감정보 동의 전 기록 차단');
-select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'guardian_legal'), ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 동의 기록');
-select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '동의 후 기록 허용');
+select expect_error($q$insert into children(id, name, birth_date, sex) values ('11111111-1111-1111-1111-111111111111', '직접생성', '2023-01-01', 'female')$q$, '직접 대상자 생성 차단');
+select expect_ok($q$select create_recipient('{"id":"11111111-1111-1111-1111-111111111111","name":"하은","birth_date":"2023-01-01","sex":"female"}'::jsonb)$q$, 'A 대상자·owner·필수 동의 원자 생성');
+select case when (select count(*) from guardian_child where child_id = '11111111-1111-1111-1111-111111111111' and guardian_id = auth.uid() and role = 'owner') = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111' and type = 'guardian_legal' and revoked_at is null) = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null) = 1
+  then 'PASS 대상자 생성은 owner·필수 동의와 함께 커밋' else 'FAIL 대상자 생성 원자성/필수 동의' end;
+select expect_ok($q$select create_recipient('{"id":"11111111-1111-1111-1111-111111111111","name":"하은","birth_date":"2023-01-01","sex":"female"}'::jsonb)$q$, '동일 id 재시도 멱등 성공');
+select case when
+  (select count(*) from children where id = '11111111-1111-1111-1111-111111111111') = 1
+  and (select count(*) from guardian_child where child_id = '11111111-1111-1111-1111-111111111111') = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111') = 2
+  then 'PASS 재시도 멱등 — 대상자·owner·동의 중복 없음' else 'FAIL 재시도 중복 생성' end;
+select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '원자 생성 후 기록 허용');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, '기록 author_id 위조 차단');
+select expect_error($q$update daily_records set author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where child_id = '11111111-1111-1111-1111-111111111111'$q$, '기록 author_id 재작성 차단');
 
 -- ── 구독 한도 (free → standard 업그레이드) ──
-select expect_ok($q$insert into children(id, name, birth_date, sex) values ('33333333-3333-3333-3333-333333333333', '둘째', '2024-06-01', 'male')$q$, 'A 두번째 아이 행 생성');
-select expect_error($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'owner')$q$, 'free 티어 아이 1명 한도(트리거)');
+select expect_error($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'free 티어 대상자 한도·실패 원자성');
+select case when (select count(*) from children where id = '33333333-3333-3333-3333-333333333333') = 0 then 'PASS 한도 실패는 고아 대상자를 남기지 않음' else 'FAIL 한도 실패 후 고아 대상자' end;
 select expect_error($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'free 티어 공동 보호자 초대 차단(RPC)');
 -- 스토어 결제 웹훅 시뮬레이션: service_role만 subscriptions에 쓸 수 있다
 reset role;
 insert into subscriptions (user_id, tier) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'standard');
 set role authenticated;
-select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'owner')$q$, 'standard 업그레이드 후 두번째 아이 허용');
+select expect_ok($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'standard 업그레이드 후 두번째 대상자 허용');
+select expect_error($q$select create_recipient('{"id":"66666666-6666-6666-6666-666666666666","name":"롤백검증","birth_date":"2022-06-01","sex":"female"}'::jsonb)$q$, 'children INSERT 이후 guardian 연결 실패');
+select case when
+  (select count(*) from children where id = '66666666-6666-6666-6666-666666666666') = 0
+  and (select count(*) from guardian_child where child_id = '66666666-6666-6666-6666-666666666666') = 0
+  and (select count(*) from consents where child_id = '66666666-6666-6666-6666-666666666666') = 0
+  then 'PASS INSERT 이후 실패는 전체 트랜잭션 rollback' else 'FAIL INSERT 이후 실패가 부분 행을 남김' end;
 
 -- ── B(아빠): 초대 전에는 아무것도 못 함 ──
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
@@ -98,7 +157,8 @@ select expect_rows($q$update guardian_child set role = 'owner' where guardian_id
 
 -- ── A가 B를 열람자로 강등 → B 기록 차단 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update guardian_child set role = 'viewer' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A가 B를 viewer로 변경');
+select expect_rows($q$update guardian_child set role = 'viewer' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 0, '직접 역할 변경 차단');
+select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'viewer')$q$, 'A가 RPC로 B를 viewer로 변경');
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, 'B(viewer) 기록 차단');
 select case when (select count(*) from daily_records) = 2 then 'PASS B(viewer) 열람은 가능' else 'FAIL viewer 열람 실패' end;
@@ -113,6 +173,8 @@ select case when (select count(*) from storage.objects) = 1 then 'PASS B(viewer)
 -- ── 레포트 발행 / 공유 링크 (4단계) ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_ok($q$insert into reports(id, child_id, created_by, period_start, period_end) values ('99999999-9999-9999-9999-999999999999', '11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date - 13, current_date)$q$, 'A(owner) 레포트 발행');
+select expect_error($q$insert into reports(child_id, created_by, period_start, period_end) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date - 13, current_date)$q$, '레포트 created_by 위조 차단');
+select expect_error($q$update reports set created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where id = '99999999-9999-9999-9999-999999999999'$q$, '레포트 created_by 재작성 차단');
 select expect_ok($q$insert into storage.objects(bucket_id, name) values ('reports', '11111111-1111-1111-1111-111111111111/99999999-9999-9999-9999-999999999999.pdf')$q$, 'A(owner) 레포트 PDF 업로드 허용');
 select expect_ok($q$insert into share_links(id, report_id, expires_at) values ('88888888-8888-8888-8888-888888888888', '99999999-9999-9999-9999-999999999999', now() + interval '72 hours')$q$, 'A(owner) 공유 링크 생성');
 
@@ -148,12 +210,8 @@ select expect_rows($q$update user_settings set settings = '{}'::jsonb where user
 
 -- ── 전연령 확대: 성인 대상자도 동일한 동의 게이트가 걸린다 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_ok($q$insert into children(id, name, birth_date, sex, recipient_type) values ('44444444-4444-4444-4444-444444444444', '아버지', '1955-03-02', 'male', 'adult')$q$, '성인 대상자 생성');
-select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '44444444-4444-4444-4444-444444444444', 'owner')$q$, '성인 대상자 owner 연결');
-select expect_error($q$insert into children(id, name, birth_date, sex, recipient_type) values ('55555555-5555-5555-5555-555555555555', '잘못된유형', '2000-01-01', 'male', 'pet')$q$, '허용되지 않은 recipient_type 차단');
--- 동의 없이는 성인 대상자도 기록 불가 (has_sensitive_consent 게이트 불변)
-select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 동의 전 기록 차단');
-select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'adult_delegated'), ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, '성인 위임 동의 + 민감정보 동의 기록');
+select expect_ok($q$select create_recipient('{"id":"44444444-4444-4444-4444-444444444444","name":"아버지","birth_date":"1955-03-02","sex":"male","recipient_type":"adult","is_self":false}'::jsonb)$q$, '성인 대상자·위임 동의 원자 생성');
+select expect_error($q$select create_recipient('{"id":"55555555-5555-5555-5555-555555555555","name":"잘못된유형","birth_date":"2000-01-01","sex":"male","recipient_type":"pet"}'::jsonb)$q$, '허용되지 않은 recipient_type 차단');
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 동의 후 기록 허용');
 -- 위임 동의만 철회해도 민감정보 동의가 살아 있으면 기록은 계속된다(게이트는 sensitive_health 하나)
 select expect_rows($q$update consents set revoked_at = now() where child_id = '44444444-4444-4444-4444-444444444444' and type = 'sensitive_health' and revoked_at is null$q$, 1, '성인 대상자 민감정보 동의 철회');
@@ -166,3 +224,5 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 -- 삭제한 대상자의 기록만 사라져야 한다 (다른 대상자의 기록은 남아 있어야 정상)
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
+
+\echo RLS_SUITE_COMPLETE expected=68

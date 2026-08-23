@@ -1297,3 +1297,87 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 공동관리 RLS·대상자 생성 원자성·감사 무결성 강화 (이번 커밋)
+
+**한 일**
+- `schema_security.sql`을 추가해 `children` 직접 INSERT와 `guardian_child` 직접
+  INSERT/UPDATE 정책을 제거하고, `create_recipient(jsonb)` 단일 definer RPC가
+  대상자·최초 owner·만 나이 기준 필수 동의를 원자적으로 생성하도록 변경했다.
+- 초대/역할 변경은 `invite_guardian`/`set_guardian_role` RPC로 강제했다. caller·owner·
+  역할·구독 한도를 검증하고 advisory transaction lock으로 동시 요청을 직렬화하며,
+  재초대는 멱등적으로 처리한다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하고 이후 변경할 수 없도록 RLS + trigger를 추가했다. Supabase repo도 새 대상자
+  생성/역할 변경 RPC를 사용하도록 바꿨다.
+- 적용 순서, 기존 데이터 호환, 비상 롤백 SQL과 제한을 `docs/11_rls_data_integrity.md`에
+  문서화하고 DB 스키마 문서에서 링크했다. RLS 통합 테스트는 직접 삽입/권한 변경,
+  부분 실패 고아 행, 비소유자, 작성자 위조 INSERT/UPDATE 공격을 포함하도록 확장했다.
+
+**결정과 이유**
+- 대상자·owner·동의를 클라이언트의 여러 요청으로 나누면 네트워크/한도 실패가 고아
+  행 또는 동의 누락으로 남을 수 있으므로 서버 트랜잭션이 경계를 소유한다.
+- 감사 작성자는 UI가 아니라 DB가 신뢰 경계여야 하므로, 앱이 임의 UUID를 보내도
+  `auth.uid()`와 불일치하면 거부한다. owner 이전은 별도 보안 설계가 필요한 범위라
+  계속 비범위로 유지한다.
+
+**검증**
+- `npm ci` 완료 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (`dist/`, web bundle 2.54 MB), `git diff --check` 통과.
+- 로컬 PostgreSQL/`psql`이 없고 Docker daemon도 실행 중이 아니어서, 확장된
+  `supabase/tests/rls_test.sql`의 실제 PostgreSQL 16 실행은 이 작업 환경에서
+  수행하지 못했다. 스테이징/CI의 fresh DB에서 반드시 먼저 실행한다.
+
+**다음**
+- 스테이징 Supabase 또는 PostgreSQL 16에서 `rls_test.sql`을 실행해 migration SQL과
+  실제 auth/storage 권한을 검증한 뒤, 운영 적용은 별도 승인으로 진행한다.
+
+---
+
+## 2026-08-23 — P0 RLS 원격 체크포인트·GitHub PostgreSQL 16 검증 (이번 커밋)
+
+**한 일**
+- 공용 GitHub credential helper를 사용해 `fix/p0-rls-data-integrity`의 원격 SHA가
+  로컬 구현 커밋과 일치함을 확인하고, 검증된 PR #2 브랜치 대상으로 Draft PR #3을 유지했다.
+- GitHub CI fresh PostgreSQL 16 환경에서 확장한 `rls_test.sql`을 포함한 전체 품질 게이트를
+  재확인했다. 이는 이 작업 환경에서 `psql`/Docker daemon 부재로 남아 있던 로컬 SQL 실행
+  제약을 해소하는 원격 검증 증거다.
+
+**검증**
+- 구현 체크포인트(불변): `563abe982b543fccee374b8988d1f9e5fcfe38bd`.
+- PR HEAD는 후속 검증·문서 커밋에 따라 이동하므로 GitHub PR의 현재 head SHA를 기준으로 확인한다.
+- Draft PR #3: `fix/p0-rls-data-integrity` → `chore/git-development-workflow`.
+- 당시 GitHub `rls-test` green은 `psql | tee`의 종료 상태 누락으로 SQL 조기 종료를 숨긴
+  false-green이었다. 후속 보정에서 pipefail·완료 마커·정확한 PASS 수 검증을 추가한다.
+- Cloudflare Workers build PASS.
+
+**다음**
+- 독립 라쳇 보안 리뷰에서 RPC 권한·원자성·감사 위조 공격 시나리오를 별도 clean checkout으로
+  재검증한다. 운영 migration 적용과 `main` 병합은 캡틴 승인 전 금지한다.
+
+---
+
+## 2026-08-23 — RLS CI false-green 제거·공격 회귀 보강
+
+**한 일**
+- RLS CI에 `pipefail`을 적용하고 stderr까지 캡처해 `psql` 오류가 즉시 job 실패가 되도록 했다.
+  SQL 끝의 `RLS_SUITE_COMPLETE expected=68` 도달 1회, `PASS 68/68`, `FAIL 0`을 모두 검증해
+  조기 종료나 일부 실행이 green이 될 수 없게 했다.
+- Supabase 권한 모델처럼 `authenticated`에 `auth` schema USAGE를 부여하고 `anon` 역할을
+  별도로 셈했다. 신규 SECURITY DEFINER RPC 3개의 고정 search_path, authenticated 전용
+  EXECUTE grant, anon의 실제 호출 거부를 실행형 테스트로 검증한다.
+- 동일 id 네트워크 재시도의 중복 없음과, test-only guardian trigger가 children INSERT 다음에
+  실패할 때 children/관계/동의가 모두 rollback되는 실제 중간 실패를 추가했다.
+
+**결정과 이유**
+- 로그에 `FAIL` 문자열이 없다는 것만으로는 테스트 완주를 증명하지 못한다. 실행기 종료 상태,
+  명시적 마지막 마커, 예상 assertion 수를 독립적으로 모두 확인해야 한다.
+- 기존 quota 실패는 children INSERT 전에 발생하므로 트랜잭션 rollback 증거가 아니었다.
+  이번 fault injection은 다음 쓰기에서 실패시켜 PostgreSQL 함수 호출 전체 원자성을 직접 검증한다.
+
+**검증**
+- 이 엔트리의 수치는 현재 PR HEAD를 로컬 및 GitHub fresh PostgreSQL 16에서 재검증한 뒤
+  PR 본문과 CI 로그 URL에 기록한다. 운영 DB에는 적용하지 않는다.

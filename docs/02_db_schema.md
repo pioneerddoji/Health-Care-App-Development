@@ -70,6 +70,18 @@ payload 키는 앱 코드와 동일한 **camelCase**로 저장한다(JSONB이므
 - `invite_guardian(cid, email, role)` RPC(definer): owner 검증 → auth.users에서
   이메일→uid 해석 → guardian_child upsert. 미가입 이메일은 오류로 가입 안내.
 
+### P0 무결성 강화 (`schema_security.sql`)
+- 적용 순서는 `schema.sql` → stage3 → subscriptions → settings → recipients → security다.
+  기존 데이터는 수정하지 않으며, 새 대상자 생성만 `create_recipient(jsonb)` 단일
+  `SECURITY DEFINER` 트랜잭션으로 제한한다.
+- 이 RPC는 대상자·최초 owner·만 나이 기준 필수 동의(법정대리/본인/성인 위임 +
+  `sensitive_health`)를 함께 생성하고, 구독 한도 실패 시 전체를 롤백한다.
+- `guardian_child`의 직접 INSERT/UPDATE를 폐기하고 `invite_guardian`/
+  `set_guardian_role` RPC로 초대·역할 변경을 강제한다. owner 승격·자기 초대는 불가다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하며 이후 수정도 trigger가 거부한다. 적용·검증·비상 롤백은
+  `docs/11_rls_data_integrity.md`를 단일 기준으로 따른다.
+
 ### 4단계 추가 — 레포트 발행 · 만료형 공유 링크
 - `reports`: owner/editor만 발행(`select` 자체는 viewer도 가능해 앱 내 열람은 허용).
   PDF는 Storage `reports` 버킷 `child_id/report_id.pdf` 경로에 업로드.
