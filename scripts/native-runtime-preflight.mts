@@ -18,12 +18,14 @@ const plugins = Array.isArray(expo.plugins) ? expo.plugins : [];
 const requireConfig = (value: unknown, key: string) => {
   if (!value) throw new Error(key);
 };
+const isValidNativeScheme = (value: unknown) => typeof value === 'string'
+  && /^[A-Za-z][A-Za-z0-9+.-]*$/.test(value);
 const validateConfig = (candidate: typeof app) => {
   const candidateExpo = candidate.expo ?? {};
   const candidateAndroid = (candidateExpo.android ?? {}) as { permissions?: unknown };
   const candidatePermissions = Array.isArray(candidateAndroid.permissions) ? candidateAndroid.permissions : [];
   const candidatePlugins = Array.isArray(candidateExpo.plugins) ? candidateExpo.plugins : [];
-  requireConfig(candidateExpo.scheme, 'expo.scheme');
+  requireConfig(isValidNativeScheme(candidateExpo.scheme), 'expo.scheme');
   requireConfig(candidatePermissions.includes('READ_MEDIA_IMAGES'), 'android.permissions.READ_MEDIA_IMAGES');
   requireConfig(candidatePermissions.includes('POST_NOTIFICATIONS'), 'android.permissions.POST_NOTIFICATIONS');
   requireConfig(candidatePlugins.includes('expo-notifications'), 'plugins.expo-notifications');
@@ -74,6 +76,26 @@ try {
   ok(false, 'negative fixture rejects missing notification config');
 } catch (error) {
   ok(String(error).includes(fixture.expectedError), 'negative fixture rejects missing notification config');
+}
+
+const invalidSchemeFixture = JSON.parse(read('scripts/fixtures/native-runtime-preflight-invalid-scheme.json')) as {
+  appJson: typeof app; expectedError: string;
+};
+try {
+  validateConfig(invalidSchemeFixture.appJson);
+  ok(false, 'negative fixture rejects invalid native scheme');
+} catch (error) {
+  ok(String(error).includes(invalidSchemeFixture.expectedError), 'negative fixture rejects invalid native scheme');
+}
+
+const malformedSchemeFixture = JSON.parse(read('scripts/fixtures/native-runtime-preflight-malformed-scheme.json')) as {
+  appJson: typeof app; expectedError: string;
+};
+try {
+  validateConfig(malformedSchemeFixture.appJson);
+  ok(false, 'negative fixture rejects malformed native scheme');
+} catch (error) {
+  ok(String(error).includes(malformedSchemeFixture.expectedError), 'negative fixture rejects malformed native scheme');
 }
 
 console.log(`NATIVE_RUNTIME_PREFLIGHT PASS=${pass} FAIL=${issues.length}`);

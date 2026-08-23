@@ -1970,3 +1970,33 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   GitHub CI completion marker로만 대조하며 local 실행으로 주장하지 않는다.
 - Android/iOS 기기·에뮬레이터, EAS/store build/upload, signing/bundle ID, OAuth/payment/Supabase
   운영 연결, secrets/cost, external users, production deploy와 `main` 병합은 실행하지 않는다.
+
+---
+
+## 2026-08-24 — PR #18 native scheme preflight false-green 차단
+
+**한 일**
+- `native-runtime-preflight`의 `expo.scheme` 검증을 truthy 확인에서 URI scheme 형식의 non-empty
+  string 검사로 강화했다. 배열·객체 같은 non-string과 공백을 포함한 malformed 문자열은 fail-closed로
+  `expo.scheme` 오류를 낸다.
+- 기존 `POST_NOTIFICATIONS` 누락 fixture를 유지하고, non-string 배열 및 malformed string scheme의
+  두 negative fixture를 추가했다. 이 fixture들이 preflight에서 반드시 실패해야 PASS가 된다.
+
+**결정과 이유**
+- `expo.scheme=[]`가 truthy여서 정적 preflight를 통과하던 P1 false-green을 차단한다. URI scheme의
+  첫 문자는 영문자이고 이후에는 영문자·숫자·`+`·`.`·`-`만 허용해 native deep-link 선언을 정적으로
+  보수적으로 검증한다.
+- matrix의 `not-proven`/`needs-device`, rollback, 캡틴 승인 gate 및 기존 기능별 정적 증거는 변경하지
+  않았다. native OS runtime 성공은 계속 주장하지 않는다.
+
+**검증**
+- RED: 새 invalid-scheme contract 추가 직후 기존 구현은 `NATIVE_RUNTIME_PREFLIGHT PASS=9 FAIL=1`로
+  실패했다. GREEN: `npm run test:native-preflight` **PASS 11 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건),
+  `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**,
+  E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 893 modules**,
+  `git diff --check` 통과. fresh PostgreSQL 16은 push 뒤 exact current-head GitHub CI completion marker로만
+  대조한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결,
+  production migration/data access, 외부 사용자·메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
