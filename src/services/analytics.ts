@@ -92,9 +92,17 @@ const ID_PREFIXES = {
   subjectId: 'sub_',
   episodeId: 'ep_',
 } as const;
-/** UUIDv4-shaped opaque values are issued before event construction; raw IDs never cross this boundary. */
+export type AnalyticsPseudonymPrefix = 'evt' | 'usr' | 'cc' | 'sub' | 'ep';
+const PSEUDONYM_PREFIXES: Record<AnalyticsPseudonymPrefix, string> = {
+  evt: ID_PREFIXES.eventId,
+  usr: ID_PREFIXES.userId,
+  cc: ID_PREFIXES.careCircleId,
+  sub: ID_PREFIXES.subjectId,
+  ep: ID_PREFIXES.episodeId,
+};
 const SAFE_PSEUDONYM = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const SAFE_SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+const SAFE_APP_VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}(?:-(?:alpha|beta|rc)\.\d{1,3})?$/;
+const issuedPseudonyms = new Set<string>();
 
 const fail = (message: string): never => { throw new Error(`Invalid analytics event: ${message}`); };
 const timestamp = (value: string, field: string): string => {
@@ -103,11 +111,25 @@ const timestamp = (value: string, field: string): string => {
   if (!Number.isFinite(parsed.getTime()) || !value.endsWith('Z')) fail(`${field} must be UTC ISO-8601`);
   return parsed.toISOString();
 };
+const randomUuidV4 = (): string => {
+  if (!globalThis.crypto?.getRandomValues) fail('secure pseudonym issuer is unavailable');
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+/** Creates and records an opaque identifier; source/account UUID values are never accepted as issued. */
+export const issueAnalyticsPseudonym = (prefix: AnalyticsPseudonymPrefix): string => {
+  const value = `${PSEUDONYM_PREFIXES[prefix]}${randomUuidV4()}`;
+  issuedPseudonyms.add(value);
+  return value;
+};
 const pseudonym = (value: string | undefined, field: keyof typeof ID_PREFIXES, required = true): string | undefined => {
   if (value === undefined && !required) return undefined;
   const prefix = ID_PREFIXES[field];
-  if (typeof value !== 'string' || !value.startsWith(prefix) || !SAFE_PSEUDONYM.test(value.slice(prefix.length))) {
-    fail(`${field} must be a prefixed pseudonymous identifier`);
+  if (typeof value !== 'string' || !value.startsWith(prefix) || !SAFE_PSEUDONYM.test(value.slice(prefix.length)) || !issuedPseudonyms.has(value)) {
+    fail(`${field} must be an issued pseudonymous identifier`);
   }
   return value;
 };
@@ -143,8 +165,12 @@ const validateProperties = (eventName: AnalyticsEventName, properties: Analytics
     if (!Object.prototype.hasOwnProperty.call(properties, key)) fail(`required property ${key} is missing for ${eventName}`);
   }
   const output: AnalyticsProperties = {};
-  for (const [key, value] of Object.entries(properties)) {
+  for (const key of Object.keys(properties)) {
     if (!allowed.has(key)) fail(`property ${key} is not allowed for ${eventName}`);
+  }
+  for (const key of EVENT_PROPERTIES[eventName]) {
+    if (!Object.prototype.hasOwnProperty.call(properties, key)) continue;
+    const value = properties[key];
     const validator = PROPERTY_SCHEMAS[key];
     if (!validator || !validator(value)) fail(`property ${key} must match its bounded schema`);
     output[key] = value;
@@ -159,7 +185,7 @@ export const createAnalyticsEvent = (input: AnalyticsEventInput): AnalyticsEvent
   if (input.eventVersion !== ANALYTICS_EVENT_VERSION) fail('unsupported event_version');
   if (!Object.values(['owner', 'admin', 'recorder', 'viewer']).includes(input.actorRole)) fail('actor_role is invalid');
   if (!Object.values(['ios', 'android', 'web']).includes(input.platform)) fail('platform is invalid');
-  if (typeof input.appVersion !== 'string' || !SAFE_SEMVER.test(input.appVersion)) fail('app_version must be semver');
+  if (typeof input.appVersion !== 'string' || !SAFE_APP_VERSION.test(input.appVersion)) fail('app_version must be a bounded release version');
 
   const occurredAt = timestamp(input.occurredAt, 'occurred_at');
   const receivedAt = timestamp(input.receivedAt, 'received_at');
@@ -167,7 +193,7 @@ export const createAnalyticsEvent = (input: AnalyticsEventInput): AnalyticsEvent
   const assignments = (input.experimentAssignments ?? []).map(({ experimentId, variantId }) => {
     if (typeof experimentId !== 'string' || typeof variantId !== 'string' || !SAFE_PSEUDONYM.test(experimentId) || !SAFE_PSEUDONYM.test(variantId)) fail('experiment assignment is invalid');
     return Object.freeze({ experiment_id: experimentId, variant_id: variantId });
-  });
+  }).sort((a, b) => a.experiment_id.localeCompare(b.experiment_id) || a.variant_id.localeCompare(b.variant_id));
 
   return Object.freeze({
     event_name: input.eventName,
@@ -248,14 +274,48 @@ export interface CareMetrics {
   episodeFunnel: { started: number; firstFact: number; collab: number; briefingGenerated: number; followupAssigned: number; completed: number };
 }
 
+const canonicalizeAnalyticsEvent = (event: unknown): AnalyticsEvent => {
+  const source = event as Partial<AnalyticsEvent>;
+  return createAnalyticsEvent({
+    eventName: source?.event_name as AnalyticsEventName,
+    eventVersion: source?.event_version as typeof ANALYTICS_EVENT_VERSION,
+    eventId: source?.event_id as string,
+    occurredAt: source?.occurred_at as string,
+    receivedAt: source?.received_at as string,
+    userId: source?.user_id as string,
+    careCircleId: source?.care_circle_id as string,
+    subjectId: source?.subject_id,
+    episodeId: source?.episode_id,
+    actorRole: source?.actor_role as AnalyticsActorRole,
+    platform: source?.platform as AnalyticsPlatform,
+    appVersion: source?.app_version as string,
+    experimentAssignments: source?.experiment_assignments?.map(({ experiment_id, variant_id }) => ({ experimentId: experiment_id, variantId: variant_id })),
+    consentAnalytics: source?.consent_analytics as boolean,
+    properties: source?.properties as AnalyticsProperties,
+  });
+};
+
+const deduplicateCanonicalEvents = (input: readonly AnalyticsEvent[]): AnalyticsEvent[] => {
+  if (!Array.isArray(input)) fail('aggregate input must be an array');
+  const byEventId = new Map<string, AnalyticsEvent>();
+  for (const event of input) {
+    const canonical = canonicalizeAnalyticsEvent(event);
+    const previous = byEventId.get(canonical.event_id);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(canonical)) {
+      fail('conflicting duplicate event_id in aggregate input');
+    }
+    byEventId.set(canonical.event_id, canonical);
+  }
+  return Array.from(byEventId.values()).sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.event_id.localeCompare(b.event_id));
+};
+
 /**
  * occurred_at만으로 계산하는 결정론적 집계. received_at 정렬/지연은 결과에 영향을 주지 않는다.
  * 21일 episode는 시작일부터 21일, collab activation은 circle 생성 뒤 7일 안의 조건을 쓴다.
  */
 export const aggregateCareMetrics = (input: readonly AnalyticsEvent[], options: { weekStart: string }): CareMetrics => {
-  const events = [...new Map(input.map((event) => [event.event_id, event])).values()]
-    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.event_id.localeCompare(b.event_id));
-  const weekStart = new Date(timestamp(options.weekStart, 'weekStart')).getTime();
+  const events = deduplicateCanonicalEvents(input);
+  const weekStart = new Date(timestamp(options?.weekStart, 'weekStart')).getTime();
   const weekEnd = weekStart + 7 * 86_400_000;
   const byCircle = new Map<string, AnalyticsEvent[]>();
   for (const event of events) byCircle.set(event.care_circle_id, [...(byCircle.get(event.care_circle_id) ?? []), event]);

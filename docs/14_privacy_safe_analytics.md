@@ -13,7 +13,7 @@
 
 필수 필드는 `event_name`, `event_version=1`, `event_id`, `occurred_at`, `received_at`, `user_id`, `care_circle_id`, `actor_role`, `platform`, `app_version`, `consent_analytics`, `properties`이다. `subject_id`와 `episode_id`는 해당 단위가 없으면 생략한다.
 
-식별자는 원본 UUID·계정·대상자 ID를 사용하지 않고 ID 발급 경계가 만든 UUIDv4 형식의 opaque 값에 `evt_`, `usr_`, `cc_`, `sub_`, `ep_` 접두사만 붙인 값만 허용한다. 따라서 상세 DOB·전화번호·건강 원문·token을 접두사만 붙여 pseudonym처럼 위장할 수 없다. 동의는 runtime에서 정확히 `true`여야 하며, `truthy` 값은 이벤트 생성과 sink 직접 입력 모두에서 거부한다.
+식별자는 원본 UUID·계정·대상자 ID를 사용하지 않는다. `issueAnalyticsPseudonym()` 발급 경계가 CSPRNG로 새 UUIDv4 token을 만들고 발급 사실을 기록한 뒤 `evt_`, `usr_`, `cc_`, `sub_`, `ep_` 접두사를 붙인다. 이벤트 생성·sink·public aggregate는 UUID 모양만 검사하지 않고 이 발급 경계를 거친 token만 허용한다. 따라서 원본 UUID를 접두사로 감싸거나 상세 DOB·전화번호·건강 원문·token을 pseudonym처럼 위장할 수 없다. 동의는 runtime에서 정확히 `true`여야 하며, `truthy` 값은 이벤트 생성과 sink 직접 입력 모두에서 거부한다.
 
 지원 이벤트와 최소 properties는 코드의 `EVENT_PROPERTIES`가 단일 진실 원천이다. 각 property는 코드의 `PROPERTY_SCHEMAS`에 정의한 작은 enum 또는 제한된 정수 범위만 허용하며, 이벤트별 allowlist의 필수 키를 빠짐없이 가져야 한다. 알 수 없는 이름·버전·property·중첩 객체·배열·자유 문자열은 fail-closed로 거부한다.
 
@@ -30,13 +30,13 @@
 
 ## 결정론적 지표
 
-- **collab activation:** circle 생성 뒤 7일 안에 대상 등록, 구조화 기록, 초대 생성·수락, 생성자와 다른 사용자의 기록 확인을 모두 만족한 고유 circle.
+- **collab activation:** circle 생성 뒤 닫힌 구간 `[생성, 생성 + 7일]` 안에 대상 등록, 구조화 기록, 초대 생성·수락, 생성자와 다른 사용자의 기록 확인을 모두 만족한 고유 circle. 정확히 +7일은 포함하고 +1ms는 제외한다.
 - **WCC:** KST 월요일 00:00을 UTC ISO-8601 `weekStart`로 전달한 반열린 구간 `[weekStart, weekStart + 7일)`에서 서로 다른 사용자 2명 이상, 유효 `record_created` 3개 이상, `record_acknowledged` 또는 `task_completed` 1개 이상을 만족한 고유 circle. 경계 시각은 다음 주에만 속해 주간 이중 집계를 막는다.
-- **21일 episode:** `episode_started` 기준의 닫힌 구간 `[시작, 시작 + 21일]` 안의 `record_created`, 협업, 브리핑 생성, follow-up 배정, `episode_completed`의 고유 episode 수. 시작 전 이벤트는 포함하지 않는다. 취소는 `episode_cancelled`의 `episode_cancelled_reason`으로 별도 보고하며 완료 실패로 합치지 않는다.
+- **21일 episode:** `episode_started` 기준의 닫힌 구간 `[시작, 시작 + 21일]` 안의 `record_created`, 협업, 브리핑 생성, follow-up 배정, `episode_completed`의 고유 episode 수. 정확히 +21일은 포함하고 +1ms는 제외하며, 시작 전 이벤트는 포함하지 않는다. 취소는 `episode_cancelled`의 `episode_cancelled_reason`으로 별도 보고하며 완료 실패로 합치지 않는다.
 
-public aggregate 입력도 `event_id`로 먼저 중복 제거하므로 sink 밖에서 합계를 재계산해도 한 이벤트가 두 번 세어지지 않는다. collab activation은 동일하게 circle 생성 시각부터 7일 뒤까지의 닫힌 구간 `[생성, 생성 + 7일]`만 사용한다.
+public aggregate 입력은 sink와 같은 canonical event contract를 먼저 재검증한다. 같은 `event_id`와 동일한 canonical payload는 한 번만 세고, 같은 `event_id`에 다른 payload가 오면 입력 순서에 따른 last-write-wins를 허용하지 않고 fail-closed로 거부한다. collab activation은 동일하게 circle 생성 시각부터 7일 뒤까지의 닫힌 구간 `[생성, 생성 + 7일]`만 사용한다.
 
-`npm run test:analytics` fixture는 중복 event, 늦게 도착한 `received_at`, KST 자정 경계, 허용 목록 우회, activation/WCC/episode 재현을 검사한다.
+`npm run test:analytics` fixture는 발급되지 않은 UUID 모양 ID, app version build metadata token, 중복·충돌 event, 늦게 도착한 `received_at`, KST 자정·weekEnd 경계, 허용 목록 우회, 정확한 +7일/+21일과 초과 1ms, activation/WCC/episode 재현을 검사한다.
 
 ## 보존·철회·롤백
 

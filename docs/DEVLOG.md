@@ -1622,3 +1622,22 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - 외부 SDK·네트워크 전송·운영 migration 없이 Draft PR #11의 독립 재검토/CI를 기다린다.
+
+---
+
+## 2026-08-24 — PR #11 analytics 독립 재검토 P0/P1 보완
+
+**한 일**
+- `app_version`은 bounded release version(`major.minor.patch`와 제한된 prerelease)만 허용하도록 바꿔 SemVer build metadata에 token·PII를 싣는 우회 경로를 닫았다.
+- UUID 모양 검사만으로 opaque를 주장하지 않도록 `issueAnalyticsPseudonym()` 발급 경계를 추가했다. CSPRNG가 새 token을 발급·기록하고, event 생성·sink·집계는 실제 발급된 token만 받는다.
+- `aggregateCareMetrics`의 public 입력을 canonical contract로 재검증하고, 동일 `event_id`는 동일 canonical payload만 dedupe하며 충돌 payload는 fail-closed로 거부하게 했다.
+- repository analytics 계약 테스트에 app version token, 미발급 UUID, forged aggregate, 충돌 duplicate, collab 정확히 +7일/+1ms, episode 정확히 +21일/+1ms, KST weekEnd 제외 공격 회귀를 추가했다.
+
+**결정과 이유**
+- UUID 형식은 발급 provenance가 아니다. 원본 source UUID를 그대로 감싼 값도 형식을 통과하므로, 발급 경계의 기록을 검증해야 raw identifier를 opaque pseudonym으로 오인하지 않는다.
+- 집계 API는 sink 밖에서도 호출될 수 있으므로 타입만 신뢰하면 `as any`와 event-id 충돌이 입력 순서 의존 funnel을 만든다. 집계 입구에서 같은 계약·충돌 정책을 적용한다.
+
+**검증**
+- clean `npm ci --ignore-scripts` 성공(기존 audit: moderate 11, high 13).
+- RED: 기존 구현에서 새 공격 회귀 4건(app version, 미발급 UUID, 충돌 duplicate, forged aggregate)이 기대대로 실패했다. GREEN: `npm run test:analytics` **PASS 37 / FAIL 0**, `npm run typecheck` 통과.
+- 운영 migration·외부 SDK/네트워크 전송·실제 데이터/secret·main 병합은 수행하지 않았다.
