@@ -1297,3 +1297,40 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `git diff --check` 통과. GitHub CI 실행·branch protection 실제 설정은 저장소 관리자
   권한 및 캡틴 승인 범위이므로 본 작업에서 변경하지 않음.
+
+---
+
+## 2026-08-23 — P0 공동관리 RLS·대상자 생성 원자성·감사 무결성 강화 (이번 커밋)
+
+**한 일**
+- `schema_security.sql`을 추가해 `children` 직접 INSERT와 `guardian_child` 직접
+  INSERT/UPDATE 정책을 제거하고, `create_recipient(jsonb)` 단일 definer RPC가
+  대상자·최초 owner·만 나이 기준 필수 동의를 원자적으로 생성하도록 변경했다.
+- 초대/역할 변경은 `invite_guardian`/`set_guardian_role` RPC로 강제했다. caller·owner·
+  역할·구독 한도를 검증하고 advisory transaction lock으로 동시 요청을 직렬화하며,
+  재초대는 멱등적으로 처리한다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하고 이후 변경할 수 없도록 RLS + trigger를 추가했다. Supabase repo도 새 대상자
+  생성/역할 변경 RPC를 사용하도록 바꿨다.
+- 적용 순서, 기존 데이터 호환, 비상 롤백 SQL과 제한을 `docs/11_rls_data_integrity.md`에
+  문서화하고 DB 스키마 문서에서 링크했다. RLS 통합 테스트는 직접 삽입/권한 변경,
+  부분 실패 고아 행, 비소유자, 작성자 위조 INSERT/UPDATE 공격을 포함하도록 확장했다.
+
+**결정과 이유**
+- 대상자·owner·동의를 클라이언트의 여러 요청으로 나누면 네트워크/한도 실패가 고아
+  행 또는 동의 누락으로 남을 수 있으므로 서버 트랜잭션이 경계를 소유한다.
+- 감사 작성자는 UI가 아니라 DB가 신뢰 경계여야 하므로, 앱이 임의 UUID를 보내도
+  `auth.uid()`와 불일치하면 거부한다. owner 이전은 별도 보안 설계가 필요한 범위라
+  계속 비범위로 유지한다.
+
+**검증**
+- `npm ci` 완료 후 `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 137 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npm run build:web` 통과 (`dist/`, web bundle 2.54 MB), `git diff --check` 통과.
+- 로컬 PostgreSQL/`psql`이 없고 Docker daemon도 실행 중이 아니어서, 확장된
+  `supabase/tests/rls_test.sql`의 실제 PostgreSQL 16 실행은 이 작업 환경에서
+  수행하지 못했다. 스테이징/CI의 fresh DB에서 반드시 먼저 실행한다.
+
+**다음**
+- 스테이징 Supabase 또는 PostgreSQL 16에서 `rls_test.sql`을 실행해 migration SQL과
+  실제 auth/storage 권한을 검증한 뒤, 운영 적용은 별도 승인으로 진행한다.

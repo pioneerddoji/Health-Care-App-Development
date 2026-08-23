@@ -6,7 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { makeRedirectUri } from 'expo-auth-session';
 import * as QueryParams from 'expo-auth-session/build/QueryParams';
 import { supabase, supabaseUrl } from '../lib/supabase';
-import { consentPlanFor } from '../lib/recipient';
+
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import { SOCIAL_PROVIDERS, type SocialProvider } from './socialAuth';
 import type {
@@ -423,22 +423,14 @@ export const supabaseRepo: Repo = {
   },
 
   async createChild(input: ChildInput): Promise<Child> {
-    const userId = await currentUserId();
-    const { data, error } = await sb().from('children').insert(childToRow(input)).select().single();
+    // 대상자·최초 owner·연령별 필수 동의는 하나의 definer 트랜잭션으로 생성한다.
+    // 직접 INSERT를 나누면 중간 실패 때 고아 대상자나 동의 없는 행이 남을 수 있다.
+    const { data, error } = await sb().rpc('create_recipient', {
+      recipient: childToRow(input),
+    });
     throwIf(error);
-    const child = childFromRow(data);
-    // owner 관계 + 동의(가입 시 동의 완료된 내용을 아이 단위로 기록 — RLS가 요구)
-    const { error: gErr } = await sb().from('guardian_child')
-      .insert({ guardian_id: userId, child_id: child.id, role: 'owner' });
-    throwIf(gErr);
-    // 동의는 대상자의 만 나이·본인 여부에 따라 갈린다 (lib/recipient.ts가 단일 원천)
-    const { error: cErr } = await sb().from('consents').insert(
-      consentPlanFor(input).types.map((type) => ({
-        child_id: child.id, guardian_id: userId, type,
-      })),
-    );
-    throwIf(cErr);
-    return child;
+    if (!data) throw new Error('대상자 생성 결과를 확인할 수 없습니다');
+    return childFromRow(data);
   },
 
   async updateChild(id: string, patch: Partial<ChildInput>) {
@@ -629,8 +621,9 @@ export const supabaseRepo: Repo = {
   },
 
   async updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer') {
-    const { error } = await sb().from('guardian_child')
-      .update({ role }).eq('child_id', childId).eq('guardian_id', guardianId);
+    const { error } = await sb().rpc('set_guardian_role', {
+      cid: childId, target_guardian_id: guardianId, new_role: role,
+    });
     throwIf(error);
   },
 
