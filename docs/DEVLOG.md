@@ -1940,3 +1940,33 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   재대조했다. 로컬 `psql`/Docker 부재는 계속 문서에 명시했으며 local fresh PG16 실행을 주장하지 않았다.
 - 운영 migration/data access, telemetry, 사용자/외부 cohort·보상·고객 접촉, OAuth·결제·SMS,
   DNS/secrets, production/store 배포 및 `main` 병합은 수행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 내부 베타 native runtime gap matrix·정적 사전점검
+
+**한 일**
+- `docs/18_internal_beta_native_runtime_gap_matrix.md`에 picker, 사진 권한, PDF/share,
+  local notification, deep-link/auth resume, app resume, accessibility를 source/config 근거와
+  함께 **proven (static) / not-proven / needs-device**로 분리했다.
+- `scripts/native-runtime-preflight.mts`와 누락 notification declaration 실패 fixture를 추가했다.
+  preflight는 `app.json`과 source만 읽고 external telemetry, registry, SDK, network, credential을
+  사용하지 않으며 native runtime 성공을 주장하지 않는다.
+- `npm run test:native-preflight` 및 GitHub CI의 동명 독립 job을 추가했다.
+
+**결정과 이유**
+- Expo web export·Node contract가 native OS permission, PDF renderer, share sheet, notification,
+  lifecycle, TalkBack/VoiceOver를 증명하는 false-green이 되지 않도록 실제 기기 확인 항목을
+  명시적으로 남겼다. `AppState` lifecycle 구독은 현재 source에 없으므로 not-proven으로 고정했다.
+- 누락 config fixture가 실패해야 preflight 자체가 단순 존재 확인 green으로 퇴화하지 않는다.
+
+**검증**
+- clean `npm ci` 후 `npm run typecheck`, `npm run test:analytics` **PASS 37 / FAIL 0**,
+  `npm run test:five-minute-wow` **PASS 41 / FAIL 0**, `npm run test:e2e` **PASS 189 / FAIL 0**,
+  `npm run test:gating` **PASS 41 / FAIL 0**, `npm run test:native-preflight`
+  **PASS 9 / FAIL 0**. failure fixture는 `POST_NOTIFICATIONS` 누락을 실패로 확인했다.
+- Edge contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export
+  **PASS 893 modules**, `git diff --check` 통과. fresh PG16은 commit/push 뒤 current-head
+  GitHub CI completion marker로만 대조하며 local 실행으로 주장하지 않는다.
+- Android/iOS 기기·에뮬레이터, EAS/store build/upload, signing/bundle ID, OAuth/payment/Supabase
+  운영 연결, secrets/cost, external users, production deploy와 `main` 병합은 실행하지 않는다.
