@@ -6,6 +6,7 @@ import { useApp } from '../../context/AppContext';
 import { Button, Field, KeyboardScreen, Muted, tokens } from '../../components/ui';
 import { passwordError } from '../../lib/validation';
 import { recoverySubmitDisabled } from '../../services/authUxState';
+import { createAccessibilityFocusController } from '../../services/accessibilityFocus';
 
 /** Supabase recovery redirect가 만든 짧은 세션에서만 보이는 비밀번호 설정 화면. */
 export const RecoveryPasswordScreen = ({
@@ -17,14 +18,18 @@ export const RecoveryPasswordScreen = ({
   const [busy, setBusy] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const errorRef = useRef<Text>(null);
+  const focus = useRef(createAccessibilityFocusController({
+    clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
+    setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
+  })).current;
   const error = password.length ? passwordError(password) : null;
   const mismatch = confirm.length > 0 && password !== confirm;
 
   useEffect(() => {
     if (!linkError && !submitError) return;
-    const node = findNodeHandle(errorRef.current);
-    if (node) AccessibilityInfo.setAccessibilityFocus(node);
-  }, [linkError, submitError]);
+    focus.request(() => findNodeHandle(errorRef.current));
+  }, [focus, linkError, submitError]);
+  useEffect(() => () => focus.dispose(), [focus]);
 
   const submit = async () => {
     if (busy || error || mismatch) return;

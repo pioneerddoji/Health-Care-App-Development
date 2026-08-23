@@ -10,7 +10,8 @@ import { formatShort } from '../../lib/date';
 import { TIER_META } from '../../constants/subscription';
 import type { ChildGuardian, ShareLinkInfo } from '../../types';
 import { SOCIAL_PROVIDERS, type SocialProvider } from '../../services/socialAuth';
-import { deletionSubmitDisabled, focusAccessibilityError } from '../../services/authUxState';
+import { deletionSubmitDisabled } from '../../services/authUxState';
+import { createAccessibilityFocusController } from '../../services/accessibilityFocus';
 
 const ROLE_LABEL = { owner: '소유자', editor: '편집자', viewer: '열람자' } as const;
 
@@ -47,10 +48,15 @@ export const SettingsScreen = () => {
   const [deleteMethods, setDeleteMethods] = useState<('email' | SocialProvider)[]>([]);
   const [deleteError, setDeleteError] = useState('');
   const deleteErrorRef = useRef<React.ComponentRef<typeof Text>>(null);
+  const focus = useRef(createAccessibilityFocusController({
+    clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
+    setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
+  })).current;
 
   useEffect(() => {
-    if (deleteError) focusAccessibilityError(findNodeHandle(deleteErrorRef.current), AccessibilityInfo);
-  }, [deleteError]);
+    if (deleteError) focus.request(() => findNodeHandle(deleteErrorRef.current));
+  }, [deleteError, focus]);
+  useEffect(() => () => focus.dispose(), [focus]);
 
   const isOwner = selectedChild ? roleOf(selectedChild.id) === 'owner' : false;
   const coGuardianCount = guardians.filter((g) => g.role !== 'owner').length;

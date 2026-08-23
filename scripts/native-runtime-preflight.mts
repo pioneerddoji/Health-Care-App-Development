@@ -64,9 +64,21 @@ ok(vaccination.includes('notificationDenied')
 
 const ui = read('src/components/ui.tsx');
 const settings = read('src/screens/settings/SettingsScreen.tsx');
+const dateFieldAccessibility = read('src/components/DateField.tsx');
+const recovery = read('src/screens/auth/RecoveryPasswordScreen.tsx');
+const focus = read('src/services/accessibilityFocus.ts');
 ok(ui.includes('accessibilityRole="button"')
+  && ui.includes('accessibilityLabel={label}')
+  && ui.includes('accessibilityState={{ disabled: !!disabled }}')
   && ui.includes('accessibilityLabel={inputProps.accessibilityLabel ?? label}')
-  && settings.includes('accessibilityLiveRegion="assertive"'), 'baseline button/input/error accessibility semantics');
+  && settings.includes('accessibilityLiveRegion="assertive"')
+  && recovery.includes('accessibilityLiveRegion="assertive"'), 'baseline button/input/error role, label, state, and live-region semantics');
+ok(dateFieldAccessibility.includes('onRequestClose={closePicker}')
+  && dateFieldAccessibility.includes('onShow={() => focusRef(doneRef)}')
+  && dateFieldAccessibility.includes('focusRef(triggerRef)')
+  && dateFieldAccessibility.includes('accessibilityViewIsModal')
+  && focus.includes('if (node !== null) setAccessibilityFocus(node)')
+  && focus.includes('dispose()'), 'picker open/back/close focus restoration is deferred and fails closed for missing or unmounted targets');
 
 const matrix = read('docs/18_internal_beta_native_runtime_gap_matrix.md');
 ok(matrix.includes('not-proven') && matrix.includes('needs-device')

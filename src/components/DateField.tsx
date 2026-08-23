@@ -1,8 +1,11 @@
 // 날짜/시간 선택 필드 — 네이티브에서는 달력/시계 픽커, 웹에서는 텍스트 입력 폴백.
-import React, { useState } from 'react';
-import { Platform, Pressable, Text, TextInput, View, StyleSheet, Modal } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  AccessibilityInfo, findNodeHandle, Platform, Pressable, Text, TextInput, View, StyleSheet, Modal,
+} from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { tokens } from './ui';
+import { createAccessibilityFocusController } from '../services/accessibilityFocus';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -20,6 +23,24 @@ interface Props {
 
 export const DateField = ({ label, mode, value, onChange, placeholder, maximumDate }: Props) => {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<React.ComponentRef<typeof Pressable>>(null);
+  const doneRef = useRef<React.ComponentRef<typeof Pressable>>(null);
+  const focus = useRef(createAccessibilityFocusController({
+    clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
+    setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
+  })).current;
+  useEffect(() => () => focus.dispose(), [focus]);
+  const focusRef = (ref: React.RefObject<React.ComponentRef<typeof Pressable> | null>) => {
+    focus.request(() => findNodeHandle(ref.current));
+  };
+  const openPicker = () => {
+    focus.cancel();
+    setOpen(true);
+  };
+  const closePicker = () => {
+    setOpen(false);
+    focusRef(triggerRef);
+  };
 
   // 웹: 네이티브 픽커 미지원 → 텍스트 입력 폴백 (Playwright 테스트도 이 경로 사용)
   if (Platform.OS === 'web') {
@@ -50,7 +71,7 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
   };
 
   const handlePicked = (event: DateTimePickerEvent, picked?: Date) => {
-    if (Platform.OS === 'android') setOpen(false);
+    if (Platform.OS === 'android') closePicker();
     if (event.type === 'dismissed' || !picked) return;
     onChange(mode === 'date' ? toDateStr(picked) : toTimeStr(picked));
   };
@@ -69,7 +90,14 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
   return (
     <View style={{ marginBottom: 12 }}>
       <Text style={s.label}>{label}</Text>
-      <Pressable onPress={() => setOpen(true)} style={s.input}>
+      <Pressable
+        ref={triggerRef}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ expanded: open }}
+        onPress={openPicker}
+        style={s.input}
+      >
         <Text style={value ? s.value : s.placeholder}>
           {value || placeholder || (mode === 'date' ? '탭해서 날짜 선택' : '탭해서 시간 선택')}
         </Text>
@@ -78,11 +106,17 @@ export const DateField = ({ label, mode, value, onChange, placeholder, maximumDa
       {Platform.OS === 'android' && open && picker}
 
       {Platform.OS === 'ios' && (
-        <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-          <Pressable style={s.backdrop} onPress={() => setOpen(false)}>
-            <Pressable style={s.sheet} onPress={() => {}}>
+        <Modal
+          visible={open}
+          transparent
+          animationType="fade"
+          onRequestClose={closePicker}
+          onShow={() => focusRef(doneRef)}
+        >
+          <Pressable accessibilityRole="button" accessibilityLabel="날짜 및 시간 선택 닫기" style={s.backdrop} onPress={closePicker}>
+            <Pressable accessibilityViewIsModal style={s.sheet} onPress={() => {}}>
               {picker}
-              <Pressable style={s.done} onPress={() => setOpen(false)}>
+              <Pressable ref={doneRef} accessibilityRole="button" accessibilityLabel="선택 완료" style={s.done} onPress={closePicker}>
                 <Text style={s.doneText}>완료</Text>
               </Pressable>
             </Pressable>

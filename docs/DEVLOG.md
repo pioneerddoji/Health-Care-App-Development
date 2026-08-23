@@ -2131,3 +2131,23 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   이 runner에는 `psql`이 없고 Docker daemon 연결도 불가하여 fresh PostgreSQL 16 RLS suite는 local 성공으로
   주장하지 않는다. Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영
   연결, production migration/data, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 native 접근성 state·focus 복원 계약 보강
+
+**한 일**
+- 공용 `Button`, `Chip`, `Field`에 명시적 role·label·disabled/selected state를 추가했다. 기존 웹 렌더 경로는 그대로 유지한다.
+- `DateField` native picker는 열릴 때 iOS 완료 버튼으로 focus를 넘기고, Android dismiss/back, iOS 닫기·backdrop·완료 뒤에는 trigger로 focus를 복원한다. deferred focus controller는 이전 요청을 취소하고 target이 없거나 unmount된 경우 native focus API를 호출하지 않는다.
+- Recovery password와 계정 삭제의 assertive error focus도 동일 controller로 옮겨 error 전환 뒤에만 deferred focus하며 unmount 시 pending work를 취소한다.
+- `scripts/accessibility-contract.mts`에 clock/ref test double fixture를 추가했고 native preflight와 gap matrix는 static proof/needs-device 경계를 이 계약에 맞춰 갱신했다.
+
+**결정과 이유**
+- native Modal/picker는 state 변경 직후 target node가 아직 없을 수 있고, back-to-back open/close나 unmount 뒤의 stale callback은 사라진 node로 focus를 보내면 안 된다. target을 delivery 시점에 해석하는 single-pending controller로 해당 경계를 fail-closed로 고정했다.
+- accessibility label·live-region에는 건강 기록, 토큰, URL query를 넣지 않았다. 실제 TalkBack/VoiceOver 탐색·발화와 OS picker focus trap은 여전히 실기기 승인 QA가 필요한 `needs-device` 항목이다.
+
+**검증**
+- TDD RED: 새 accessibility fixture는 `accessibilityFocus` 모듈 부재로 `ERR_MODULE_NOT_FOUND`로 실패했다. GREEN: `npm run test:accessibility` **PASS 5 / FAIL 0**.
+- clean `npm ci` (기존 audit advisory 24건: moderate 11, high 13; pending esbuild install script 1건), `npm run typecheck`, analytics **PASS 37 / FAIL 0**, five-minute WOW **PASS 41 / FAIL 0**, E2E **PASS 189 / FAIL 0**, gating **PASS 41 / FAIL 0**, app-resume lifecycle **PASS 14 / FAIL 0**, native preflight(negative config fixtures 포함) **PASS 13 / FAIL 0** 통과.
+- Deno share/billing/delete-account contracts **PASS 10 / FAIL 0**, 세 Edge Function `deno check`, Expo web export **PASS 814 modules**, `git diff --check` 통과. local `psql`/Docker daemon이 없어 fresh PostgreSQL 16은 push 뒤 exact current-head CI completion marker로만 확인한다.
+- Android/iOS 기기·에뮬레이터, EAS/store, signing/bundle ID, OAuth/payment/Supabase 운영 연결, production migration/data access, 외부 메시지, DNS/secrets/cost, production/main 병합은 실행하지 않는다.
