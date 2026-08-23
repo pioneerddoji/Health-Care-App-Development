@@ -1641,3 +1641,39 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - clean `npm ci --ignore-scripts` 성공(기존 audit: moderate 11, high 13).
 - RED: 기존 구현에서 새 공격 회귀 4건(app version, 미발급 UUID, 충돌 duplicate, forged aggregate)이 기대대로 실패했다. GREEN: `npm run test:analytics` **PASS 37 / FAIL 0**, `npm run typecheck` 통과.
 - 운영 migration·외부 SDK/네트워크 전송·실제 데이터/secret·main 병합은 수행하지 않았다.
+
+---
+
+## 2026-08-24 — 의존성 취약점 기준선·최소 안전 조치
+
+**한 일**
+- 독립 ratchet 검토가 승인한 PR #11 exact head
+  `a33fe765e1c02e6e80970b8d5c5e8f7936bb2054`를 기준으로 clean
+  `npm ci --ignore-scripts`, `npm audit --json`, `npm audit --omit=dev --json`,
+  `npm audit fix --package-lock-only --dry-run --json`을 실행했다.
+- 결과와 direct/transitive 경로, 앱 코드의 직접 import 여부, build-time과 runtime의
+  한정된 도달성 판단, advisory 입력 전제, 업그레이드 조건을
+  `docs/15_dependency_security_baseline.md`에 기록했다.
+
+**결정과 이유**
+- audit 기준선은 **24건(High 13, Moderate 11, Critical 0)**이며 `--omit=dev`도 같다.
+  Expo CLI/Metro graph가 root `expo` dependency 아래에 있기 때문이지, Node 개발 도구가
+  자동으로 모바일 번들에 들어간다는 증거는 아니다.
+- non-force audit fix dry-run은 lockfile 변경 0건이었다. SDK 57 major가 필요한 결과이므로
+  SDK 54 / React Native 0.81.4 조합에서 `--force`·임의 `overrides`를 적용하지 않았다.
+- SDK 54 patch 후보를 lockfile-only로 시험했으나 7,718줄 diff와 SDK 57 peer graph가 함께
+  생기고 audit은 23건으로만 줄었다. 최소·지원 범위를 넘으므로 즉시 되돌렸다. 결과적으로
+  `package.json`·`package-lock.json` 변경은 없다.
+- install script, registry, 외부 SDK, telemetry, secret, 운영 migration, main 병합은
+  추가하지 않았다.
+
+**검증**
+- 기준선의 `npm ci --ignore-scripts` 성공, `npm ls --all --omit=optional --depth=0` problems 0,
+  `git diff --check` 통과.
+- PR #11 exact head의 독립 ratchet 재검토가 승인되어, 이 기준선을 작은 문서 전용 PR로
+  handoff할 수 있다.
+
+**다음**
+- 별도 Expo SDK migration 카드에서 Expo 호환 매트릭스에 따라 SDK·모듈·React Native를 함께
+  올린 뒤 full verification과 native smoke를 거쳐 audit을 재측정한다. 그 전에는 lockfile을
+  기준으로 설치하고 신뢰되지 않은 build input을 Expo CLI/Metro/prebuild에 전달하지 않는다.
