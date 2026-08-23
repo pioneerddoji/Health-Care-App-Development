@@ -1502,3 +1502,23 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **검증**
 - 로컬: `npm run typecheck`, `npm run test:e2e` (137/0), `npm run test:gating` (41/0), Deno share-report contracts (6/0), Deno check, Expo web export, `git diff --check`을 실행했다.
 - local PostgreSQL 16/psql 및 Docker daemon은 사용할 수 없으므로 fresh-PG regression은 push 뒤 GitHub CI로 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.
+
+---
+
+## 2026-08-24 — P0 통합 검토: 탈퇴 응답 경계·공동 데이터 탈퇴 fixture 보강
+
+**한 일**
+- `supabaseRepo.deleteAccount`는 Edge Function의 raw 응답을 `runAccountDeletion`에 전달하고, 해당 공통 경계가 한 번만 versioned deletion contract를 파싱하도록 수정했다. completed일 때만 local session을 정리하며 partial/processing은 재시도 가능한 세션을 유지한다.
+- E2E에 Supabase raw completed/partial/processing 응답 회귀를 추가했다.
+- fresh-PG fixture에 공동 대상자의 B 작성 care-task와 B acknowledgement, A acknowledgement를 추가했다. 탈퇴 모델은 B 작성 task를 Auth 삭제 전에 명시적으로 제거하고, B 작성 record 삭제의 acknowledgement cascade와 A/공동 대상자 데이터 보존을 검증한다.
+- CI RLS assertion marker를 172로 동기화했다.
+
+**결정과 이유**
+- raw Edge payload와 이미 파싱된 도메인 결과를 같은 parser에 전달하면 정상 `completed`가 계약 오류가 된다. 파싱 책임을 workflow boundary 하나로 고정해 실제 앱 탈퇴 완료 UX가 session cleanup까지 도달하도록 했다.
+- `created_by`는 profile FK이므로 shared recipient를 보존하는 계정 삭제도 B 작성 task를 Auth/profile 삭제 전 제거해야 한다. acknowledgement는 작성 record와 함께 cascade되어야 하며 다른 보호자의 acknowledgement는 유지되어야 한다.
+
+**검증**
+- `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 171 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npx expo export --platform web --output-dir dist-web` 통과.
+- `npx --yes deno test --allow-env --allow-net` share/billing/delete-account contracts **10/0** 및 세 Edge Function `deno check` 통과.
+- `git diff --check` 통과. 이 worktree에는 `psql`이 없어 fresh PostgreSQL 16 RLS 172 assertion은 로컬 실행하지 못했으며, push 후 CI가 fail-closed marker를 확인해야 한다.

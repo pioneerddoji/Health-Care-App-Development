@@ -321,17 +321,24 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
   let invoked = false, cleared = false;
   await runAccountDeletion({
     reauthenticate: async () => {},
+    // supabaseRepo의 invoke와 동일하게 Edge Function의 raw body를 넘긴다.
     invoke: async () => { invoked = true; return { contract_version: 1, status: 'completed', job_id: 'u1' }; },
     clearSession: async () => { cleared = true; },
   });
-  ok(invoked && cleared, '삭제 성공 뒤 세션/로컬 cleanup 호출');
+  ok(invoked && cleared, 'Supabase raw completed 응답은 한 번 파싱 후 세션/로컬 cleanup 호출');
   cleared = false;
   const partialRun = await runAccountDeletion({
     reauthenticate: async () => {},
     invoke: async () => ({ contract_version: 1, status: 'partial', job_id: 'u1', phase: 'delete_auth', retryable: true }),
     clearSession: async () => { cleared = true; },
   });
-  ok(partialRun.status === 'partial' && !cleared, '부분 실패 시 세션 유지(안전 재시도)');
+  ok(partialRun.status === 'partial' && !cleared, 'Supabase raw partial 응답은 세션 유지(안전 재시도)');
+  const processingRun = await runAccountDeletion({
+    reauthenticate: async () => {},
+    invoke: async () => ({ contract_version: 1, status: 'processing', job_id: 'u1', phase: 'delete_database', retryable: true }),
+    clearSession: async () => { cleared = true; },
+  });
+  ok(processingRun.status === 'processing' && !cleared, 'Supabase raw processing 응답은 세션 유지');
   ok(recoverySubmitDisabled({ busy: true, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),
     '복구 busy 상태 중복 제출 차단');
   ok(!recoverySubmitDisabled({ busy: false, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),

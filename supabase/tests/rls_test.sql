@@ -227,7 +227,26 @@ select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from children) = 1 then 'PASS B가 초대 후 아이 보임' else 'FAIL B가 아이 안 보임' end;
 select case when (select count(*) from profiles) = 2 then 'PASS B가 공동 보호자 프로필(A) 열람' else 'FAIL 프로필 열람 실패' end;
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'meal')$q$, 'B(editor) 기록 허용');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id)
+  select id, auth.uid() from daily_records
+  where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid() limit 1$q$, 'B(editor) 본인 기록 확인 저장');
+-- Edge cleanup contract fixture: seed a B-authored task under the service boundary.
+-- The assertion below verifies its required pre-Auth deletion cleanup independently of task UI permissions.
+reset role;
+select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assignee_id, created_by)
+  select '77777777-7777-7777-7777-777777777777', '11111111-1111-1111-1111-111111111111', id,
+    'B 작성 탈퇴 정리', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid()
+  from daily_records where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid() limit 1$q$, 'B(editor) 작성 care-task 생성');
+set role authenticated;
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id)
+  select id, auth.uid() from daily_records
+  where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid()
+    and id not in (select record_id from record_acknowledgements where guardian_id = auth.uid())
+  limit 1$q$, 'A(owner) 공동 대상자 기록 확인 보존용 저장');
 select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assignee_id, created_by) select '88888888-8888-8888-8888-888888888888', '11111111-1111-1111-1111-111111111111', id, '진료 후 안내 확인', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', auth.uid() from daily_records where child_id = '11111111-1111-1111-1111-111111111111' limit 1$q$, 'A가 B 담당 care-task 생성');
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$update care_tasks set title = '변조' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 제목 변조 차단');
@@ -413,7 +432,16 @@ select set_config('test.account_deleted_issuer_token_hash', (select token_hash f
 reset role;
 -- delete-account Edge Function removes authored rows before Auth deletion; model that order so the
 -- auth.users cascade reaches guardian_child and exercises issuer-link revocation.
+select expect_rows($q$delete from care_tasks where created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 작성 care-task를 Auth 삭제 전 정리');
+select case when (select count(*) from care_tasks where created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') = 0
+  then 'PASS B 작성 care-task가 탈퇴 전에 모두 제거됨' else 'FAIL B 작성 care-task 정리 누락' end;
 delete from daily_records where author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+select case when (select count(*) from record_acknowledgements where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') = 0
+  then 'PASS B 작성 기록 삭제는 B acknowledgement를 cascade 정리' else 'FAIL B acknowledgement cascade 누락' end;
+select case when (select count(*) from record_acknowledgements where guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 1
+  and exists (select 1 from children where id = '11111111-1111-1111-1111-111111111111')
+  and exists (select 1 from daily_records where child_id = '11111111-1111-1111-1111-111111111111' and author_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 공동 대상자와 다른 보호자 acknowledgement/기록 보존' else 'FAIL 공동 데이터 보존' end;
 select expect_rows($q$delete from auth.users where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 계정 삭제 cascade');
 set role service_role;
 select case when consume_share_link_token(current_setting('test.account_deleted_issuer_token_hash')) is null
@@ -525,4 +553,4 @@ select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-1
 select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
 select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
 
-\echo RLS_SUITE_COMPLETE expected=165
+\echo RLS_SUITE_COMPLETE expected=172
