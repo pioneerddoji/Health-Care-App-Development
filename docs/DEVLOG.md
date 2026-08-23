@@ -1585,3 +1585,23 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 
 **다음**
 - 이 evidence branch의 remote checkpoint/Draft PR current-head CI를 확보한 뒤 독립 Android review 카드가 검토한다. reviewer 승인과 모든 캡틴 게이트가 충족되기 전 production AAB·store upload·credential/secret 생성·main 병합은 금지한다.
+
+---
+
+## 2026-08-24 — P0 개인정보 최소수집 이벤트 계약·WCC 계측 QA
+
+**한 일**
+- `src/services/analytics.ts`에 versioned envelope v1, 이벤트별 properties allowlist/필수값 검증, 접두사형 pseudonymous 식별자 검증, 동의 없는 이벤트 fail-closed, 외부 전송 없는 in-memory idempotency sink를 추가했다.
+- UTC 원본/KST 보고일 helper와 occurred_at 기반의 결정론적 collab activation, WCC, 21일 episode funnel 집계를 구현했다. received_at 순서가 뒤바뀌어도 결과가 달라지지 않는다.
+- `scripts/analytics-contract.mts`에 금지 텍스트·PII·nested payload·알 수 없는 property 거부, 중복 event_id, KST 자정, WCC/activation/21일 fixture를 추가하고 `npm run test:analytics` 및 CI job으로 고정했다.
+- `docs/14_privacy_safe_analytics.md`에 보존(승인 후 최대 30일), 동의 철회/삭제 시 중단 조건, 롤백을 문서화했다. `schema_analytics_draft.sql`은 transaction rollback과 RLS/revoke를 포함한 검토용 초안이며 설치 경로에 포함하지 않았다.
+
+**결정과 이유**
+- 건강기록·사진·문서·브리핑 원문과 실명/연락처/DOB/token은 계측 contract 자체에서 표현할 수 없게 하고, 행동 범주·band·개수만 허용했다. analytics는 아직 repo/Supabase/외부 SDK에 연결하지 않아 운영 데이터나 네트워크 전송을 만들지 않는다.
+- WCC와 activation은 `received_at`이 아닌 실제 행동 시각(`occurred_at`)과 고유 circle/episode로 집계해 새로고침·재시도·늦은 수신에도 재현 가능하게 했다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, `npm run test:analytics` **PASS 18 / FAIL 0**.
+- `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
+- `npx --yes deno test` Edge contracts **PASS 10 / FAIL 0** 및 세 Edge Function `deno check` 통과. `npx expo export --platform web --output-dir dist-web-analytics --clear` 통과 (891 modules), `git diff --check` 통과.
+- 이 worktree에는 `psql`/PostgreSQL 16이 없어 fresh RLS는 실행하지 않았다. 이 변경은 운영 migration이 아니며, upstream approved head의 RLS 172/172 success를 기준으로 독립 review CI에서 재확인한다.
