@@ -1,3 +1,5 @@
+import { FunctionsHttpError } from '@supabase/supabase-js';
+
 export type DeletionStep = 'storage' | 'database' | 'auth';
 const ACCOUNT_DELETION_CONTRACT_VERSION = 1;
 export type AccountDeletionResult =
@@ -24,6 +26,25 @@ export const parseDeletionResponse = (value: unknown): AccountDeletionResult => 
     return { status: data.status, jobId: data.job_id, failed: [{ step, message: phase }], retryable: true };
   }
   throw new Error('계정 삭제 서버 응답이 올바르지 않습니다.');
+};
+
+/**
+ * functions.invoke() exposes non-2xx Edge bodies only through
+ * FunctionsHttpError.context. Consume that one-shot Response here, then leave
+ * contract validation to runAccountDeletion's single parser.
+ */
+export const deletionResponseFromFunctionsHttpError = async (error: unknown): Promise<unknown> => {
+  if (!(error instanceof FunctionsHttpError) || !(error.context instanceof Response)) {
+    throw new Error('계정 삭제 서버 요청 실패: 응답을 확인할 수 없습니다.');
+  }
+  if (error.context.status !== 409 && error.context.status !== 503) {
+    throw new Error('계정 삭제 서버 요청 실패: 응답을 확인할 수 없습니다.');
+  }
+  try {
+    return await error.context.json();
+  } catch {
+    throw new Error('계정 삭제 서버 요청 실패: 응답을 확인할 수 없습니다.');
+  }
 };
 
 export interface AccountDeletionClient {

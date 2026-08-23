@@ -15,8 +15,9 @@ import {
   completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession,
 } from '../src/services/authLifecycle';
 import {
-  parseDeletionResponse, runAccountDeletion,
+  deletionResponseFromFunctionsHttpError, parseDeletionResponse, runAccountDeletion,
 } from '../src/services/accountDeletion';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { socialAuthFailureMessage } from '../src/services/socialAuth';
 import { deletionSubmitDisabled, focusAccessibilityError, recoverySubmitDisabled } from '../src/services/authUxState';
 
@@ -339,6 +340,35 @@ ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세�
     clearSession: async () => { cleared = true; },
   });
   ok(processingRun.status === 'processing' && !cleared, 'Supabase raw processing 응답은 세션 유지');
+  const sdkProcessing = await runAccountDeletion({
+    reauthenticate: async () => {},
+    invoke: async () => deletionResponseFromFunctionsHttpError(new FunctionsHttpError(new Response(JSON.stringify({
+      contract_version: 1, status: 'processing', job_id: 'u1', retryable: true,
+    }), { status: 409 }))),
+    clearSession: async () => { cleared = true; },
+  });
+  ok(sdkProcessing.status === 'processing' && !cleared,
+    'FunctionsHttpError 409 processing 본문은 한 번 읽어 파싱하고 세션 유지');
+  const sdkPartial = await runAccountDeletion({
+    reauthenticate: async () => {},
+    invoke: async () => deletionResponseFromFunctionsHttpError(new FunctionsHttpError(new Response(JSON.stringify({
+      contract_version: 1, status: 'partial', job_id: 'u1', phase: 'delete_auth', retryable: true,
+    }), { status: 503 }))),
+    clearSession: async () => { cleared = true; },
+  });
+  ok(sdkPartial.status === 'partial' && !cleared,
+    'FunctionsHttpError 503 partial 본문은 한 번 읽어 파싱하고 세션 유지');
+  let rejectedFunctionError = false;
+  try {
+    await runAccountDeletion({
+      reauthenticate: async () => {},
+      invoke: async () => deletionResponseFromFunctionsHttpError(new FunctionsHttpError(new Response(JSON.stringify({
+        contract_version: 999, status: 'partial', job_id: 'u1', retryable: true,
+      }), { status: 503 }))),
+      clearSession: async () => { cleared = true; },
+    });
+  } catch { rejectedFunctionError = true; }
+  ok(rejectedFunctionError && !cleared, 'FunctionsHttpError 비계약 본문은 fail closed하고 세션 유지');
   ok(recoverySubmitDisabled({ busy: true, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),
     '복구 busy 상태 중복 제출 차단');
   ok(!recoverySubmitDisabled({ busy: false, password: 'Password1', confirm: 'Password1', error: false, mismatch: false }),

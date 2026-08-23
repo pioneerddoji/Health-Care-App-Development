@@ -10,7 +10,7 @@ import { supabase, supabaseUrl } from '../lib/supabase';
 import type { Repo, AllData, AuthOutcome, SignUpInput } from './repo';
 import { SOCIAL_PROVIDERS, socialAuthFailureMessage, type SocialProvider } from './socialAuth';
 import { completeRecoveryWithClient, metadataProfile, processRecoveryUrl, reauthenticateSocialPreservingSession } from './authLifecycle';
-import { runAccountDeletion } from './accountDeletion';
+import { deletionResponseFromFunctionsHttpError, runAccountDeletion } from './accountDeletion';
 import type {
   CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, Medication, Profile, RecordInput, Report, ShareLinkInfo,
@@ -454,7 +454,7 @@ export const supabaseRepo: Repo = {
       },
       invoke: async () => {
         const { data, error } = await sb().functions.invoke('delete-account', { body: { confirmation: 'delete-my-account' } });
-        if (error) throw new Error(`계정 삭제 서버 요청 실패: ${error.message}`);
+        if (error) return deletionResponseFromFunctionsHttpError(error);
         // Edge Function의 raw 계약은 runAccountDeletion이 단 한 번 파싱한다.
         // 여기서 파싱하면 완료 결과를 다시 raw로 간주하는 이중 파싱이 발생한다.
         return data;

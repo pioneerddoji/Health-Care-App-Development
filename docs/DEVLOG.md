@@ -1522,3 +1522,21 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 171 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `npx expo export --platform web --output-dir dist-web` 통과.
 - `npx --yes deno test --allow-env --allow-net` share/billing/delete-account contracts **10/0** 및 세 Edge Function `deno check` 통과.
 - `git diff --check` 통과. 이 worktree에는 `psql`이 없어 fresh PostgreSQL 16 RLS는 로컬 실행하지 못했지만, push 후 GitHub Actions run `32651621687`에서 **PASS 172/172, FAIL 0, COMPLETION 1**을 확인했다.
+
+---
+
+## 2026-08-24 — P1 독립 리뷰 보완: SDK non-2xx 탈퇴 응답·Storage 재귀 페이지네이션
+
+**한 일**
+- `FunctionsHttpError.context`의 실제 one-shot `Response`에서 409 processing 및 503 partial versioned body를 한 번만 읽어 기존 deletion contract parser에 전달했다. completed에서만 local session cleanup을 수행하는 기존 경계를 유지했고 malformed/non-contract body는 fail closed한다.
+- 재귀 Storage prefix 삭제는 어떤 파일도 삭제하기 전에 전체 트리를 목록화하도록 분리했다. 이제 nested folder 삭제가 상위 prefix의 offset pagination을 바꾸지 않는다.
+- 실제 `@supabase/supabase-js` `FunctionsHttpError` test double과 101개 nested prefix 회귀 Deno test를 추가했다.
+
+**결정과 이유**
+- Supabase Functions SDK는 non-2xx body를 `data`가 아니라 `FunctionsHttpError.context`에 둔다. 이 boundary에서만 body를 소비하면 response body를 재사용하지 않으면서 domain parser의 단일 책임을 보존한다.
+- 목록 페이지를 처리하면서 child prefix를 삭제하면 다음 offset이 축소된 상위 목록에 적용되어 남은 child를 건너뛸 수 있다. 목록/삭제를 두 단계로 분리했다.
+
+**검증**
+- clean `npm ci`, `npm run typecheck`, `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, Expo web export 및 `git diff --check` 통과.
+- `npx --yes deno test` delete-account contract/storage tests **PASS 2 / FAIL 0** 및 세 Edge Function `deno check` 통과.
+- 이 worktree에는 `psql`이 없고 Docker daemon도 접근 불가하여 fresh PostgreSQL 16 RLS는 push 후 GitHub Actions에서 확인한다. 운영 배포, production migration/data access, main merge는 수행하지 않는다.
