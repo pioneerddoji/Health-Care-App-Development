@@ -1283,8 +1283,8 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   Draft PR 운영 기준을 문서화.
 - PR 증거(기준/최종 SHA·검증·위험·롤백), rebase/충돌/rollback, secrets·건강정보
   노출 금지, 구현자/리뷰어 분리 및 `main` 병합·settings 변경의 캡틴 승인 원칙을 명시.
-- PR 템플릿을 추가하고 CI에 독립 `e2e-tests`·`gating-tests` 상태를 추가해 E2E 110건과
-  구독 게이팅 27건을 PR 자동 검증에 포함. branch protection의 필수 상태·별도 승인 권고도 문서화.
+- PR 템플릿을 추가하고 CI에 독립 `e2e-tests`·`gating-tests` 상태를 추가해 E2E 137건과
+  구독 게이팅 41건을 PR 자동 검증에 포함. branch protection의 필수 상태·별도 승인 권고도 문서화.
 
 **결정과 이유**
 - 큰 단일 커밋과 로컬에만 남은 작업으로 인한 손실을 피하기 위해, 독립적으로 검증 가능한
