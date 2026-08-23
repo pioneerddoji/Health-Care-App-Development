@@ -8,7 +8,8 @@
 | --- | --- |
 | 기준 PR | [Draft PR #16](https://github.com/pioneerddoji/Health-Care-App-Development/pull/16), open/draft |
 | PR #16 base | `fix/p0-internal-trust-control-gate` @ `abf431d798d579226847d48364ecb73062a132ff` |
-| PR #16 exact head | `feat/p0-five-minute-wow-flow` @ `0c7661d4ff97a8d1de1602d6be21c4af90f7776e` |
+| PR #16 approved implementation exact head | `feat/p0-five-minute-wow-flow` @ `0c7661d4ff97a8d1de1602d6be21c4af90f7776e` |
+| PR #17 documentation exact head | [Draft PR #17](https://github.com/pioneerddoji/Health-Care-App-Development/pull/17), `docs/p1-internal-beta-readiness-evidence` @ `fe94a9b28f207992c1df54a6b42bad5baad84e1e` |
 | PR #15 | [Draft PR #15](https://github.com/pioneerddoji/Health-Care-App-Development/pull/15), base `feat/p0-five-minute-wow-internal` @ `af58913c56a22d6e42db89ad6f8b7cdea2f1c9cc`, head `fix/p0-internal-trust-control-gate` @ `abf431d798d579226847d48364ecb73062a132ff` |
 | 독립 current-head verdict | [PR #16 review](https://github.com/pioneerddoji/Health-Care-App-Development/pull/16#pullrequestreview-5003272133): `0c7661d4ff97a8d1de1602d6be21c4af90f7776e`에 대한 APPROVE 판단. PR author와 인증된 GitHub identity가 같아 GitHub formal approve는 거부되어 COMMENT review로 남았다. |
 
@@ -35,23 +36,22 @@ WOW fixture는 synthetic clock만 쓰는 내부 결정론 contract다. 건강 �
 
 ## 3. 원격 current-head CI와 fresh PostgreSQL 16 증거
 
-GitHub API로 exact head의 check-run을 대조했다. 다음 여섯 job이 모두 `completed/success`였고 같은 workflow run [32663538256](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32663538256)에 속한다.
+GitHub API로 두 SHA의 check-run을 분리해 대조했다.
 
-- `typecheck`
-- `e2e-tests`
-- `gating-tests`
-- `analytics-contracts`
-- `edge-contracts`
-- `rls-test`
-
-`rls-test`의 [exact-head job log](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32663538256/job/97253234652)은 fresh PostgreSQL **16.15** service container에서 다음 completion marker를 실제로 출력했다.
+1. **승인된 구현 SHA** `0c7661d4ff97a8d1de1602d6be21c4af90f7776e`의 여섯 required job은 모두 `completed/success`였고, workflow run은 [32663538256](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32663538256)이다.
+   - `typecheck`, `e2e-tests`, `gating-tests`, `analytics-contracts`, `edge-contracts`, `rls-test`
+   - `rls-test`의 [job 97253234652](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32663538256/job/97253234652)은 fresh PostgreSQL **16.15** service container에서 다음 completion marker를 실제로 출력했다.
 
 ```text
 RLS_SUITE_COMPLETE expected=181
 RLS_ASSERTIONS PASS=181/181 FAIL=0 COMPLETION=1
 ```
 
-이 runner에는 `psql`이 설치되어 있지 않고 Docker daemon도 연결되지 않아 로컬 fresh PG16 fixture를 재실행할 수 없었다. 따라서 위는 로컬 실행을 가장하지 않는, exact SHA의 GitHub fresh-PG job log 근거다. 이후 head가 바뀌면 이 매니페스트를 승계하지 말고 새 SHA에서 같은 marker와 check-run을 다시 대조해야 한다.
+2. **이 매니페스트 문서의 exact current head** `fe94a9b28f207992c1df54a6b42bad5baad84e1e` (PR #17)의 여섯 required job과 Workers build는 모두 `completed/success`였고, workflow run은 [32664079278](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32664079278)이다.
+   - `typecheck`, `e2e-tests`, `gating-tests`, `analytics-contracts`, `edge-contracts`, `rls-test`, `Workers Builds`
+   - fresh PostgreSQL 16 `rls-test` exact-head job은 [97254656303](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32664079278/job/97254656303)이다.
+
+이 runner에는 `psql`이 설치되어 있지 않고 Docker daemon도 연결되지 않아 로컬 fresh PG16 fixture를 재실행할 수 없었다. 따라서 위 두 항목은 로컬 실행을 가장하지 않는 GitHub 원격 CI 근거이며, 구현 검증과 문서 current-head 검증을 서로 대체하지 않는다. 이후 어느 head라도 바뀌면 이 매니페스트를 승계하지 말고 새 SHA에서 해당 check-run과 fresh-PG job을 다시 대조해야 한다.
 
 ## 4. false-green 방지와 알려진 위험
 

@@ -1915,3 +1915,28 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
   `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS PASS=181/181 FAIL=0 COMPLETION=1`.
 - 기존 dependency risk는 `npm ci` audit **24건**(moderate 11, high 13)과 pending esbuild install
   script 1건이며 자동 fix/승인·lockfile 변경은 하지 않았다.
+
+---
+
+## 2026-08-24 — PR #17 evidence manifest current-head CI 참조 정정
+
+**한 일**
+- 매니페스트의 원격 CI 증거를 두 기준점으로 명시적으로 분리했다. 승인된 구현 SHA
+  `0c7661d4ff97a8d1de1602d6be21c4af90f7776e`는 CI run `32663538256` 및 fresh PG16
+  `rls-test` job `97253234652`(PostgreSQL 16.15 marker)로 유지했다.
+- 문서 전용 Draft PR #17의 exact current head
+  `fe94a9b28f207992c1df54a6b42bad5baad84e1e`는 별도의 successful CI run
+  `32664079278`, fresh PG16 `rls-test` job `97254656303`, 여섯 required jobs 및 Workers Builds로 기록했다.
+
+**결정과 이유**
+- PR #16 implementation CI를 PR #17 current-head CI라고 표기하면 문서 commit의 정확한
+  검증 근거가 사라진다. 구현 검증과 문서 current-head 검증은 서로 대체하지 않으며,
+  이후 어느 head라도 바뀌면 새 SHA에서 다시 대조한다.
+
+**검증**
+- `git ls-remote`로 PR #17 remote head가 `fe94a9b28f207992c1df54a6b42bad5baad84e1e`임을,
+  `git merge-base --is-ancestor`로 승인 implementation SHA가 그 조상임을 확인했다.
+- GitHub API에서 PR #17 exact head, run `32664079278`, job `97254656303` 및 기존 구현 run/job을
+  재대조했다. 로컬 `psql`/Docker 부재는 계속 문서에 명시했으며 local fresh PG16 실행을 주장하지 않았다.
+- 운영 migration/data access, telemetry, 사용자/외부 cohort·보상·고객 접촉, OAuth·결제·SMS,
+  DNS/secrets, production/store 배포 및 `main` 병합은 수행하지 않았다.
