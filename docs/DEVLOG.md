@@ -1605,3 +1605,20 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**.
 - `npx --yes deno test` Edge contracts **PASS 10 / FAIL 0** 및 세 Edge Function `deno check` 통과. `npx expo export --platform web --output-dir dist-web-analytics --clear` 통과 (891 modules), `git diff --check` 통과.
 - 이 worktree에는 `psql`/PostgreSQL 16이 없어 fresh RLS는 실행하지 않았다. 이 변경은 운영 migration이 아니며, upstream approved head의 RLS 172/172 success를 기준으로 독립 review CI에서 재확인한다.
+
+---
+
+## 2026-08-24 — PR #11 analytics fail-closed·철회·시간창 보강
+
+**한 일**
+- 이벤트 property allowlist를 값까지 검증하는 작은 enum/정수 범위 schema로 바꾸고, UUIDv4 형식 opaque pseudonym만 허용했다.
+- sink 직접 입력을 생성 경계와 동일하게 재검증하고, `revokeConsent(userId)`가 기존 pseudonymous 이벤트를 폐기하고 이후 append를 거부하도록 추가했다.
+- collab/episode의 하한을 각각 생성/시작 시각으로 닫고 public aggregate의 `event_id` 중복을 제거했다. KST 주간은 월요일 00:00부터 다음 월요일 00:00 직전까지라는 반열린 경계를 문서·테스트로 고정했다.
+
+**검증**
+- `npm run test:analytics` **PASS 29 / FAIL 0**, `npm run typecheck` 통과.
+- `npm run test:e2e` **PASS 174 / FAIL 0**, `npm run test:gating` **PASS 41 / FAIL 0**, `git diff --check` 통과.
+- `npx expo export --platform web --output-dir /tmp/carenote-pr11-web --clear` 통과 (891 modules).
+
+**다음**
+- 외부 SDK·네트워크 전송·운영 migration 없이 Draft PR #11의 독립 재검토/CI를 기다린다.

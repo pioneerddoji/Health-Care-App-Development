@@ -92,22 +92,47 @@ const ID_PREFIXES = {
   subjectId: 'sub_',
   episodeId: 'ep_',
 } as const;
-const SAFE_ID = /^[a-z][a-z0-9_-]{2,63}$/;
+/** UUIDv4-shaped opaque values are issued before event construction; raw IDs never cross this boundary. */
+const SAFE_PSEUDONYM = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SAFE_SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
-const FORBIDDEN_PROPERTY = /(?:symptom|diagnos|medication|drug|photo|document|briefing_text|person_name|email|phone|address|birth|dob|token|secret|password|hospital|doctor|note|text)/i;
 
 const fail = (message: string): never => { throw new Error(`Invalid analytics event: ${message}`); };
 const timestamp = (value: string, field: string): string => {
+  if (typeof value !== 'string') fail(`${field} must be UTC ISO-8601`);
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime()) || !value.endsWith('Z')) fail(`${field} must be UTC ISO-8601`);
   return parsed.toISOString();
 };
 const pseudonym = (value: string | undefined, field: keyof typeof ID_PREFIXES, required = true): string | undefined => {
   if (value === undefined && !required) return undefined;
-  if (typeof value !== 'string' || !value.startsWith(ID_PREFIXES[field]) || !SAFE_ID.test(value)) {
+  const prefix = ID_PREFIXES[field];
+  if (typeof value !== 'string' || !value.startsWith(prefix) || !SAFE_PSEUDONYM.test(value.slice(prefix.length))) {
     fail(`${field} must be a prefixed pseudonymous identifier`);
   }
   return value;
+};
+
+type PropertyValidator = (value: unknown) => boolean;
+const oneOf = <T extends readonly (string | number | boolean)[]>(values: T): PropertyValidator =>
+  (value) => values.includes(value as T[number]);
+const integerIn = (min: number, max: number): PropertyValidator =>
+  (value) => typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+const PROPERTY_SCHEMAS: Record<string, PropertyValidator> = {
+  creative_id: oneOf(['creative_a', 'creative_b']), message_cell: oneOf(['control', 'treatment_a', 'treatment_b']), utm_source: oneOf(['direct', 'organic', 'paid', 'referral']),
+  qualification_band: oneOf(['qualified', 'not_qualified', 'unknown']), auth_method: oneOf(['email', 'kakao']), consent_version: oneOf(['v1']), purpose_count: integerIn(1, 5),
+  consent_type: oneOf(['analytics', 'sensitive_health', 'terms', 'privacy']), new_state: oneOf(['enabled', 'disabled']), creation_source: oneOf(['app', 'onboarding', 'invite']),
+  relationship_band: oneOf(['parent', 'guardian', 'self', 'spouse', 'sibling', 'other']), age_band_optional: oneOf(['child', 'teen', 'adult']),
+  episode_type: oneOf(['visit', 'illness', 'checkup', 'vaccination', 'other']), planned_visit_band: oneOf(['0_7d', '8_30d', '31d_plus', 'unknown']),
+  record_type: oneOf(['condition', 'behavior', 'meal', 'sleep', 'excretion', 'activity', 'symptom', 'medication_dose', 'incident', 'media_use', 'school', 'note']),
+  input_duration_band: oneOf(['0_30s', '30_60s', '1_5m', '5m_plus']), invite_role: oneOf(['viewer', 'recorder', 'admin']), channel_selected: oneOf(['app', 'email', 'sms', 'link']),
+  time_to_accept_band: oneOf(['0_1h', '1_24h', '1_7d', '7d_plus']), task_type: oneOf(['followup', 'reminder', 'review']), due_band: oneOf(['today', '1_7d', '8_30d', '31d_plus']),
+  source_record_count: integerIn(0, 100), latency_band: oneOf(['0_60s', '1_5m', '5m_plus']), section_changed: oneOf(['summary', 'timeline', 'tasks']),
+  edit_distance_band: oneOf(['none', 'small', 'medium', 'large']), format: oneOf(['pdf']), report_window: oneOf(['7d', '14d', '30d']), answer: oneOf(['yes', 'no', 'unknown']),
+  followup_type: oneOf(['task', 'reminder']), episode_cancelled_reason: oneOf(['user_cancelled', 'resolved_elsewhere', 'duplicate', 'other']), entry_point: oneOf(['settings', 'onboarding', 'report']),
+  time_to_effect_ms_band: oneOf(['0_1s', '1_10s', '10s_plus']), scope: oneOf(['account', 'subject', 'records']), duration_band: oneOf(['0_60s', '1_5m', '5m_plus']),
+  record_count_band: oneOf(['0', '1_10', '11_100', '101_plus']), offer_id: oneOf(['free', 'standard', 'family']), price_cell: oneOf(['free', 'standard_monthly', 'standard_yearly', 'family_monthly']),
+  plan: oneOf(['free', 'standard', 'family']), reason_code: oneOf(['cost', 'no_longer_needed', 'technical', 'other']), discount_state: oneOf(['none', 'offered', 'accepted']),
+  severity: oneOf(['low', 'medium', 'high', 'critical']), issue_type: oneOf(['bug', 'privacy', 'safety', 'billing', 'other']),
 };
 
 const validateProperties = (eventName: AnalyticsEventName, properties: AnalyticsProperties): AnalyticsProperties => {
@@ -120,13 +145,8 @@ const validateProperties = (eventName: AnalyticsEventName, properties: Analytics
   const output: AnalyticsProperties = {};
   for (const [key, value] of Object.entries(properties)) {
     if (!allowed.has(key)) fail(`property ${key} is not allowed for ${eventName}`);
-    if (FORBIDDEN_PROPERTY.test(key)) fail(`property ${key} can contain protected health or PII data`);
-    if (!['string', 'number', 'boolean'].includes(typeof value) || (typeof value === 'number' && !Number.isFinite(value))) {
-      fail(`property ${key} must be a finite scalar`);
-    }
-    if (typeof value === 'string' && (value.length > 64 || /@|https?:\/\//i.test(value))) {
-      fail(`property ${key} must be a bounded categorical value`);
-    }
+    const validator = PROPERTY_SCHEMAS[key];
+    if (!validator || !validator(value)) fail(`property ${key} must match its bounded schema`);
     output[key] = value;
   }
   return Object.freeze(output);
@@ -134,17 +154,18 @@ const validateProperties = (eventName: AnalyticsEventName, properties: Analytics
 
 export const createAnalyticsEvent = (input: AnalyticsEventInput): AnalyticsEvent => {
   if (!input || typeof input !== 'object') fail('input must be an object');
-  if (!input.consentAnalytics) fail('analytics consent is required');
+  if (input.consentAnalytics !== true) fail('analytics consent is required');
   if (!Object.prototype.hasOwnProperty.call(EVENT_PROPERTIES, input.eventName)) fail('event_name is not allowlisted');
   if (input.eventVersion !== ANALYTICS_EVENT_VERSION) fail('unsupported event_version');
   if (!Object.values(['owner', 'admin', 'recorder', 'viewer']).includes(input.actorRole)) fail('actor_role is invalid');
   if (!Object.values(['ios', 'android', 'web']).includes(input.platform)) fail('platform is invalid');
-  if (!SAFE_SEMVER.test(input.appVersion)) fail('app_version must be semver');
+  if (typeof input.appVersion !== 'string' || !SAFE_SEMVER.test(input.appVersion)) fail('app_version must be semver');
 
   const occurredAt = timestamp(input.occurredAt, 'occurred_at');
   const receivedAt = timestamp(input.receivedAt, 'received_at');
+  if (!Array.isArray(input.experimentAssignments ?? [])) fail('experiment assignments must be an array');
   const assignments = (input.experimentAssignments ?? []).map(({ experimentId, variantId }) => {
-    if (!SAFE_ID.test(experimentId) || !SAFE_ID.test(variantId)) fail('experiment assignment is invalid');
+    if (typeof experimentId !== 'string' || typeof variantId !== 'string' || !SAFE_PSEUDONYM.test(experimentId) || !SAFE_PSEUDONYM.test(variantId)) fail('experiment assignment is invalid');
     return Object.freeze({ experiment_id: experimentId, variant_id: variantId });
   });
 
@@ -170,11 +191,41 @@ export const createAnalyticsEvent = (input: AnalyticsEventInput): AnalyticsEvent
 /** 내부 테스트 double: 외부 전송 없이 event_id 기준 exactly-once 적재를 검증한다. */
 export class InMemoryAnalyticsSink {
   private readonly byEventId = new Map<string, AnalyticsEvent>();
+  private readonly revokedUsers = new Set<string>();
 
   append(event: AnalyticsEvent): 'stored' | 'duplicate' {
-    if (this.byEventId.has(event.event_id)) return 'duplicate';
-    this.byEventId.set(event.event_id, event);
+    const canonical = createAnalyticsEvent({
+      eventName: event?.event_name,
+      eventVersion: event?.event_version,
+      eventId: event?.event_id,
+      occurredAt: event?.occurred_at,
+      receivedAt: event?.received_at,
+      userId: event?.user_id,
+      careCircleId: event?.care_circle_id,
+      subjectId: event?.subject_id,
+      episodeId: event?.episode_id,
+      actorRole: event?.actor_role,
+      platform: event?.platform,
+      appVersion: event?.app_version,
+      experimentAssignments: event?.experiment_assignments?.map(({ experiment_id, variant_id }) => ({ experimentId: experiment_id, variantId: variant_id })),
+      consentAnalytics: event?.consent_analytics,
+      properties: event?.properties,
+    });
+    if (this.revokedUsers.has(canonical.user_id)) fail('analytics consent has been revoked');
+    if (this.byEventId.has(canonical.event_id)) return 'duplicate';
+    this.byEventId.set(canonical.event_id, canonical);
     return 'stored';
+  }
+
+  /** Consent withdrawal erases this user's pseudonymous events and permanently rejects later writes. */
+  revokeConsent(userId: string): number {
+    const user = pseudonym(userId, 'userId')!;
+    this.revokedUsers.add(user);
+    let removed = 0;
+    for (const [eventId, event] of this.byEventId) {
+      if (event.user_id === user) { this.byEventId.delete(eventId); removed++; }
+    }
+    return removed;
   }
 
   events(): AnalyticsEvent[] {
@@ -202,7 +253,8 @@ export interface CareMetrics {
  * 21일 episode는 시작일부터 21일, collab activation은 circle 생성 뒤 7일 안의 조건을 쓴다.
  */
 export const aggregateCareMetrics = (input: readonly AnalyticsEvent[], options: { weekStart: string }): CareMetrics => {
-  const events = [...input].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.event_id.localeCompare(b.event_id));
+  const events = [...new Map(input.map((event) => [event.event_id, event])).values()]
+    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at) || a.event_id.localeCompare(b.event_id));
   const weekStart = new Date(timestamp(options.weekStart, 'weekStart')).getTime();
   const weekEnd = weekStart + 7 * 86_400_000;
   const byCircle = new Map<string, AnalyticsEvent[]>();
@@ -214,7 +266,11 @@ export const aggregateCareMetrics = (input: readonly AnalyticsEvent[], options: 
     const created = circleEvents.find((event) => event.event_name === 'circle_created');
     if (created) {
       const deadline = new Date(created.occurred_at).getTime() + 7 * 86_400_000;
-      const withinSevenDays = circleEvents.filter((event) => new Date(event.occurred_at).getTime() <= deadline);
+      const createdAt = new Date(created.occurred_at).getTime();
+      const withinSevenDays = circleEvents.filter((event) => {
+        const time = new Date(event.occurred_at).getTime();
+        return time >= createdAt && time <= deadline;
+      });
       const hasSubject = withinSevenDays.some((event) => event.event_name === 'subject_created');
       const hasRecord = withinSevenDays.some((event) => event.event_name === 'record_created');
       const invited = withinSevenDays.some((event) => event.event_name === 'invite_created');
@@ -242,7 +298,11 @@ export const aggregateCareMetrics = (input: readonly AnalyticsEvent[], options: 
     if (!start) continue;
     funnel.started++;
     const end = new Date(start.occurred_at).getTime() + 21 * 86_400_000;
-    const withinEpisode = episodeEvents.filter((event) => new Date(event.occurred_at).getTime() <= end);
+    const startedAt = new Date(start.occurred_at).getTime();
+    const withinEpisode = episodeEvents.filter((event) => {
+      const time = new Date(event.occurred_at).getTime();
+      return time >= startedAt && time <= end;
+    });
     if (withinEpisode.some((event) => event.event_name === 'record_created')) funnel.firstFact++;
     if (withinEpisode.some((event) => event.event_name === 'invite_accepted' || event.event_name === 'record_acknowledged')) funnel.collab++;
     if (withinEpisode.some((event) => event.event_name === 'briefing_generated')) funnel.briefingGenerated++;
