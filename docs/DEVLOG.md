@@ -1334,3 +1334,24 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 **다음**
 - 스테이징 Supabase 또는 PostgreSQL 16에서 `rls_test.sql`을 실행해 migration SQL과
   실제 auth/storage 권한을 검증한 뒤, 운영 적용은 별도 승인으로 진행한다.
+
+---
+
+## 2026-08-23 — P0 RLS 원격 체크포인트·GitHub PostgreSQL 16 검증 (이번 커밋)
+
+**한 일**
+- 공용 GitHub credential helper를 사용해 `fix/p0-rls-data-integrity`의 원격 SHA가
+  로컬 구현 커밋과 일치함을 확인하고, 검증된 PR #2 브랜치 대상으로 Draft PR #3을 유지했다.
+- GitHub CI fresh PostgreSQL 16 환경에서 확장한 `rls_test.sql`을 포함한 전체 품질 게이트를
+  재확인했다. 이는 이 작업 환경에서 `psql`/Docker daemon 부재로 남아 있던 로컬 SQL 실행
+  제약을 해소하는 원격 검증 증거다.
+
+**검증**
+- 원격/로컬 HEAD: `563abe982b543fccee374b8988d1f9e5fcfe38bd` 일치, clean checkout.
+- Draft PR #3: `fix/p0-rls-data-integrity` → `chore/git-development-workflow`.
+- GitHub CI PASS: `typecheck`, `e2e-tests`, `gating-tests`, PostgreSQL 16 `rls-test`.
+- Cloudflare Workers build PASS.
+
+**다음**
+- 독립 라쳇 보안 리뷰에서 RPC 권한·원자성·감사 위조 공격 시나리오를 별도 clean checkout으로
+  재검증한다. 운영 migration 적용과 `main` 병합은 캡틴 승인 전 금지한다.
