@@ -89,9 +89,12 @@ for (let cycle = 1; cycle <= 5; cycle++) {
   const html = buildReportHtml({
     child, records: mine, growth: [], medications: [], vaccinations: all2.vaccinations,
     periodStart: daysAgo(6), periodEnd: today(),
-    questionsForDoctor: [`사이클${cycle} 질문`], guardianName: 'e2e',
+    questionsForDoctor: [`사이클${cycle} 질문`],
+    briefingNote: `사이클${cycle} 진료 전 전달 메모`,
+    guardianName: 'e2e',
   });
-  ok(html.includes('발열') && html.includes(`사이클${cycle} 질문`) && (html.match(/<svg/g) ?? []).length === 6,
+  ok(html.includes('발열') && html.includes(`사이클${cycle} 질문`)
+    && html.includes(`사이클${cycle} 진료 전 전달 메모`) && (html.match(/<svg/g) ?? []).length === 6,
     `C${cycle} 레포트 HTML(그래프 6종)`);
   const report = await repo.publishReport({
     childId: child.id, localPdfUri: 'file:///tmp/fake.pdf',
@@ -220,6 +223,36 @@ try { await repo.deleteAccount({ socialProvider: 'google' }); } catch { wrongSoc
 ok(wrongSocialBlocked, '다른 소셜 공급자로 계정 삭제 차단');
 await repo.deleteAccount({ socialProvider: 'kakao' });
 ok((await repo.restoreSession()) === null, '소셜 전용 계정 삭제 뒤 세션 정리');
+
+// ── P0 공동 확인·담당 및 진료 후 지시 ──
+// 기록은 공동 보호자가 확인했음을 남기고, 진료 후 지시는 담당/기한/완료를 추적한다.
+// 이 흐름은 의료 판단이나 처방 제안이 아니라 보호자 간 전달 상태만 다룬다.
+{
+  await repo.signIn('demo@carenote.app', 'anything');
+  const all = await repo.loadAll();
+  const child = all.children[0];
+  const record = all.records.find((r) => r.childId === child.id)!;
+  await repo.acknowledgeRecord(record.id);
+  const acknowledgements = await repo.listRecordAcknowledgements(child.id);
+  ok(acknowledgements.some((a) => a.recordId === record.id && !!a.acknowledgedAt),
+    '공동 보호자 기록 확인 상태 저장');
+
+  const assignee = (await repo.listGuardians(child.id)).find((g) => !g.isMe)!;
+  const task = await repo.createCareTask({
+    childId: child.id,
+    recordId: record.id,
+    title: '진료 후 안내 확인',
+    note: '진료실에서 들은 내용을 보호자끼리 확인해 주세요.',
+    assigneeId: assignee.guardianId,
+    dueDate: daysAgo(-2),
+  });
+  const pending = await repo.listCareTasks(child.id);
+  ok(pending.some((t) => t.id === task.id && t.assigneeId === assignee.guardianId
+    && t.recordId === record.id && !t.completedAt), '담당자·기한이 있는 진료 후 지시 저장');
+  await repo.completeCareTask(task.id);
+  const completed = await repo.listCareTasks(child.id);
+  ok(!!completed.find((t) => t.id === task.id)?.completedAt, '진료 후 지시 완료 추적');
+}
 
 // ── 인증 계약 직접 테스트: 외부 SDK 대신 주입 가능한 최소 test double 사용 ──
 {

@@ -5,7 +5,7 @@ import React, {
 } from 'react';
 import { Linking } from 'react-native';
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
   ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
@@ -27,6 +27,7 @@ interface AppState {
   medications: Medication[];
   vaccinations: Vaccination[];
   checkups: Checkup[];
+  careTasks: CareTask[];
   selectedChildId: string | null;
   selectedChild: Child | null;
 
@@ -75,6 +76,9 @@ interface AppState {
 
   createRecord: (childId: string, input: RecordInput) => Promise<DailyRecord>;
   deleteRecord: (id: string) => Promise<void>;
+  acknowledgeRecord: (recordId: string) => Promise<void>;
+  createCareTask: (input: Omit<CareTask, 'id' | 'createdBy' | 'createdAt' | 'completedAt'>) => Promise<void>;
+  completeCareTask: (taskId: string) => Promise<void>;
 
   addVaccination: (v: Omit<Vaccination, 'id'>) => Promise<void>;
   updateVaccination: (id: string, patch: Partial<Vaccination>) => Promise<void>;
@@ -106,6 +110,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [medications, setMedications] = useState<Medication[]>([]);
   const [vaccinations, setVaccinations] = useState<Vaccination[]>([]);
   const [checkups, setCheckups] = useState<Checkup[]>([]);
+  const [careTasks, setCareTasks] = useState<CareTask[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [roles, setRoles] = useState<Record<string, GuardianRole>>({});
   const [sensitiveConsent, setSensitiveConsent] = useState<Record<string, boolean>>({});
@@ -121,6 +126,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     setMedications(all.medications);
     setVaccinations(all.vaccinations);
     setCheckups(all.checkups);
+    setCareTasks(all.careTasks);
     setRoles(all.roles);
     setSensitiveConsent(all.sensitiveConsent);
     setSubscription(all.subscription);
@@ -170,6 +176,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     medications,
     vaccinations,
     checkups,
+    careTasks,
     selectedChildId,
     selectedChild: children.find((c) => c.id === selectedChildId) ?? null,
 
@@ -302,6 +309,20 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       await repo.deleteRecord(id);
       setRecords((prev) => prev.filter((r) => r.id !== id));
     },
+    acknowledgeRecord: (recordId) => repo.acknowledgeRecord(recordId),
+    createCareTask: async (input) => {
+      const task = await repo.createCareTask(input);
+      setCareTasks((prev) => [task, ...prev]);
+      if (task.dueDate) scheduleDueDateReminder({
+        id: `care-${task.id}`, title: '보호자 확인 알림', body: task.title, dueDate: task.dueDate,
+      }).catch(() => {});
+    },
+    completeCareTask: async (taskId) => {
+      await repo.completeCareTask(taskId);
+      setCareTasks((prev) => prev.map((t) => t.id === taskId
+        ? { ...t, completedAt: new Date().toISOString() } : t));
+      cancelReminder(`care-${taskId}`).catch(() => {});
+    },
 
     addVaccination: async (v) => {
       const vacc = await repo.addVaccination(v);
@@ -359,7 +380,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     listShareLinks: (childId) => repo.listShareLinks(childId),
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
-       vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription,
+       vaccinations, checkups, careTasks, selectedChildId, roles, sensitiveConsent, subscription,
        settings, recoveryRequest, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;

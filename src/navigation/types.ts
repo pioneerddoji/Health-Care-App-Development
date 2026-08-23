@@ -8,4 +8,5 @@ export type RootStackParamList = {
   Settings: undefined;
   PrivacyPolicy: undefined;
   Paywall: undefined;
+  CareHandoff: undefined;
 };
