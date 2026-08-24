@@ -66,6 +66,36 @@ const absolutePath = makeValidPackage();
 absolutePath.checks[0].captureReference = 'file:///opt/data/private/capture.png';
 expectInvalid(absolutePath, 'absolute local paths must fail closed');
 
+const tokenLikeNestedValue = makeValidPackage();
+tokenLikeNestedValue.checks[0].steps = ['Keep only synthetic data', 'github_pat_placeholder_not_a_real_credential'];
+assert.ok(
+  expectInvalid(tokenLikeNestedValue, 'nested token-like values must fail closed').some((error) => error.includes('prohibited sensitive value')),
+  'nested token-like values must report the sensitive-value constraint',
+);
+
+const tokenLikeValueAfterColon = makeValidPackage();
+tokenLikeValueAfterColon.checks[0].actual = 'synthetic marker:github_pat_placeholder';
+assert.ok(
+  expectInvalid(tokenLikeValueAfterColon, 'token-like markers after punctuation must fail closed').some((error) => error.includes('prohibited sensitive value')),
+  'token-like markers after punctuation must report the sensitive-value constraint',
+);
+
+const macosAbsolutePath = makeValidPackage();
+macosAbsolutePath.checks[0].actual = '/Users/example/private/capture.png';
+expectInvalid(macosAbsolutePath, 'macOS absolute paths must fail closed');
+
+const unixAbsolutePath = makeValidPackage();
+unixAbsolutePath.checks[0].actual = '/var/private/capture.png';
+expectInvalid(unixAbsolutePath, 'POSIX absolute paths must fail closed');
+
+const colonPrefixedMacosAbsolutePath = makeValidPackage();
+colonPrefixedMacosAbsolutePath.checks[0].actual = 'value:/Users/example/private/capture.png';
+expectInvalid(colonPrefixedMacosAbsolutePath, 'colon-prefixed macOS absolute paths must fail closed');
+
+const colonPrefixedUnixAbsolutePath = makeValidPackage();
+colonPrefixedUnixAbsolutePath.checks[0].actual = 'value:/var/private/capture.png';
+expectInvalid(colonPrefixedUnixAbsolutePath, 'colon-prefixed POSIX absolute paths must fail closed');
+
 const stateMismatch = makeValidPackage();
 stateMismatch.checks[0].result = 'PASS';
 expectInvalid(stateMismatch, 'PASS cannot claim needs-device');
@@ -105,4 +135,76 @@ assert.ok(
   );
 });
 
-console.log('device QA evidence validator: PASS 12 / FAIL 0');
+const negativeFixtureMatrix: Array<[string, () => unknown]> = [
+  ['unknown top-level field', () => ({ ...makeValidPackage(), unexpected: 'reject' })],
+  ['unknown nested check field', () => {
+    const evidence = makeValidPackage();
+    (evidence.checks[0] as typeof evidence.checks[number] & { unexpected?: string }).unexpected = 'reject';
+    return evidence;
+  }],
+  ['malformed source SHA', () => {
+    const evidence = makeValidPackage();
+    evidence.source.exactCommitSha = 'not-a-sha';
+    return evidence;
+  }],
+  ['malformed source URL', () => {
+    const evidence = makeValidPackage();
+    evidence.source.currentHeadCiUrl = 'http://invalid.example/ci';
+    return evidence;
+  }],
+  ['PASS proven mismatch', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].result = 'PASS';
+    evidence.checks[0].evidenceState = 'not-proven';
+    return evidence;
+  }],
+  ['ABORT without reason', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].abortReason = '';
+    return evidence;
+  }],
+  ['synthetic phone-like value', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'Synthetic contact +1 555 010 9999';
+    return evidence;
+  }],
+  ['nested Korean health-data label', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].steps = ['Use synthetic values only', 'Do not record 건강정보'];
+    return evidence;
+  }],
+  ['token-like marker after colon', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'synthetic marker:github_pat_placeholder';
+    return evidence;
+  }],
+  ['macOS absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = '/Users/example/private/capture.png';
+    return evidence;
+  }],
+  ['POSIX absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = '/var/private/capture.png';
+    return evidence;
+  }],
+  ['colon-prefixed macOS absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'value:/Users/example/private/capture.png';
+    return evidence;
+  }],
+  ['colon-prefixed POSIX absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'value:/var/private/capture.png';
+    return evidence;
+  }],
+  ['capture-reference query bypass', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].captureReference = 'qa://capture/android/screen-reader?raw-log';
+    return evidence;
+  }],
+];
+
+negativeFixtureMatrix.forEach(([name, fixture]) => expectInvalid(fixture(), `negative fixture matrix: ${name}`));
+
+console.log(`device QA evidence validator: PASS ${15 + negativeFixtureMatrix.length} / FAIL 0`);

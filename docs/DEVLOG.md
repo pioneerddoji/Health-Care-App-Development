@@ -695,3 +695,79 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   `git diff --check` 성공. analytics/five-minute WOW/app-resume/native-preflight/accessibility/iOS/Deno와
   fresh PG16은 이 branch에서 새로 실행하지 않았고 선행 decision packet의 exact-head source evidence와
   명시적으로 분리한다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence CI 격리 gate·변조 회귀 매트릭스
+
+**한 일**
+- `.github/workflows/ci.yml`에 권한 없는 `device-qa-evidence (offline static gate)` job을 추가했다.
+  PR head SHA(또는 push SHA)를 명시적으로 checkout하고 SHA를 로그에 남긴 뒤, locked dependency만
+  설치하여 `npm run test:device-qa-evidence`를 실행한다. 실기기·emulator·production credential·운영
+  network service·signing/account를 사용하지 않으므로 실패 상태가 별도 CI check로 드러난다.
+- validator의 token-like 탐지를 `github_pat_` synthetic placeholder까지 확장하고, 22-case 결정적
+  test set(양성 1건과 negative matrix)을 고정했다. negative matrix는 top-level/check unknown field, malformed SHA/URL,
+  PASS/proven mismatch, ABORT reason 누락, phone/token-like/한국어 건강정보 nested 값,
+  capture-reference query bypass를 fail-closed로 검증한다. 기존 matrix는 source packet field별
+  mismatch, 중복 ID/platform-area, email, absolute path, coverage 누락도 계속 검증한다.
+
+**결정과 이유**
+- validator의 source packet은 parent exact remote head `d97cdb4de8bfa6aed155ac5305f2e23b61fb221f`가
+  승인한 upstream decision packet(`7cb43eed…`, Draft PR #22, canonical Kanban verdict)과 분리된
+  immutable source다. CI job은 이 정적 계약을 우회 없이 실행할 뿐, native QA PASS나 external build
+  evidence로 해석하지 않는다.
+- token-like 탐지는 실제 credential을 fixture에 넣지 않고 명백히 synthetic placeholder만 사용한다.
+
+**검증**
+- TDD RED: nested `github_pat_placeholder_not_a_real_credential`가 validator를 통과하는 실패를
+  재현했다. GREEN: 탐지 보강 뒤 test matrix `PASS 22 / FAIL 0`, positive fixture `VALID`, bundled
+  negative fixture `INVALID`를 확인했다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence 변조 우회 보강 (review rework)
+
+**한 일**
+- token-like marker가 문자열 시작이나 공백 뒤에만 있던 경계 제한을 제거해, 구두점 뒤의
+  synthetic token-like 값도 fail-closed로 거부한다.
+- local absolute path 탐지를 일반 POSIX/macOS 경로로 보강하되 `https://`와 `qa://`는 허용한다.
+  결정적 negative matrix에 colon 뒤 token marker, `/Users/...`, `/var/...` fixture를 추가했다.
+
+**결정과 이유**
+- fixture에는 실제 credential·개인정보를 넣지 않고 synthetic marker와 예시 경로만 사용한다.
+  URL scheme 자체를 absolute path로 오인하면 approved source URL과 redacted capture reference가
+  false-negative가 되므로, path는 문자열 시작 또는 안전한 delimiter 뒤에 나타날 때만 검사한다.
+
+**검증**
+- TDD RED: colon 뒤 synthetic token-like marker가 `valid: true`를 반환해 test가 예상대로 실패했다.
+  GREEN: 보강 뒤 validator matrix `PASS 25 / FAIL 0`, positive fixture `VALID`를 확인했다.
+- 이 branch: clean `npm ci` 성공(기존 audit advisories 22건 및 pending `esbuild` allow-script warning,
+  audit fix/script approval 미실행), typecheck 성공, E2E 110/0, gating 27/0, Expo web export 성공,
+  `git diff --check` 성공.
+- parent exact source worktree `t_c5953c9f`의
+  `d97cdb4de8bfa6aed155ac5305f2e23b61fb221f`에서도 `npm ci`, typecheck, device evidence 12/0,
+  E2E 110/0, gating 27/0, Expo web export, diff check를 실제 재실행했다. 해당 exact source의
+  `package.json`과 tracked files에는 analytics/five-minute WOW/app-resume/native-preflight/
+  accessibility/iOS-preview-readiness/Deno contract 명령 또는 fixture가 없어, 이 항목들은 실행·PASS로
+  주장하지 않는다. fresh PG16은 task boundary에 따라 parent current-head CI marker만 참조한다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence colon-prefix path 우회 차단 (review rework)
+
+**한 일**
+- local absolute path 검출 경계를 보강하여 문자열 중간의 `value:/Users/...`와
+  `value:/var/...` 같은 colon-prefix 경로도 fail-closed로 거부한다.
+- 해당 두 변조를 개별 assertion과 deterministic negative fixture matrix에 각각 고정했다.
+  `https://` source URL과 `qa://` capture reference는 계속 양성으로 허용한다.
+
+**결정과 이유**
+- URL scheme의 두 slash를 경로로 오인하지 않으면서, colon은 absolute path의 안전한 경계로
+  취급한다. fixture에는 실제 credential·개인정보·사용자 절대경로가 아니라 synthetic 예시만 쓴다.
+
+**검증**
+- reviewer가 보고한 두 colon-prefix probe를 재실행해 모두 `valid: false` 및 prohibited-value
+  오류로 확인했고, scheme control은 `valid: true`를 유지했다.
+- `npm run test:device-qa-evidence`: validator `PASS 29 / FAIL 0`, positive fixture `VALID`.
+- `npm run typecheck` 성공, `npm run test:e2e` `PASS 110 / FAIL 0`,
+  `npm run test:gating` `PASS 27 / FAIL 0`, `npx expo export --platform web --output-dir dist-web` 성공.
