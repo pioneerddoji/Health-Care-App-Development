@@ -613,3 +613,36 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - Storage 재귀 완전 삭제는 실 Supabase 미검증 (list API 페이지네이션 1000개 한도 —
   기록이 매우 많은 아이는 반복 호출 필요할 수 있음)
 - 개인정보처리방침은 초안 — 배포 전 법률 검토 필수
+
+---
+
+## 2026-08-24 — P1 preview 승인 게이트 결정 패킷·오프라인 실기기 QA 프로토콜 (문서만)
+
+**한 일**
+- `docs/21_preview_gate_decision_packet.md`를 추가해 Android Draft PR #18, iOS Draft
+  PR #20, 선행 portfolio Draft PR #21의 exact remote SHA·Draft 상태·review verdict·CI를
+  하나의 캡틴 결재 패킷으로 정리했다. protected shared Git credential helper를 사용한
+  선행 원격 API/ref 대조 handoff를 source evidence로 명시하고 credential/token은 문서나
+  출력물에 저장하지 않았다.
+- Android/iOS별 preview preparation, package/bundle ID, signing/account ownership, 비용,
+  privacy/store metadata, OAuth/billing, 운영 Supabase를 독립 승인 단위와 abort·rollback
+  조건으로 분리했다. #21 Workers Builds failure를 non-green으로 유지해 다른 SHA의 CI로
+  false-green 처리하지 않았다.
+- VoiceOver/TalkBack, picker focus trap·focus 복귀, permissions, PDF/share,
+  notification/deep-link, app-resume의 오프라인 실기기 QA 사전조건·비식별 테스트 데이터,
+  expected result, 증거 비노출 규칙, release-blocking/abort 기준을 문서화했다.
+
+**결정과 이유**
+- Node/web/static preflight와 remote CI는 실제 native build·signing·upload·store acceptance·
+  physical-device runtime을 증명하지 못하므로, exact-head source evidence와 이 docs branch
+  검증을 의도적으로 구분했다. 실기기 연결이나 외부 계정/운영 연동은 별도 명시 승인 카드가
+  생길 때까지 시작하지 않는다.
+- 건강정보·계정·secret 노출 또는 교차 계정 접근은 즉시 abort, 접근성·permission loop·
+  PDF/share·notification/deep-link/resume의 crash/data loss는 release-blocking으로 정의해
+  preview 결재가 production/store 결재로 오인되지 않게 했다.
+
+**다음**
+- 이 docs-only branch에서 lockfile 기반 typecheck·기존 회귀·diff check를 실행하고, 전용
+  원격 branch에 작은 원자 commit으로 push한 뒤 단일 Draft PR의 exact SHA/current-head CI를
+  기록한다. 구현자와 분리된 same-card ratchet review의 APPROVE 또는 canonical
+  REQUEST_CHANGES가 이 패킷의 최종 전제다.
