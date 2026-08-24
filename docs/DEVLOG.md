@@ -801,3 +801,38 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   explicit non-green이다. parent package에는 analytics/five-minute WOW/app-resume/native-preflight/
   accessibility/iOS-preview-readiness/Deno contract 명령이 없어 실행·PASS를 주장하지 않는다. 실기기,
   emulator, signing, 운영 서비스, build/upload/deploy, repository setting, main merge는 수행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 device-QA evidence provenance 결정적 CLI·격리 회귀
+
+**한 일**
+- `check:device-qa-evidence-provenance` 단일 package CLI를 추가했다. script 자신의 위치에서 repository
+  root의 approved fixture corpus를 찾으므로 호출 CWD에 의존하지 않으며, 성공 시
+  `device QA evidence provenance: VALID fixtures=2`라는 고정 요약과 exit 0을 출력한다.
+- manifest fixture path의 strict lexical order를 계약에 추가하고, CLI는 regular manifest file·regular-file corpus·
+  SHA-256 provenance를 fail-closed로 검증한다. 오류 요약에는 repository/사용자 absolute path나 fixture
+  content를 출력하지 않는다.
+- 합성 임시 corpus 기반 CLI test는 root/isolated CWD의 exit/stdout/stderr 동일성, 원본 manifest/fixture
+  비변경성, manifest reorder, 누락/추가/duplicate 파일, uppercase·malformed digest, byte/newline 변조,
+  traversal/nested path, unsupported algorithm/schemaVersion을 모두 고정했다. fixture에는 건강정보,
+  credential, 실제 absolute path를 넣지 않는다.
+- 권한 없는 기존 CI static job이 exact checkout 뒤 새 CLI를 독립 step으로 실행하도록 추가했다.
+
+**결정과 이유**
+- manifest의 파일 순서를 canonical contract로 만들어, 동일 파일 집합을 다른 순서로 재기록해도 provenance
+  검증 결과가 우연히 달라지거나 review diff가 모호해지는 경우를 차단했다.
+- CLI의 default corpus path는 process CWD가 아닌 script-relative repository root로 계산한다. test가 temporary
+  CWD에서 동일 summary/exit을 비교하므로 local invocation 환경 차이로 false-green이 되는 것을 막는다.
+
+**검증**
+- TDD RED: 새 CLI test가 module 부재 `ERR_MODULE_NOT_FOUND`로 실패하는 것을 확인했다. GREEN:
+  CLI regression `PASS 15 / FAIL 0`, validator `PASS 32 / FAIL 0`, provenance `PASS`, canonical CLI
+  `VALID fixtures=2`, positive fixture `VALID`.
+- clean `npm ci` 성공(기존 audit advisory 22건 및 pending `esbuild` allow-script warning은 변경·승인하지 않음),
+  `npm run typecheck` 성공, `npm run test:e2e` `PASS 110 / FAIL 0`, `npm run test:gating` `PASS 27 / FAIL 0`,
+  Expo web export(`/tmp/t_0aa5fc70-web`) 성공, `git diff --check` 성공.
+- analytics/five-minute WOW/app-resume/native-preflight/accessibility/iOS-preview-readiness/Deno contract 명령은
+  exact package source에 없어 실행·PASS를 주장하지 않는다. fresh PG16은 parent current-head CI marker만
+  참조한다. 실기기/emulator, signing/account, production 서비스, build/upload/deploy, repository setting,
+  main merge는 수행하지 않았다.

@@ -85,6 +85,7 @@ export const validateEvidenceFixtureCorpus = (manifest: unknown, corpus: Evidenc
 
   const manifestPaths = new Set<string>();
   const manifestDigests = new Map<string, string>();
+  let previousManifestPath: string | undefined;
   manifest.fixtures.forEach((fixture, index) => {
     const label = `fixtureManifest.fixtures[${index}]`;
     if (!isObject(fixture)) {
@@ -96,6 +97,8 @@ export const validateEvidenceFixtureCorpus = (manifest: unknown, corpus: Evidenc
     requireString(fixture, 'sha256', label, errors);
     if (typeof fixture.path === 'string') {
       if (!/^[a-z0-9][a-z0-9-]*\.json$/.test(fixture.path)) errors.push(`${label}.path must be a relative JSON filename`);
+      if (previousManifestPath !== undefined && fixture.path <= previousManifestPath) errors.push(`${label}.path must be in strict lexical order`);
+      previousManifestPath = fixture.path;
       if (manifestPaths.has(fixture.path)) errors.push(`${label}.path must be unique`);
       manifestPaths.add(fixture.path);
       if (typeof fixture.sha256 === 'string') manifestDigests.set(fixture.path, fixture.sha256);
@@ -117,7 +120,7 @@ export const validateEvidenceFixtureCorpus = (manifest: unknown, corpus: Evidenc
     if (actualDigest !== expectedDigest) errors.push(`${label}.contents digest does not match fixtureManifest`);
   });
   manifestPaths.forEach((path) => {
-    if (!corpusPaths.has(path)) errors.push(`fixtureManifest declares missing fixture ${path}`);
+    if (!corpusPaths.has(path)) errors.push('fixtureManifest declares a missing fixture');
   });
   return { valid: errors.length === 0, errors };
 };
