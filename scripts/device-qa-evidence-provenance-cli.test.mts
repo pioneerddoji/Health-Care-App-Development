@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rename, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,17 +11,38 @@ const fixtureDirectory = join(repositoryRoot, 'fixtures', 'device-qa-evidence');
 const cli = join(repositoryRoot, 'scripts', 'check-device-qa-evidence-provenance.ts');
 const tsxCli = join(repositoryRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
-const runCli = (cwd: string, environment: NodeJS.ProcessEnv = process.env) => spawnSync(process.execPath, [tsxCli, cli], {
+const runCli = (cwd: string, environment: NodeJS.ProcessEnv) => spawnSync(process.execPath, [tsxCli, cli], {
   cwd,
   env: environment,
   encoding: 'utf8',
 });
 
+const sanitizedEnvironment = (locale: string, timezone: string, nonessential: Record<string, string>): NodeJS.ProcessEnv => ({
+  NODE_ENV: 'test',
+  LANG: locale,
+  LC_ALL: locale,
+  TZ: timezone,
+  ...nonessential,
+});
+
+const rootEnvironment = sanitizedEnvironment('C', 'UTC', {
+  CI: 'false',
+  KIDCARE_PROVENANCE_UNRELATED: 'adversarial root value: spaces $() []',
+  XDG_CONFIG_HOME: '/synthetic/unrelated/root',
+});
+const isolatedEnvironment = sanitizedEnvironment('C.UTF-8', 'Asia/Seoul', {
+  CI: 'true',
+  KIDCARE_PROVENANCE_UNRELATED: 'adversarial isolated value: unicode-한글-✓',
+  XDG_CONFIG_HOME: '/synthetic/unrelated/isolated',
+});
+assert.deepEqual(Object.keys(rootEnvironment).sort(), ['CI', 'KIDCARE_PROVENANCE_UNRELATED', 'LANG', 'LC_ALL', 'NODE_ENV', 'TZ', 'XDG_CONFIG_HOME']);
+assert.deepEqual(Object.keys(isolatedEnvironment).sort(), Object.keys(rootEnvironment).sort());
+
 const originalManifest = await readFile(join(fixtureDirectory, 'manifest.json'), 'utf8');
 const originalPositive = await readFile(join(fixtureDirectory, 'positive-needs-device.json'), 'utf8');
-const rootRun = runCli(repositoryRoot, { ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' });
+const rootRun = runCli(repositoryRoot, rootEnvironment);
 const isolatedCwd = await mkdtemp(join(tmpdir(), 'kidcare-provenance-cwd-'));
-const isolatedRun = runCli(isolatedCwd, { ...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8', TZ: 'Asia/Seoul' });
+const isolatedRun = runCli(isolatedCwd, isolatedEnvironment);
 assert.equal(rootRun.status, 0, rootRun.stderr);
 assert.equal(isolatedRun.status, rootRun.status, isolatedRun.stderr);
 assert.equal(isolatedRun.stdout, rootRun.stdout, 'CLI summary must be independent of the working directory');
@@ -137,9 +158,13 @@ await withSyntheticCorpus(async (directory) => {
   await symlink('missing-fixture.json', join(directory, 'broken-fixture.json'));
 }, 'broken fixture symlinks must fail closed');
 
-await withSyntheticCorpus(async (directory) => {
-  await rename(join(directory, 'positive-needs-device.json'), join(directory, 'nested-directory'));
-}, 'non-regular fixture directories must fail closed');
+const nonRegularDirectory = await mkdtemp(join(tmpdir(), 'kidcare-provenance-non-regular-'));
+await cp(fixtureDirectory, nonRegularDirectory, { recursive: true });
+await mkdir(join(nonRegularDirectory, 'nested-directory'));
+const nonRegularResult = await verifyEvidenceFixtureDirectory(nonRegularDirectory);
+assert.equal(nonRegularResult.valid, false, 'non-regular corpus entries must fail closed');
+assert.ok(nonRegularResult.errors.includes('fixture corpus entry nested-directory must be a regular file'), 'non-regular corpus entry rejection must be explicit');
+await rm(nonRegularDirectory, { force: true, recursive: true });
 
 const absolutePathDirectory = await mkdtemp(join(tmpdir(), 'kidcare-provenance-absolute-path-'));
 await cp(fixtureDirectory, absolutePathDirectory, { recursive: true });
@@ -152,4 +177,4 @@ assert.equal(absolutePath.errors.some((error) => error.includes('/synthetic/priv
 await rm(absolutePathDirectory, { force: true, recursive: true });
 
 await rm(isolatedCwd, { force: true, recursive: true });
-console.log('device QA evidence provenance CLI: PASS 24 / FAIL 0');
+console.log('device QA evidence provenance CLI: PASS 25 / FAIL 0');
