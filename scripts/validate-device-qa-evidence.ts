@@ -39,7 +39,7 @@ const CHECK_KEYS = [
   'rollback',
 ];
 
-const forbiddenValue = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:^|[^\w/])\+?\d[\d\s()-]{7,}\d|(?:^|\s)(?:bearer\s+|gh[pousr]_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]{8,}\.)|(?:file:\/\/|\/opt\/|\/home\/|\/tmp\/|[A-Za-z]:\\)|\b(?:patient|diagnosis|medical record|symptom|medication|health data)\b|(?:환자|진단|의료기록|증상|복약|건강정보))/i;
+const forbiddenValue = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:^|[^\w/])\+?\d[\d\s()-]{7,}\d|(?:^|\s)(?:bearer\s+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]{8,}\.)|(?:file:\/\/|\/opt\/|\/home\/|\/tmp\/|[A-Za-z]:\\)|\b(?:patient|diagnosis|medical record|symptom|medication|health data)\b|(?:환자|진단|의료기록|증상|복약|건강정보))/i;
 
 export type ValidationResult = { valid: boolean; errors: string[] };
 

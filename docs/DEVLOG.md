@@ -695,3 +695,30 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   `git diff --check` 성공. analytics/five-minute WOW/app-resume/native-preflight/accessibility/iOS/Deno와
   fresh PG16은 이 branch에서 새로 실행하지 않았고 선행 decision packet의 exact-head source evidence와
   명시적으로 분리한다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence CI 격리 gate·변조 회귀 매트릭스
+
+**한 일**
+- `.github/workflows/ci.yml`에 권한 없는 `device-qa-evidence (offline static gate)` job을 추가했다.
+  PR head SHA(또는 push SHA)를 명시적으로 checkout하고 SHA를 로그에 남긴 뒤, locked dependency만
+  설치하여 `npm run test:device-qa-evidence`를 실행한다. 실기기·emulator·production credential·운영
+  network service·signing/account를 사용하지 않으므로 실패 상태가 별도 CI check로 드러난다.
+- validator의 token-like 탐지를 `github_pat_` synthetic placeholder까지 확장하고, 22-case 결정적
+  test set(양성 1건과 negative matrix)을 고정했다. negative matrix는 top-level/check unknown field, malformed SHA/URL,
+  PASS/proven mismatch, ABORT reason 누락, phone/token-like/한국어 건강정보 nested 값,
+  capture-reference query bypass를 fail-closed로 검증한다. 기존 matrix는 source packet field별
+  mismatch, 중복 ID/platform-area, email, absolute path, coverage 누락도 계속 검증한다.
+
+**결정과 이유**
+- validator의 source packet은 parent exact remote head `d97cdb4de8bfa6aed155ac5305f2e23b61fb221f`가
+  승인한 upstream decision packet(`7cb43eed…`, Draft PR #22, canonical Kanban verdict)과 분리된
+  immutable source다. CI job은 이 정적 계약을 우회 없이 실행할 뿐, native QA PASS나 external build
+  evidence로 해석하지 않는다.
+- token-like 탐지는 실제 credential을 fixture에 넣지 않고 명백히 synthetic placeholder만 사용한다.
+
+**검증**
+- TDD RED: nested `github_pat_placeholder_not_a_real_credential`가 validator를 통과하는 실패를
+  재현했다. GREEN: 탐지 보강 뒤 test matrix `PASS 22 / FAIL 0`, positive fixture `VALID`, bundled
+  negative fixture `INVALID`를 확인했다.

@@ -66,6 +66,13 @@ const absolutePath = makeValidPackage();
 absolutePath.checks[0].captureReference = 'file:///opt/data/private/capture.png';
 expectInvalid(absolutePath, 'absolute local paths must fail closed');
 
+const tokenLikeNestedValue = makeValidPackage();
+tokenLikeNestedValue.checks[0].steps = ['Keep only synthetic data', 'github_pat_placeholder_not_a_real_credential'];
+assert.ok(
+  expectInvalid(tokenLikeNestedValue, 'nested token-like values must fail closed').some((error) => error.includes('prohibited sensitive value')),
+  'nested token-like values must report the sensitive-value constraint',
+);
+
 const stateMismatch = makeValidPackage();
 stateMismatch.checks[0].result = 'PASS';
 expectInvalid(stateMismatch, 'PASS cannot claim needs-device');
@@ -105,4 +112,51 @@ assert.ok(
   );
 });
 
-console.log('device QA evidence validator: PASS 12 / FAIL 0');
+const negativeFixtureMatrix: Array<[string, () => unknown]> = [
+  ['unknown top-level field', () => ({ ...makeValidPackage(), unexpected: 'reject' })],
+  ['unknown nested check field', () => {
+    const evidence = makeValidPackage();
+    (evidence.checks[0] as typeof evidence.checks[number] & { unexpected?: string }).unexpected = 'reject';
+    return evidence;
+  }],
+  ['malformed source SHA', () => {
+    const evidence = makeValidPackage();
+    evidence.source.exactCommitSha = 'not-a-sha';
+    return evidence;
+  }],
+  ['malformed source URL', () => {
+    const evidence = makeValidPackage();
+    evidence.source.currentHeadCiUrl = 'http://invalid.example/ci';
+    return evidence;
+  }],
+  ['PASS proven mismatch', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].result = 'PASS';
+    evidence.checks[0].evidenceState = 'not-proven';
+    return evidence;
+  }],
+  ['ABORT without reason', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].abortReason = '';
+    return evidence;
+  }],
+  ['synthetic phone-like value', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'Synthetic contact +1 555 010 9999';
+    return evidence;
+  }],
+  ['nested Korean health-data label', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].steps = ['Use synthetic values only', 'Do not record 건강정보'];
+    return evidence;
+  }],
+  ['capture-reference query bypass', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].captureReference = 'qa://capture/android/screen-reader?raw-log';
+    return evidence;
+  }],
+];
+
+negativeFixtureMatrix.forEach(([name, fixture]) => expectInvalid(fixture(), `negative fixture matrix: ${name}`));
+
+console.log(`device QA evidence validator: PASS ${13 + negativeFixtureMatrix.length} / FAIL 0`);
