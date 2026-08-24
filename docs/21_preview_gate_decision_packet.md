@@ -20,11 +20,11 @@ base/head, review 상태, current-head check-runs를 읽고 `git ls-remote`의 �
 |---|---|---|---|---|---|
 | Android | [#18](https://github.com/pioneerddoji/Health-Care-App-Development/pull/18) | `53de38f355514e581548993cff232be9d312316d` | `13ed953e95ffaff281c40e52d6b2acea590cbedb` | GitHub formal approval 아님: `COMMENTED` 4건 | [8/8 success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32670021170) |
 | iOS | [#20](https://github.com/pioneerddoji/Health-Care-App-Development/pull/20) | `ee9a88fde5c190e38dbceb8ef23b74b8fa1e1ba0` | `fa2cf745aaf79ab66746d2d83d6a38b4c58f79a0` | GitHub formal review 없음; Kanban ratchet handoff와 분리 | [8/8 success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32673930804) |
-| 포트폴리오 | [#21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21) | `bd23179fd09af1c53522b3b4bf1fb6e08fbfac19` | `dc61278b54935ee9f62e6a2d8adc21520001e77f` | [PR #21 review source](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21): GitHub formal review 없음; Kanban `t_e7800705` contract-lens APPROVE | typecheck·rls-test success, Workers Builds failure — **non-green** |
+| 포트폴리오 | [#21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21) | `bd23179fd09af1c53522b3b4bf1fb6e08fbfac19` | `dc61278b54935ee9f62e6a2d8adc21520001e77f` | GitHub formal review 없음. canonical verdict는 Kanban board `~/.hermes/kanban.db`의 [`t_e7800705` run #155 completed](kanban://task/t_e7800705/run/155) contract-lens **APPROVE** (PR #21 URL은 source일 뿐 verdict URL 아님) | typecheck·rls-test success, Workers Builds failure — **non-green** |
 
 - exact ref source: [`docs/20_preview_readiness_portfolio.md` at `dc61278`](https://github.com/pioneerddoji/Health-Care-App-Development/blob/dc61278b54935ee9f62e6a2d8adc21520001e77f/docs/20_preview_readiness_portfolio.md).
 - platform source: [Android #18 exact head](https://github.com/pioneerddoji/Health-Care-App-Development/blob/13ed953e95ffaff281c40e52d6b2acea590cbedb/docs/13_android_preview_readiness.md), [iOS #20 exact head](https://github.com/pioneerddoji/Health-Care-App-Development/blob/fa2cf745aaf79ab66746d2d83d6a38b4c58f79a0/docs/19_ios_preview_readiness.md).
-- protected-helper recheck source: [#18](https://github.com/pioneerddoji/Health-Care-App-Development/pull/18), [#20](https://github.com/pioneerddoji/Health-Care-App-Development/pull/20), [#21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21), [#22](https://github.com/pioneerddoji/Health-Care-App-Development/pull/22). #18은 `COMMENTED` 4건, #20/#21/#22는 GitHub formal review 없음이며, #21의 승인 verdict는 Kanban `t_e7800705`에만 있다.
+- protected-helper recheck source: [#18](https://github.com/pioneerddoji/Health-Care-App-Development/pull/18), [#20](https://github.com/pioneerddoji/Health-Care-App-Development/pull/20), [#21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21), [#22](https://github.com/pioneerddoji/Health-Care-App-Development/pull/22). #18은 `COMMENTED` 4건, #20/#21/#22는 GitHub formal review 없음이다. #21의 승인 verdict는 GitHub PR이 아닌 durable Kanban locator [`t_e7800705` run #155](kanban://task/t_e7800705/run/155)이며, 이 환경에 public review URL은 없다.
 - #21 Workers Builds failure는 preview build/upload 또는 production 실패의 증거가 아니다. #21을 green이라고 부르거나 다른 PR의 CI로 대체하면 안 된다.
 
 ### 1-2. 재현 증거와 미재현 항목의 분리
@@ -143,11 +143,14 @@ EAS/Apple/Google, signing, store, device, OAuth/billing, production Supabase, cu
 `npm run test:gating`, `git diff --check`를 실행했다. 이는 `kidcare` base의 문서 무결성/기존
 회귀 확인일 뿐 §1의 Android/iOS exact-head advanced evidence를 대체하지 않는다.
 
-초기 문서 commit은 [`1c1896156f97f0837ed20a45d06266b9eb7b0d13`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/1c1896156f97f0837ed20a45d06266b9eb7b0d13)이고,
-전용 원격 branch와 [Draft PR #22](https://github.com/pioneerddoji/Health-Care-App-Development/pull/22)의
-API head가 모두 이 SHA임을 확인했다. 이 exact head의 current-head check-runs는 `typecheck`
-success, `rls-test` success, `Workers Builds: health-care-app-development` failure다. 따라서 #22는
-**non-green**이며 Workers failure를 preview build/upload 또는 production evidence로 해석하지 않는다.
+초기 문서 commit은 [`1c1896156f97f0837ed20a45d06266b9eb7b0d13`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/1c1896156f97f0837ed20a45d06266b9eb7b0d13)이며 **historical initial head**로만 보존한다.
+protected-helper API/ref 재실행 시점의 PR #22 exact local/origin/API head는
+[`a56dead1cb15ae17d83a014f1a01907b525b7aca`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/a56dead1cb15ae17d83a014f1a01907b525b7aca)였고,
+PR은 [open Draft #22](https://github.com/pioneerddoji/Health-Care-App-Development/pull/22)였다.
+그 exact head의 completed check-runs는 [typecheck success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592/job/97284865911),
+[rls-test success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592/job/97284866050),
+[Workers Builds failure](https://dash.cloudflare.com/fe29b71a3304b24558c67a4946e811f5/workers/services/view/health-care-app-development/production/builds/3c7792b6-8b4c-46b4-bc2d-65d36fab0f9d)다.
+따라서 #22는 **non-green**이며 Workers failure를 preview build/upload 또는 production evidence로 해석하지 않는다.
 초기 commit에서 실행한 결과는 `npm ci` 성공(기존 advisories 22건, audit fix/script approval 미실행),
 typecheck 성공, E2E 110/0, gating 27/0, `git diff --check` 성공이다. 이번 evidence 보정 commit 뒤에는
 동일한 typecheck·E2E·gating·diff check를 다시 실행했고 모두 성공했다(typecheck 성공, E2E 110/0,

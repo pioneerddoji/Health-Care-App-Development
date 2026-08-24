@@ -641,19 +641,23 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   PDF/share·notification/deep-link/resume의 crash/data loss는 release-blocking으로 정의해
   preview 결재가 production/store 결재로 오인되지 않게 했다.
 
-**불변 증거 재대조·보정 (ratchet round 1 요청 반영)**
+**불변 증거 재대조·보정 (ratchet round 1·2 요청 반영)**
 - protected shared Git credential helper를 프로세스 메모리 내 API 인증에만 사용해 #18/#20/#21/#22의
   open/Draft, base/head, review 상태, check-runs를 재대조했고 `git ls-remote` ref와도 일치시켰다.
-  credential/token은 출력·복사·저장하지 않았다. #21은 GitHub formal review가 없고, `t_e7800705`의
-  contract-lens APPROVE가 Kanban verdict임을 [PR #21 source](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21)와 함께 명시했다.
-- 초기 문서 commit [`1c1896156f97f0837ed20a45d06266b9eb7b0d13`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/1c1896156f97f0837ed20a45d06266b9eb7b0d13)는
-  전용 원격 branch 및 [Draft PR #22](https://github.com/pioneerddoji/Health-Care-App-Development/pull/22)의 API head와 일치한다.
-  해당 head의 current-head checks는 typecheck/rls-test success, Workers Builds failure이므로 **non-green**이다.
+  credential/token은 출력·복사·저장하지 않았다. #21은 GitHub formal review가 없고, canonical APPROVE는
+  GitHub PR이 아닌 Kanban board `~/.hermes/kanban.db`의 [`t_e7800705` run #155](kanban://task/t_e7800705/run/155)
+  completed contract-lens verdict다. [PR #21](https://github.com/pioneerddoji/Health-Care-App-Development/pull/21)은 source URL일 뿐 verdict URL이 아니다.
+- 초기 문서 commit [`1c1896156f97f0837ed20a45d06266b9eb7b0d13`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/1c1896156f97f0837ed20a45d06266b9eb7b0d13)는 historical initial head다.
+  protected-helper API/ref 재실행 시점의 PR #22 exact local/origin/API head는
+  [`a56dead1cb15ae17d83a014f1a01907b525b7aca`](https://github.com/pioneerddoji/Health-Care-App-Development/commit/a56dead1cb15ae17d83a014f1a01907b525b7aca)였다.
+  이 head의 completed checks는 [typecheck success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592/job/97284865911),
+  [rls-test success](https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592/job/97284866050),
+  [Workers Builds failure](https://dash.cloudflare.com/fe29b71a3304b24558c67a4946e811f5/workers/services/view/health-care-app-development/production/builds/3c7792b6-8b4c-46b4-bc2d-65d36fab0f9d)이므로 **non-green**이다.
 - 초기 commit 검증은 `npm ci` 성공(기존 advisories 22건; audit fix/script approval 미실행),
   typecheck 성공, E2E 110/0, gating 27/0, diff check 성공이다. 이번 docs-only 보정 뒤 동일한
   typecheck·E2E·gating·diff check를 재실행했고 모두 성공했다(typecheck 성공, E2E 110/0,
   gating 27/0, diff check 성공).
 
 **다음**
-- 보정 commit을 같은 전용 원격 branch와 단일 Draft PR #22에 push하고, 구현자와 분리된
+- 이 문서-only 보정을 같은 전용 원격 branch와 단일 Draft PR #22에 push하고, 구현자와 분리된
   same-card ratchet review의 APPROVE 또는 canonical REQUEST_CHANGES를 받는다.
