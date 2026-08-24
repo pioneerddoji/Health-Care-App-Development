@@ -2218,3 +2218,40 @@ E2E 테스트:       npm run test:e2e      137 PASS (소셜 4건 추가)
 - clean lockfile `npm ci` 성공(기존 advisory 24건: moderate 11, high 13; pending esbuild install script 1건), typecheck 통과, analytics **37/0**, five-minute WOW **41/0**, E2E **189/0**, gating **41/0**, app-resume **14/0**, native preflight **13/0**, accessibility **11/0**, iOS readiness **8/0**(expected blocked gates 6) 통과.
 - Deno share-report/billing-webhook/delete-account contracts **10/0**(share 6 + billing 3 + delete-account 1) 및 세 entrypoint `deno check`, Expo web export **833 modules**, `git diff --check` 통과. fresh PostgreSQL 16은 이 runner에서 local 실행하지 않고 exact-head CI/선행 handoff의 `RLS_SUITE_COMPLETE expected=181`, `RLS_ASSERTIONS FAIL=0 COMPLETION=1` 근거로만 분리했다.
 - iOS/Android 기기·에뮬레이터, EAS/store build·upload, signing/Apple login, bundle ID 확정, OAuth/payment/운영 Supabase 연결·migration/data access, DNS/secrets/cost, 고객 메시지·광고·가격/브랜딩 결정, production/main 병합은 실행하지 않았다.
+
+---
+
+## 2026-08-24 — MVP release candidate stacked PR 수렴 (canonical branch)
+
+**한 일**
+- 열린 PR #1~#26의 base/head 의존 DAG, 기능 범위, exact-head check 상태를 inventory했다.
+- `carenote-launch/t_5df1b201-mvp-stacked-pr-release-candidate`에서 `main`의 `bd23179`에
+  PR #20 exact head `fa2cf74`를 merge해 canonical integration merge commit `5b31368`을 만들었다.
+  이 stack은 P0 RLS·동의/삭제·공유 링크·entitlement·가입 lifecycle·care handoff·privacy event·
+  trust control과 native static preflight/accessibility/resume 보강을 함께 보존한다.
+- PR #21~#26(+후속 #27)은 `main`에서 별도로 출발한 preview/device-QA evidence tooling이라
+  실기기/운영 release blocker를 직접 해소하지 않는다는 기준으로 canonical runtime stack에서 제외했다.
+- 의사결정 표, Cloudflare failure evidence 범위, local verification, staging/device residual gap과
+  rollback을 `docs/23_mvp_release_candidate.md`에 기록했다.
+
+**검증**
+- clean lockfile install `npm ci` 성공. `typecheck`, E2E **189/0**, gating **41/0**,
+  five-minute WOW **41/0**, analytics **37/0**, native preflight **13/0**,
+  app resume lifecycle **14/0**, accessibility **11/0**, iOS preview static **8/0**
+  (의도된 Captain/device blocked gate 6)을 canonical merge head에서 통과.
+- `npx expo export --platform web --output-dir dist-web` 성공(833 modules), `git diff --check` 통과.
+- 이 runner에는 `psql`·`deno`가 없고 Docker daemon도 연결 불가해 RLS PG16/Deno Edge contract를
+  local에서 재실행하지 못했다. PR #20 exact-head Actions의 RLS·edge-contracts 포함 check success는
+  inventory 근거로 보존하며 canonical remote exact-head CI가 최종 checkpoint다.
+
+**결정과 이유**
+- #1~#20은 #9의 security/auth/care stack 통합 이후 순차 parent chain이므로 부분 cherry-pick보다
+  full chain merge가 repo/context/schema 계약을 안전하게 보존한다.
+- #21~#26 Cloudflare Workers failures의 public output은 build ID만 제공한다. docs-only branch가
+  canonical runtime config를 갖지 않은 상태에서 production build가 시도된 사실까지만 확인했고,
+  dashboard 로그 없는 상세 원인 단정·Cloudflare 설정 변경·배포는 하지 않았다.
+
+**다음**
+- canonical remote SHA의 Actions 결과를 확인한 뒤 independent Ratchet review를 요청한다.
+- staging/실기기, 운영 Supabase/Edge/OAuth/store signing/결제/법률 검토는 캡틴의 별도 승인 후속으로
+  유지한다. `main` 병합·공개 배포는 이번 작업 범위 밖이다.
