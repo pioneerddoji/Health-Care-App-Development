@@ -12,6 +12,14 @@
 - **실가족 21일 베타는 조건부:** 운영 Supabase/Edge, 두 실기기 권한·회수, preview build, 개인정보·동의 문구를 검증하고 캡틴이 명시 승인한 뒤에만 시작한다.
 - **현재 No-Go:** 실가족 건강정보 입력, 공개 모집·광고, 스토어 제출, 실제 결제, OAuth/SMS/RevenueCat 실연동. 코드/정적 CI 통과는 native·hosted backend·법률·운영 준비 통과가 아니다.
 
+### 2026-08-24 비용 정책 결정
+
+- 개발 초기 외부 서비스 **증분 비용 상한은 0원**이다.
+- 실제 구독 매출이 발생하기 전에는 유료 Supabase 프로젝트/compute/add-on, EAS 유료 build/priority/update, 유료 webhook 인프라, 도메인·이메일·SMS, 광고, 유료 실기기 farm을 만들거나 활성화하지 않는다.
+- 무료 티어도 카드 등록, 자동 업그레이드 또는 한도 초과 과금 가능성이 있으면 사전 확인 없이 사용하지 않는다.
+- 비용 없는 local Supabase/PostgreSQL, migration replay, RLS 공격 테스트, Deno Edge contract test, mock OAuth, 로컬 Expo web, 무료 CI와 이미 제공된 emulator/simulator로 검증 가능한 항목은 계속 수행한다.
+- 실제 cloud에서만 검증 가능한 redirect, deployed Edge Function, store sandbox와 hosted recovery는 의도적인 출시 gate로 남긴다. 다만 결제수단 등록·자동 과금 없이 `$0`이 보장되는 무료 hosted tier는 현재 quota와 중단 동작을 확인한 뒤 사용할 수 있다. 구독 매출 발생 뒤에도 비용은 자동 승인되지 않으며 예상 월액, 사용자당 비용, 무료 대안, 상한과 중단 조건을 별도 승인받는다.
+
 기능 수를 더 늘리는 대신 `짧은 기록 → 두 번째 보호자의 확인 → 검토된 진료 브리핑`을 하나의 안전한 루프로 검증한다. 즉시 반영 후보는 정확히 3개이며 나머지는 beta-after backlog로 보낸다.
 
 ## 2. 판단 근거와 증거 수준
@@ -92,16 +100,17 @@
 - 성장 백분위, 다국어, 소유권 이전, 사진 서명 URL 장기 재발급 등 기존 백로그.
 - 미성년→성인 자동 권한 회수는 공개 출시 전 P0 정책이지만, 이번 21일 아동 보호자 베타에서 연령 경계 대상자를 모집하지 않고 별도 법률/설계 카드로 분리한다.
 
-## 6. staging → 실기기 → 5~10가족 21일 실행안
+## 6. 0원 admission → 비용 재검토 → 실기기 → 5~10가족 21일 실행안
 
 ### Phase A — admission 준비(D-7~D-1)
 
 1. canonical SHA와 build/version을 고정하고 rollback owner를 지정한다.
-2. 캡틴 승인 후 staging Supabase를 만들고 migrations/RLS/Storage를 적용한다. 실데이터 없이 두 테스트 계정으로 `verify:supabase`를 전부 통과시킨다.
-3. `share-report`와 `delete-account` Edge 경로를 배포하고 샘플 PDF/계정으로 링크 열람→회수→만료, 내보내기→삭제→DB/Storage 차단을 확인한다.
+2. 신규 cloud 프로젝트 없이 local Supabase/PostgreSQL에서 migrations/RLS/Storage 계약을 clean replay하고 두 합성 계정의 권한·회수·삭제 공격 테스트를 통과시킨다.
+3. `share-report`와 `delete-account`는 Deno contract test와 로컬 수신자 harness에서 샘플 PDF/계정으로 링크 열람→회수→만료, 내보내기→삭제→DB/Storage 차단을 검증한다. 실제 Edge 배포는 비용 재검토 gate 뒤로 둔다.
 4. 개인정보·민감정보·선택 analytics 동의 문구, 보존기간, 사고 연락 경로를 고정한다. 건강 원문 없는 운영 지표만 허용한다.
-5. Android/iOS 각 1대 이상에서 가입→동의→대상 등록→기록→초대(두 기기)→확인→브리핑/PDF/share→회수→동의 철회→삭제를 수행한다. 권한 거부, 오프라인, 앱 재개, TalkBack/VoiceOver도 포함한다.
-6. preview artifact의 SHA/build 정보를 기록한다. 실패가 하나라도 남으면 실가족 모집을 시작하지 않는다.
+5. 이미 제공된 로컬 Android emulator/iOS simulator 또는 비용 없는 로컬 build만 사용해 가입→동의→대상 등록→기록→초대→확인→브리핑/PDF/share→회수→동의 철회→삭제를 수행한다. 권한 거부, 오프라인, 앱 재개, TalkBack/VoiceOver 계약도 포함한다.
+6. 무료 범위에서 재현 가능한 artifact의 SHA/build 정보를 기록한다. hosted backend·실기기·signing 전용 항목은 PASS로 가장하지 않고 `비용 gate 뒤 미검증`으로 남긴다.
+7. 무료 hosted tier가 결제수단·자동 과금 없이 `$0`으로 중단된다는 사실을 확인할 수 있으면 샘플 데이터 admission에 사용할 수 있다. 그렇지 않으면 local 결과를 보존하고 hosted 항목을 미검증으로 남긴다. 실가족 건강정보 모집은 실제 cloud/두 실기기 admission과 개인정보 gate를 통과한 후 별도 승인한다.
 
 ### Phase B — 21일 비공개 무료 베타
 
@@ -153,10 +162,10 @@
 
 | 운영 항목 | 이번 베타의 제안 | 캡틴 승인 내용 | 승인 전 상태 |
 |---|---|---|---|
-| Supabase | staging 서울 리전, 프로젝트 소유·요금·secret 보관, migration/RLS/Storage 적용 | 프로젝트 생성/비용/접근자와 secret 주입 승인 | **차단** |
-| Edge | `share-report`, `delete-account` staging 배포와 샘플 수신자 드릴 | deploy, 로그/retention, rollback 승인 | **차단** |
+| Supabase | local Supabase/PostgreSQL 우선. 결제수단·자동 과금 없이 `$0`으로 중단되는 무료 cloud project만 quota 확인 후 샘플 데이터에 허용 | 비용 발생 경로는 구독 매출 뒤 예상 월액·상한·무료 대안·중단 기준·접근자를 별도 승인 | **무료 조건 확인 전 보류** |
+| Edge | `share-report`, `delete-account` Deno contract와 로컬 수신자 드릴만 수행 | hosted deploy, 로그/retention, rollback과 비용을 구독 매출 뒤 별도 승인 | **비용 gate 뒤로 보류** |
 | OAuth/SMS | 이번 베타는 email-only. SMS 스텁을 사용자에게 노출하지 않고 OAuth는 보류 | email-only 예외와 인증 문구 승인 | **차단** |
-| Build/signing | 내부 preview build만. 스토어 업로드·production signing은 금지 | EAS 계정/secret 사용, 테스트 기기 설치 승인 | **차단** |
+| Build/signing | 로컬 build·기존 emulator/simulator만. EAS 유료 build, 스토어 업로드·production signing 금지 | 구독 매출 뒤 EAS/개발자 계정 비용과 secret 사용을 별도 승인 | **비용 gate 뒤로 보류** |
 | 법률/개인정보 | 보호자·민감정보·선택 analytics 문구와 보존/삭제 절차 검토 | 실가족 데이터 수집 가능 여부 승인 | **차단** |
 | 고객 접촉 | 동의된 5~10가족 비공개 초대, 보상·지원 채널·연락문 승인 | 대상/문구/일정/보상/incident 연락 책임자 승인 | **차단** |
 | 결제 | 생성하지 않음; paywall/purchase CTA hidden | 별도 승인 불필요. 향후 실결제는 새 gate | **금지 유지** |
@@ -166,8 +175,8 @@
 
 ## 9. 최종 의사결정 규칙
 
-- **Go:** Phase A의 hosted backend/Edge/두 실기기/preview build/개인정보 gate가 전부 PASS이고 캡틴의 고객 접촉 승인이 있을 때, 5~10가족 21일 무료 베타만 시작한다.
-- **Conditional Go(현재):** canonical RC와 실험 설계는 채택하되 Phase A가 끝날 때까지 합성·샘플 데이터만 사용한다.
+- **Go:** 비용 0원이 보장되는 hosted backend/Edge 경로 또는 구독 매출 이후 별도 승인된 유료 경로에서 두 실기기/preview build/개인정보 gate가 전부 PASS이고 캡틴의 고객 접촉 승인이 있을 때, 5~10가족 21일 베타만 시작한다.
+- **Conditional Go(현재):** canonical RC와 실험 설계는 채택하되 외부 서비스 증분 비용 0원, 합성·샘플 데이터, local/mock/contract 범위만 사용한다.
 - **No-Go:** P0 안전 실패, 법률 차단, 회수·삭제 실패, 운영 책임자/rollback 부재 중 하나라도 있으면 실가족 베타를 시작하지 않는다.
 
 이 결정은 “출시 준비 완료”가 아니라, 작은 베타에서 무엇을 증명하고 어떤 조건에서 멈출지를 고정한 admission contract다.
