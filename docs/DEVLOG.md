@@ -613,3 +613,40 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - Storage 재귀 완전 삭제는 실 Supabase 미검증 (list API 페이지네이션 1000개 한도 —
   기록이 매우 많은 아이는 반복 호출 필요할 수 있음)
 - 개인정보처리방침은 초안 — 배포 전 법률 검토 필수
+
+---
+
+## 2026-08-24 — MVP 베타 진입 결정: Conditional Go
+
+**한 일**
+- canonical RC exact head `c171f0459e584a6e1324738fd9a60e6b1587b6d4`, 독립 Ratchet 검토,
+  핵심 루프 UX·가족 협업/GTM·신뢰/개인정보 벤치마크 3건을 종합해
+  `docs/24_mvp_beta_entry_decision.md`를 작성했다.
+- 기술/사용자/사업 readiness를 `PASS / 미검증 / 차단`으로 분리하고, 코드·정적 CI
+  성공을 hosted backend·실기기·법률·운영 준비 성공으로 확대 해석하지 않았다.
+- 즉시 실험을 ① 첫 기록 뒤 공동 보호자 activation(무료 첫 1명), ② 오늘의 돌봄 상태
+  3칸 handoff, ③ 검토형 60초 진료 브리핑 진입점 세 개로 제한했다. 각 실험에 개인정보
+  최소수집 이벤트, 성공/즉시 중단 기준, 작업량, rollback을 고정했다.
+- 5~10가족 21일 비공개 무료 베타 절차, 가칭 `돌봄한장`, 가격은 미검증 가설로만 유지,
+  Supabase/Edge/email-only/build/법률/고객 접촉의 캡틴 승인 gate를 분리했다.
+
+**결정과 이유**
+- 현재 verdict는 **Conditional Go**다. 합성/샘플 staging 준비는 진행할 수 있지만,
+  운영 Supabase/Edge·두 실기기·preview build·개인정보 gate와 캡틴 승인이 전부 끝나기
+  전에는 실가족 건강정보를 받지 않는다.
+- 공개 배포·광고·고객 접촉·결제는 이번 작업에서 수행하지 않았다. 21일 베타도
+  paywall/purchase CTA를 숨긴 무료 범위이며 OAuth/SMS/RevenueCat은 후속으로 미룬다.
+- 작은 표본은 통계적 효과 증명이 아니므로 절대 가족 수와 P0 안전 guardrail을 우선한다.
+
+**검증**
+- upstream 4개 산출물과 canonical Git ref를 직접 대조했다. canonical branch와 PR #28
+  checkpoint는 exact SHA `c171f045...`이며, 선행 Actions 8/8·독립 review 승인 범위를
+  문서에 그대로 제한해 기록했다.
+- `npm run typecheck` 통과, `npm run test:e2e` PASS 110/FAIL 0,
+  `npm run test:gating` PASS 27/FAIL 0.
+- 필수 섹션·실험 정확히 3개·금지 작업·승인 항목을 확인하는 문서 assertion과
+  `git diff --check`를 통과했다.
+
+**다음**
+- 캡틴 승인 전에는 배포/실고객 접촉 없이 세 실험의 구현 카드와 Phase A 합성 staging
+  체크리스트만 준비한다. admission gate 하나라도 실패하면 실가족 베타는 No-Go다.
