@@ -54,6 +54,18 @@ const expectInvalid = (evidence: unknown, detail: string) => {
 const valid = validateEvidencePackage(makeValidPackage());
 assert.equal(valid.valid, true, valid.errors.join('\n'));
 
+const legacySchema = makeValidPackage();
+legacySchema.schemaVersion = '0.9';
+expectInvalid(legacySchema, 'legacy schema versions must not be migrated implicitly');
+
+const missingSchemaVersion = makeValidPackage();
+delete (missingSchemaVersion as Partial<typeof missingSchemaVersion>).schemaVersion;
+expectInvalid(missingSchemaVersion, 'packages without a schema version must fail closed');
+
+const futureSchema = makeValidPackage();
+futureSchema.schemaVersion = '2.0';
+expectInvalid(futureSchema, 'unknown future schema versions must fail closed');
+
 const missingRequiredField = makeValidPackage();
 delete (missingRequiredField.checks[0] as Partial<typeof missingRequiredField.checks[number]>).rollback;
 expectInvalid(missingRequiredField, 'required rollback must fail closed');
@@ -207,4 +219,4 @@ const negativeFixtureMatrix: Array<[string, () => unknown]> = [
 
 negativeFixtureMatrix.forEach(([name, fixture]) => expectInvalid(fixture(), `negative fixture matrix: ${name}`));
 
-console.log(`device QA evidence validator: PASS ${15 + negativeFixtureMatrix.length} / FAIL 0`);
+console.log(`device QA evidence validator: PASS ${18 + negativeFixtureMatrix.length} / FAIL 0`);

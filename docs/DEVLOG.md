@@ -771,3 +771,33 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - `npm run test:device-qa-evidence`: validator `PASS 29 / FAIL 0`, positive fixture `VALID`.
 - `npm run typecheck` 성공, `npm run test:e2e` `PASS 110 / FAIL 0`,
   `npm run test:gating` `PASS 27 / FAIL 0`, `npx expo export --platform web --output-dir dist-web` 성공.
+
+---
+
+## 2026-08-24 — P1 device-QA evidence schema version·fixture corpus provenance
+
+**한 일**
+- evidence package의 지원 schema를 `1.0`만으로 명시하고, schema 누락, legacy `0.9`, unknown future
+  `2.0`을 fail-closed로 고정했다. validator는 migration, normalization, default 보완을 수행하지 않는다.
+- positive/negative fixture 두 개의 상대 파일명과 SHA-256 digest를
+  `fixtures/device-qa-evidence/manifest.json`으로 고정했다. corpus provenance test는 목록 변조, fixture
+  누락·변조, manifest duplicate path를 거부하고 양성/음성 fixture의 validator 결과도 확인한다.
+- `test:device-qa-evidence`에 provenance test를 편입했다.
+
+**결정과 이유**
+- schema version 확대나 legacy 입력의 자동 변환은 별도 승인 카드에서 validator·fixture·manifest를 함께
+  갱신해야 한다. 따라서 이 정적 intake가 향후 schema 또는 fixture 변화로 조용히 수용 범위를 넓히지 않는다.
+- manifest는 filename과 digest만 포함해 건강정보, credential, absolute path를 새로 보관하지 않는다.
+
+**검증**
+- TDD RED: 새 provenance test가 누락된 `validateEvidenceFixtureCorpus` export 때문에 예상대로 실패했다.
+  GREEN: 구현 후 `npm run test:device-qa-evidence` validator `PASS 32 / FAIL 0`, provenance `PASS`,
+  positive fixture `VALID`.
+- clean `npm ci` 성공(기존 audit advisory 22건 및 pending `esbuild` allow-script warning은 변경·승인하지
+  않음), `npm run typecheck` 성공, `npm run test:e2e` `PASS 110 / FAIL 0`, `npm run test:gating`
+  `PASS 27 / FAIL 0`, Expo web export 성공, `git diff --check` 성공.
+- parent exact remote SHA `6bedebc55f5c4f506f9ddf03763a1597efbf3f4e`, Draft PR #24와 API head를 대조했다.
+  parent handoff의 current-head CI는 typecheck/device-QA evidence/PG16 RLS success이며 Workers Builds는
+  explicit non-green이다. parent package에는 analytics/five-minute WOW/app-resume/native-preflight/
+  accessibility/iOS-preview-readiness/Deno contract 명령이 없어 실행·PASS를 주장하지 않는다. 실기기,
+  emulator, signing, 운영 서비스, build/upload/deploy, repository setting, main merge는 수행하지 않았다.
