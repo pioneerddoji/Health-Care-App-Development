@@ -658,3 +658,13 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   `npm run test:gating` (27/0), `git diff --check`를 재실행했다. `npm ci`가 보고한 기존
   dependency advisory 22건(중간 9, 높음 13)과 보류된 `esbuild` install script는 이 문서 작업에서
   변경하거나 승인하지 않았다.
+
+**재검토 정정 2**
+- Android PR #18 immutable exact head `13ed953e95ffaff281c40e52d6b2acea590cbedb`의
+  `docs/13_android_preview_readiness.md`와 대조해 포트폴리오 matrix의 Deno contracts 표기를
+  `11/0`에서 실제 재실행 결과인 `10/0`(share-report 6 + billing-webhook 3 + delete-account 1)으로
+  정정했다. 다른 `11/0` Deno 표기는 없음을 확인했다.
+- 이 수정은 false-green 방지를 위한 문서 수치 정정만 포함하며, build/upload/signing/device/OAuth/
+  billing/production Supabase/main 경계는 열지 않았다. 정정 후 docs branch 계약을 다시 실행하고
+  exact remote SHA 및 current-head checks를 protected-helper API/ref로 재대조한 뒤 독립 ratchet
+  same-card 재검토를 요청한다.
