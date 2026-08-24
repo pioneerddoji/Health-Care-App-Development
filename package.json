@@ -11,7 +11,8 @@
     "verify:supabase": "node supabase/tests/verify_connection.mjs",
     "test:e2e": "tsx scripts/e2e-cycles.mts",
     "test:gating": "tsx scripts/subscription-smoke.mts",
-    "test:device-qa-evidence": "tsx scripts/device-qa-evidence-validator.test.mts && tsx scripts/device-qa-evidence-provenance.test.mts && tsx scripts/validate-device-qa-evidence.ts fixtures/device-qa-evidence/positive-needs-device.json"
+    "check:device-qa-evidence-provenance": "tsx scripts/check-device-qa-evidence-provenance.ts",
+    "test:device-qa-evidence": "tsx scripts/device-qa-evidence-validator.test.mts && tsx scripts/device-qa-evidence-provenance.test.mts && tsx scripts/device-qa-evidence-provenance-cli.test.mts && npm run check:device-qa-evidence-provenance && tsx scripts/validate-device-qa-evidence.ts fixtures/device-qa-evidence/positive-needs-device.json"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",

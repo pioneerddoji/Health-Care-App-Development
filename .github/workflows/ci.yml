@@ -37,6 +37,8 @@ jobs:
         run: npm ci
       - name: Validate offline device-QA evidence fixtures
         run: npm run test:device-qa-evidence
+      - name: Verify device-QA evidence provenance CLI
+        run: npm run check:device-qa-evidence-provenance
 
   rls-test:
     runs-on: ubuntu-latest
