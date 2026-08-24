@@ -836,3 +836,32 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   exact package source에 없어 실행·PASS를 주장하지 않는다. fresh PG16은 parent current-head CI marker만
   참조한다. 실기기/emulator, signing/account, production 서비스, build/upload/deploy, repository setting,
   main merge는 수행하지 않았다.
+
+---
+
+## 2026-08-24 — P1 provenance CLI 환경 불변성·filesystem boundary 회귀
+
+**한 일**
+- corpus root 자체가 symlink이면 거부하고, corpus file enumeration은 locale-sensitive `localeCompare` 대신
+  bytewise lexical comparator를 사용하도록 고정했다.
+- CLI regression을 `LC_ALL=C`/`TZ=UTC` repository root와 `LC_ALL=C.UTF-8`/`TZ=Asia/Seoul` 격리 CWD에서
+  실행해 exit/stdout/stderr 동일성을 확인한다. 성공 출력에는 timestamp·local absolute path·temporary fixture
+  path가 포함되지 않는다는 assertion도 추가했다.
+- synthetic corpus regression에 corpus/file/broken symlink, non-regular directory, case·underscore·backslash·dot
+  segment·Unicode decomposed path를 추가해 모두 fail-closed로 고정했다. fixture/manifest는 수정하지 않았다.
+
+**결정과 이유**
+- CLI validator의 corpus 탐색은 locale, timezone, current CWD나 symlink resolution에 따라 변경되면 provenance
+  gate의 재현성이 깨진다. 허용 filename grammar 이외의 표현은 normalization하지 않고 거부해 corpus boundary를
+  넓히지 않는다.
+
+**검증**
+- clean `npm ci` 성공(기존 audit advisory 22건 및 pending `esbuild` allow-script warning은 변경·승인하지 않음),
+  `npm run typecheck` 성공, `npm run test:device-qa-evidence`에서 validator `PASS 32 / FAIL 0`, provenance
+  `PASS`, CLI boundary regression `PASS 24 / FAIL 0`, canonical CLI `VALID fixtures=2`, positive fixture `VALID`.
+- tracked manifest와 positive/negative fixture SHA-256을 실행 전후 비교해 동일함을 확인했고 `git diff --check`를
+  통과했다. parent exact remote head `44264465801604c18b77896531cfab0bee0f3fec`와 ref를 대조했다.
+- package source에 없는 analytics/five-minute WOW/app-resume/native-preflight/accessibility/iOS-preview-readiness/
+  Deno contract 명령은 실행·PASS를 주장하지 않는다. fresh PG16은 parent current-head CI marker만 참조한다.
+  실기기/emulator, signing/account, production 서비스, build/upload/deploy, repository setting, main merge는
+  수행하지 않았다.
