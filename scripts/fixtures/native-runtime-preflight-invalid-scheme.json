@@ -1,0 +1,13 @@
+{
+  "description": "Negative fixture: Expo native scheme must be a non-empty string.",
+  "appJson": {
+    "expo": {
+      "scheme": [],
+      "android": {
+        "permissions": ["READ_MEDIA_IMAGES", "POST_NOTIFICATIONS"]
+      },
+      "plugins": ["expo-notifications"]
+    }
+  },
+  "expectedError": "expo.scheme"
+}

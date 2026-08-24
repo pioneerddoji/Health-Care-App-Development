@@ -1,10 +1,11 @@
-# 아이케어(kidcare) — AI 에이전트/개발자 인수인계 문서
+# 케어노트(carenote) — AI 에이전트/개발자 인수인계 문서
 
 > 이 문서는 어떤 LLM·코딩 도구·개발자든 **이 저장소만 읽고** 개발을 이어받을 수 있도록
 > 작성되었다. 처음 15분: 이 문서 → `docs/DEVLOG.md`(시간순 개발 일지) → `docs/05_mvp_roadmap.md`.
 
 ## 1. 프로젝트 한 줄 요약
-한국 보호자용 0–18세 아이 건강 기록 앱 (React Native + Expo SDK 54 + TypeScript + Supabase).
+한국 가족용 건강 기록 앱 — 아이(0–18세)와 성인을 모두 관리 대상자로 등록한다
+(React Native + Expo SDK 54 + TypeScript + Supabase).
 일자별 기록 → 건강관리 영역 분류 → 그래프 → **병원 제출용 PDF 레포트** + 만료형 공유 링크.
 3티어 구독제(무료/스탠다드/패밀리) 포함. 개발 브랜치: `claude/fable5-dev-feasibility-993n3x`.
 
@@ -12,9 +13,12 @@
 1. **의료행위 금지**: 진단명 추정, 약 용량 계산·추천, "병원 안 가도 됨" 판단 기능을
    만들지 않는다. AI 보조를 붙여도 자연어 정리·태그 추천·요약까지만.
 2. **디스클레이머 고정**: 대시보드·레포트의 "보호자 관찰 기록이며 의학적 소견 아님" 고지 유지.
-3. **아이 얼굴 사진 미수집**: 프로필은 이모지 아바타만. 기록 사진은 얼굴 회피 안내 유지.
-4. **가입은 법정대리인 본인만** + 가입 시 민감정보 별도 동의. 아이 등록마다 아이 단위
-   동의 행(consents) 기록 — RLS가 이를 근거로 기록 INSERT를 차단한다.
+3. **얼굴 사진 미수집**: 프로필은 이모지 아바타만. 기록 사진은 얼굴 회피 안내 유지.
+4. **가입은 성인 본인만** + 민감정보 별도 동의. 대상자 등록마다 대상자 단위 동의 행
+   (consents) 기록 — RLS가 이를 근거로 기록 INSERT를 차단한다. 동의 근거는 라벨이
+   아니라 **만 나이**로 갈린다(`src/lib/recipient.ts`의 `consentPlanFor`가 단일 원천):
+   14세 미만=법정대리인 / 미성년=법정대리인+본인 고지 / 성인 본인=본인 동의 /
+   성인 타인=본인 위임 동의. **어느 경로든 `sensitive_health`가 기록 게이트**다.
 5. **구독 게이팅 원칙**: 핵심 안전 기능(기록·그래프·PDF·알림·동의·삭제)은 전 티어 무료.
    다운그레이드해도 기존 데이터는 잠기지 않는다(한도는 "새로 추가"에만).
 6. 사용자와는 **한국어**로 소통한다.
@@ -39,18 +43,18 @@
 ```bash
 npm install                 # 최초 1회
 npx tsc --noEmit            # ① 타입체크 — 항상
-npm run test:e2e            # ② 저장소 계층 E2E 110건 (5사이클 전체 워크플로우)
-npm run test:gating         # ③ 구독 게이팅 12건
-# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 44건)
+npm run test:e2e            # ② 저장소 계층 E2E 133건 (5사이클 + 설정/카카오/대상자/이름변경)
+npm run test:gating         # ③ 구독 게이팅 + 모드 플래그 36건
+# ④ DB/RLS 변경 시: PostgreSQL 16에서 (auth/storage 셈 포함, 58건)
 cd supabase/tests && psql -U postgres -d <새DB> -v ON_ERROR_STOP=1 -f rls_test.sql
 # ⑤ UI 변경 시(선택): 웹 빌드 + Playwright — scripts/ 의 각 파일 헤더 참조
 npx expo export --platform web --output-dir dist-web
-node scripts/persistence-test.mjs   # 영속화 5건
+node scripts/persistence-test.mjs   # 영속화 9건 (이름 변경 마이그레이션 포함)
 node scripts/ui-cycles.mjs          # UI 5사이클
 node scripts/screenshot-all.mjs     # 전 화면 23컷 캡처(사용자 공유용)
 npm start                   # Expo Go 실행 (사용자 테스트용)
 ```
-CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행한다.
+CI(`.github/workflows/ci.yml`)가 push/PR마다 ①+④를 자동 실행한다.
 데모 시드 규칙: 샘플 데이터(`src/data/sample.ts`)는 '오늘' 기준 상대 날짜로 생성되어
 언제 실행해도 그래프가 채워진다 — 절대 날짜로 바꾸지 말 것.
 
@@ -60,13 +64,17 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
   동의 철회, 완전 삭제(Storage 포함), 3티어 구독+페이월, 개인정보처리방침.
 - 데모 모드는 AsyncStorage 영속(재시작 시 자동 로그인) — 사용자가 현재 이 모드로
   **Windows PC + Expo Go(SDK 54)** 에서 개인 테스트 중.
+- 사용자별 설정은 `user_settings`(JSONB 1컬럼) + repo `saveSettings`(병합 저장) —
+  새 개인 설정은 `UserSettings` 타입에 필드만 추가(스키마 변경 불필요).
+  supabase 세션은 SecureStore 키 기반 암호화 저장(`src/lib/secureSessionStorage.ts`,
+  웹은 AsyncStorage 폴백).
 - 배포 준비물 완비: `eas.json`, 아이콘/스플래시, `docs/06_deployment.md` 체크리스트,
   `npm run verify:supabase`(실 프로젝트 연결 검증 스크립트).
 
 ## 6. 다음 작업 (우선순위순)
 1. **안드로이드 출시 준비**: `docs/09_android_release.md`가 단일 기준 문서.
-   사용자 결정 대기 3건(번들 ID / 1차 출시 구독 정책 / SMS 인증) — 결정되는 대로
-   §3 개발 반영(페이월 숨김 플래그 또는 RevenueCat, SMS 연동 또는 우회 플래그 등).
+   구독 정책(무료 출시+얼리버드)과 SMS(off 기본값=이메일 확인만)는 결정·구현 완료.
+   남은 사용자 결정: **번들 ID** — 확정 즉시 app.json 반영.
 2. 사용자 피드백 반영(1~3차 완료, 계속 도착 예정): 항목별 수정→검증(§4)→푸시 사이클로.
 3. Supabase 운영 프로젝트 연결 검증: 사용자가 프로젝트 생성 후
    `npm run verify:supabase` 실행 — 실패 항목 대응. Edge Function 배포·수신자 테스트.
@@ -87,21 +95,33 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 - 사진 서명 URL 24h 만료 — 재발급 로직은 백로그.
 - `maestro/smoke.yaml`은 실기기 미실행 상태(좌표 탭은 기기별 보정 필요할 수 있음).
 - 개인정보처리방침(`docs/privacy_policy.*`)·이용약관(`src/constants/terms.ts`)은 **법률 검토 전 초안**.
-- 번들 ID `app.kidcare.mvp`는 자리표시 — 스토어 첫 업로드 전 확정 필수(이후 변경 불가).
+- 번들 ID `app.carenote.mvp`는 자리표시 — 스토어 첫 업로드 전 확정 필수(이후 변경 불가).
 - **SMS 문자 인증 미연동**: `src/services/smsAuth.ts`의 `sendSms()`는 데모 스텁(코드를
-  화면에 표시). 실서비스는 국내 공급자(알리고/솔라피 등) 또는 Twilio 계약 후 이 함수만 교체.
-  아이디/비번 찾기(`findEmailByPhone`/`resetPassword`)는 supabase 구현이 definer RPC +
-  SMS 연동 필요 → 현재 mock만 완성, supabase 경로는 명시적 오류 안내.
-- **데모 로그인 규칙**: `demo@kidcare.app`로 로그인하면 샘플 데이터(아이2+14일)가 로드되고
+  화면에 표시). **모드 플래그 `EXPO_PUBLIC_SMS_MODE`(demo/off/live)** — 미지정 시
+  mock=demo, supabase=off(문자 인증 건너뜀, 이메일 확인만 = 1차 출시 기본값).
+  'live' 전환 시 발송뿐 아니라 **OTP 생성·검증도 서버(Edge Function)로 이전 필수**
+  (현재 구현은 앱 내 검증이라 데모 전용 — 우회 가능/레이트리밋 없음).
+  아이디 찾기(`findEmailByPhone`)는 supabase 구현이 definer RPC + SMS 연동 필요 →
+  mock만 완성. off 모드의 비밀번호 재설정은 `requestPasswordResetEmail`(재설정 메일)
+  로 대체 — 단 링크 도착지(Site URL/redirect) 설정은 운영 프로젝트에서 필요.
+- **데모 로그인 규칙**: `demo@carenote.app`(구 `demo@kidcare.app`도 계속 인식)로 로그인하면
+  샘플 데이터(아이2+14일)가 로드되고
   티어는 standard로 강제됨. 일반 가입/로그인은 빈 상태 + **free 티어**로 시작하며,
   저장본에 샘플 잔재가 있으면 `stripSampleData()`가 정리한다(memoryRepo).
   로직/스크린샷 테스트는 이 데모 계정 로그인을 전제로 함.
 - 네이티브 date/time 픽커(`DateField`)·키보드 회피(`KeyboardScreen`)는 웹에서 폴백으로만
   동작 → 실기기 확인 필요. 웹 프리뷰로는 픽커 UX를 검증할 수 없음.
-- **결제 미연동**: `src/services/billing.ts`의 `purchaseWithStore()`/`restorePurchases()`가
-  교체 지점(가이드 주석 포함). 페이월은 `EXPO_PUBLIC_PAYWALL_MODE`(demo/hidden/live)로
-  분기 — env 미지정 시 실서버 빌드는 **hidden**(Play 정책 안전 기본값).
-  웹훅은 `supabase/functions/billing-webhook`(미배포). 절차: docs/07 §실연동.
+- **결제: 코드 연동 완료, 계정 작업만 남음**: `billing.ts`가 RevenueCat SDK
+  (react-native-purchases)를 실호출한다 — 단 **live 모드 + env 키가 있을 때만
+  지연 로드**(Expo Go/웹/demo/hidden 빌드는 SDK를 아예 로드하지 않아 안전).
+  페이월은 `EXPO_PUBLIC_PAYWALL_MODE`(demo/hidden/live), env 미지정 시 실서버
+  빌드는 **hidden**(Play 정책 안전 기본값). live 동작 조건: ① 스토어 상품 등록
+  ② RevenueCat 대시보드 + `EXPO_PUBLIC_RC_API_KEY_ANDROID/IOS` ③ 웹훅
+  (`billing-webhook`) 배포 ④ **development build**(Expo Go 불가). 절차: docs/07 §실연동.
+- **카카오 로그인**: `EXPO_PUBLIC_KAKAO_LOGIN`(on/off) — 미지정 시 mock=on(시뮬레이션),
+  supabase=off. 실동작 전제: Kakao Developers 앱 + Supabase Kakao provider 설정
+  (socialAuth.ts 주석). 첫 카카오 로그인은 `isNewUser`로 동의 화면을 경유한다.
+  supabase 경로(브라우저 OAuth 왕복)는 실기기/실프로젝트에서 미검증.
 - **EXPO_PUBLIC_* env 변경은 Metro 캐시에 반영 안 됨** — 값 바꿔 빌드할 때
   `npx expo export --clear` 필수 (실제로 이것 때문에 검증 1회 실패했음).
 
@@ -113,10 +133,11 @@ CI(`.github/workflows/kidcare-ci.yml`)가 push/PR마다 ①+④를 자동 실행
 | `docs/05_mvp_roadmap.md` | 단계별 완료 현황 |
 | `docs/06_deployment.md` | 배포 가이드 + 계정 소유자 체크리스트 |
 | `docs/07_monetization.md` | 구독 설계 + 결제 연동 경로 |
-| `docs/08_adult_expansion.md` | 성인 관리 확대 대비 설계 규칙 (새 코드에 child 하드코딩 금지 등) |
+| `docs/08_adult_expansion.md` | **전연령 확대 설계·완료 기록** (대상자 유형/동의 분기/연령 전제 기능) |
 | `docs/09_android_release.md` | **안드로이드 출시 종합 체크리스트** (결정 사항·차단 항목·심사 폼) |
 | `QUICKSTART.md` | 사용자용 5분 실행 가이드 (Expo Go) |
-| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql (실행 순서), tests/, functions/ |
+| `docs/10_branding.md` | **앱 이름/브랜딩 현황과 남은 결정**(아이콘 자산 교체 대기) |
+| `supabase/` | schema.sql → schema_stage3.sql → schema_subscriptions.sql → schema_settings.sql → schema_recipients.sql (실행 순서), tests/, functions/ |
 
 ## 9. 작업 규칙 (지금까지의 관례 유지)
 - 커밋: 의미 단위로, 본문에 "왜"를 씀. 개발 브랜치에 푸시 (main 직push 금지).

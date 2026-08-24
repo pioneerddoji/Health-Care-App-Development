@@ -16,6 +16,14 @@ export interface Subscription {
   expiresAt?: string;
 }
 
+// ── 사용자별 설정 ────────────────────────────────────────────
+/** 서버 user_settings.settings(JSONB)와 1:1 — 새 개인 설정은 여기에 필드만
+ *  추가하면 된다(스키마 변경 불필요). 계정 단위로 저장되어 기기를 바꿔도 유지. */
+export interface UserSettings {
+  /** 대시보드 그래프 카드 순서 (DashboardScreen의 SectionKey 배열) */
+  dashboardOrder?: string[];
+}
+
 /** 아이 한 명을 공동 관리하는 보호자 항목 (guardian_child + profiles 조인) */
 export interface ChildGuardian {
   guardianId: string;
@@ -39,12 +47,23 @@ export interface SurgeryHistory {
   hospital?: string;
 }
 
+// ── 관리 대상자 ──────────────────────────────────────────────
+/** 대상자 유형 — 연령 전제 기능(출생 정보/학교 기록 등) 노출과 동의 흐름을 가른다.
+ *  판정 기준은 유형이 아니라 birthDate(만 나이)이며, 유형은 "무엇을 보여줄지"를 정한다. */
+export type RecipientType = 'child' | 'adult';
+
+/** 등록 대상자. (테이블·타입명은 `children`/`Child` 유지 — 일괄 개명은 마이그레이션
+ *  비용이 커서 백로그. docs/08 §확장 시 갈라지는 지점 1번 규칙) */
 export interface Child {
   id: string;
   name: string;
   nickname?: string;
   birthDate: ISODate;
   sex: 'male' | 'female';
+  /** 아이(기본) / 성인 — 미지정 저장본은 'child'로 간주 */
+  recipientType?: RecipientType;
+  /** 성인 대상자가 계정 소유자 본인인지 — 동의 경로(본인 동의 vs 위임)를 가른다 */
+  isSelf?: boolean;
   birthWeightG?: number;
   birthHeightCm?: number;
   gestationalWeeks?: number;
@@ -63,7 +82,14 @@ export interface Child {
 
 export type ChildInput = Omit<Child, 'id'>;
 
-export type ConsentType = 'guardian_legal' | 'sensitive_health' | 'share';
+/** 동의 유형.
+ *  - `sensitive_health`: 건강정보(민감정보) 별도 동의. **모든 대상자 유형 공통이며
+ *    RLS의 기록 INSERT 게이트**(has_sensitive_consent) — 유형이 늘어도 이 역할은 불변.
+ *  - `guardian_legal`: 법정대리인 확인·동의 (미성년 대상자)
+ *  - `adult_delegated`: 성인 대상자를 대신 기록하기 위한 본인 위임 동의 확인
+ *  - `share`: 공유 링크 제3자 제공 */
+export type ConsentType =
+  | 'guardian_legal' | 'sensitive_health' | 'adult_delegated' | 'share';
 
 export interface Consent {
   id: string;
@@ -139,6 +165,28 @@ export interface DailyRecord {
   payload: RecordPayload;
   memo?: string;
   photoUris: string[]; // MVP: 로컬 URI, 연동 후 storage path
+}
+
+/** 공동 보호자가 기록을 확인한 시각. 관찰 기록의 전달 상태만 나타내며 의료 판단이 아니다. */
+export interface RecordAcknowledgement {
+  recordId: string;
+  guardianId: string;
+  acknowledgedAt: string;
+}
+
+/** 진료 후 안내 또는 기록 후속 조치의 보호자 간 담당·기한·완료 상태. */
+export interface CareTask {
+  id: string;
+  childId: string;
+  /** 특정 기록에서 시작한 후속 조치라면 연결한다. */
+  recordId?: string;
+  title: string;
+  note?: string;
+  assigneeId?: string;
+  dueDate?: ISODate;
+  completedAt?: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export type RecordInput = Omit<DailyRecord, 'id' | 'childId' | 'authorId'>;
@@ -218,5 +266,7 @@ export interface ReportInput {
   periodStart: ISODate;
   periodEnd: ISODate;
   questionsForDoctor: string[];
+  /** 보호자가 수정하는 진료 전 전달 메모 — 의학적 요약/판단을 생성하지 않는다. */
+  briefingNote?: string;
   guardianName: string;
 }

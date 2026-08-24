@@ -1,6 +1,6 @@
 // 설정 — 보호자 공동 관리(초대/권한/해제), 동의 내역, 데이터 삭제
-import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, Text, StyleSheet, Alert, View, Pressable } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, ScrollView, Text, StyleSheet, Alert, View, Pressable, findNodeHandle } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
@@ -9,6 +9,9 @@ import { Screen, Card, Button, Row, Muted, Section, Chip, Field, tokens } from '
 import { formatShort } from '../../lib/date';
 import { TIER_META } from '../../constants/subscription';
 import type { ChildGuardian, ShareLinkInfo } from '../../types';
+import { SOCIAL_PROVIDERS, type SocialProvider } from '../../services/socialAuth';
+import { deletionSubmitDisabled } from '../../services/authUxState';
+import { createAccessibilityFocusController } from '../../services/accessibilityFocus';
 
 const ROLE_LABEL = { owner: '소유자', editor: '편집자', viewer: '열람자' } as const;
 
@@ -29,7 +32,7 @@ export const SettingsScreen = () => {
     roleOf, listGuardians, inviteGuardian, updateGuardianRole, removeGuardian,
     listShareLinks, revokeShareLink,
     consentActive, revokeSensitiveConsent, grantSensitiveConsent,
-    subscription, ent,
+    subscription, ent, deleteAccount, getAccountAuthMethods, transferGuardianOwnership, loadAll,
   } = useApp();
   const nav = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -38,6 +41,22 @@ export const SettingsScreen = () => {
   const [inviteRole, setInviteRole] = useState<'editor' | 'viewer'>('editor');
   const [busy, setBusy] = useState(false);
   const [shareLinks, setShareLinks] = useState<ShareLinkInfo[]>([]);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
+  const [deletePhrase, setDeletePhrase] = useState('');
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteMethods, setDeleteMethods] = useState<('email' | SocialProvider)[]>([]);
+  const [deleteError, setDeleteError] = useState('');
+  const deleteErrorRef = useRef<React.ComponentRef<typeof Text>>(null);
+  const focus = useRef(createAccessibilityFocusController({
+    clock: { setTimeout: (task) => setTimeout(task, 0), clearTimeout },
+    setAccessibilityFocus: (node) => AccessibilityInfo.setAccessibilityFocus(node),
+  })).current;
+
+  useEffect(() => {
+    if (deleteError) focus.request(() => findNodeHandle(deleteErrorRef.current));
+  }, [deleteError, focus]);
+  useEffect(() => () => focus.dispose(), [focus]);
 
   const isOwner = selectedChild ? roleOf(selectedChild.id) === 'owner' : false;
   const coGuardianCount = guardians.filter((g) => g.role !== 'owner').length;
@@ -80,15 +99,23 @@ export const SettingsScreen = () => {
     ]);
   };
 
-  const invite = async () => {
+  const invite = () => {
     if (!selectedChild || !inviteEmail.trim()) return;
-    setBusy(true);
-    try {
-      await inviteGuardian(selectedChild.id, inviteEmail.trim(), inviteRole);
-      setInviteEmail('');
-      await refreshGuardians();
-      Alert.alert('완료', `${ROLE_LABEL[inviteRole]} 권한으로 초대했습니다.`);
-    } catch (e) { alertError(e); } finally { setBusy(false); }
+    const child = selectedChild;
+    Alert.alert('공동 관리 범위 확인',
+      `${child.name}의 건강 기록, 사진, 레포트, 보호자 전달 상태를 ${ROLE_LABEL[inviteRole]}에게 공유합니다. ${inviteRole === 'editor' ? '편집자는 기록·레포트 발행과 공유 링크 관리를 할 수 있습니다.' : '열람자는 읽기만 할 수 있습니다.'}`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '범위 확인 후 초대', onPress: async () => {
+          setBusy(true);
+          try {
+            await inviteGuardian(child.id, inviteEmail.trim(), inviteRole);
+            setInviteEmail('');
+            await refreshGuardians();
+            Alert.alert('완료', `${ROLE_LABEL[inviteRole]} 권한으로 초대했습니다.`);
+          } catch (e) { alertError(e); } finally { setBusy(false); }
+        } },
+      ]);
   };
 
   const toggleRole = async (g: ChildGuardian) => {
@@ -115,6 +142,23 @@ export const SettingsScreen = () => {
     ]);
   };
 
+  const confirmTransferOwnership = (g: ChildGuardian) => {
+    if (!selectedChild || g.role !== 'editor') return;
+    Alert.alert('소유권 이전',
+      `${g.name}님이 ${selectedChild.name}의 유일한 소유자가 됩니다. 현재 소유자는 편집자로 변경되며, 삭제·보호자 관리 권한은 새 소유자에게만 남습니다.`,
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '소유권 이전', style: 'destructive', onPress: async () => {
+          try {
+            await transferGuardianOwnership(selectedChild.id, g.guardianId);
+            await loadAll();
+            await refreshGuardians();
+            Alert.alert('완료', '소유권 이전이 서버에서 확정되었습니다.');
+          } catch (e) { alertError(e); }
+        } },
+      ]);
+  };
+
   const confirmDelete = () => {
     if (!selectedChild) return;
     Alert.alert(
@@ -131,6 +175,29 @@ export const SettingsScreen = () => {
         },
       ],
     );
+  };
+
+  const openAccountDeletion = async () => {
+    setDeleteAccountOpen(true); setDeleteError('');
+    try { setDeleteMethods(await getAccountAuthMethods()); }
+    catch (e) { setDeleteError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const removeAccount = async (socialProvider?: SocialProvider) => {
+    if (deletePhrase !== '탈퇴합니다') return;
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteError('');
+    try {
+      const result = await deleteAccount({ password: deletePassword || undefined, socialProvider });
+      if (result.status === 'completed') {
+        Alert.alert('탈퇴 완료', '계정과 이 계정의 대상자 데이터 삭제가 완료되었습니다.');
+      } else {
+        setDeleteError(`삭제 작업(${result.jobId})이 아직 완료되지 않았습니다 (${result.failed.map((f) => `${f.step}: ${f.message}`).join(', ')}). 세션은 유지했습니다. 안전하게 다시 시도해 주세요.`);
+      }
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    } finally { setDeleteBusy(false); }
   };
 
   return (
@@ -178,6 +245,11 @@ export const SettingsScreen = () => {
                     <Pressable onPress={() => confirmRemove(g)} style={styles.linkBtn}>
                       <Text style={[styles.link, { color: tokens.danger }]}>해제</Text>
                     </Pressable>
+                    {g.role === 'editor' && (
+                      <Pressable onPress={() => confirmTransferOwnership(g)} style={styles.linkBtn}>
+                        <Text style={[styles.link, { color: tokens.danger }]}>소유권 이전</Text>
+                      </Pressable>
+                    )}
                   </Row>
                 )}
               </Row>
@@ -190,7 +262,7 @@ export const SettingsScreen = () => {
                 <Muted>
                   {ent.maxCoGuardians === 0
                     ? '공동 보호자 초대는 스탠다드 플랜부터 가능해요.'
-                    : `현재 플랜의 공동 보호자 한도(아이당 ${ent.maxCoGuardians}명)에 도달했어요.`}
+                    : `현재 플랜의 공동 보호자 한도(대상자당 ${ent.maxCoGuardians}명)에 도달했어요.`}
                 </Muted>
                 <Button label="플랜 업그레이드 🔒" variant="ghost" onPress={() => nav.navigate('Paywall')} />
               </>
@@ -277,13 +349,43 @@ export const SettingsScreen = () => {
         <Section title="데이터 관리">
           <Card>
             <Text style={styles.body}>
-              선택된 아이: {selectedChild?.name ?? '없음'} (등록 아이 {children.length}명)
+              선택된 대상자: {selectedChild?.name ?? '없음'} (등록 대상자 {children.length}명)
             </Text>
             {isOwner ? (
-              <Button label="선택된 아이 데이터 전체 삭제" variant="danger"
+              <Button label="선택된 대상자 데이터 전체 삭제" variant="danger"
                 onPress={confirmDelete} disabled={!selectedChild} />
             ) : (
               <Muted>데이터 삭제는 소유자만 할 수 있습니다.</Muted>
+            )}
+          </Card>
+        </Section>
+
+        <Section title="계정 탈퇴">
+          <Card>
+            <Text style={[styles.body, { color: tokens.danger }]}>계정과 모든 대상자·건강 기록·사진·레포트가 영구 삭제됩니다.</Text>
+            <Muted>삭제 전 이메일 계정은 현재 비밀번호, 소셜 전용 계정은 해당 공급자로 재인증합니다. 일부 단계가 실패하면 세션을 유지하고 재시도할 수 있습니다.</Muted>
+            {!deleteAccountOpen ? (
+              <Button label="계정 탈퇴 진행" variant="danger" onPress={openAccountDeletion} />
+            ) : (
+              <>
+                <Field label="확인 문구" value={deletePhrase} onChangeText={setDeletePhrase}
+                  placeholder="탈퇴합니다" autoCapitalize="none" />
+                {deleteMethods.includes('email') && <Field label="계정 삭제 재인증용 현재 비밀번호"
+                  value={deletePassword} onChangeText={setDeletePassword} secureTextEntry editable={!deleteBusy} />}
+                {deleteError ? <Text ref={deleteErrorRef} accessible accessibilityRole="alert" accessibilityLiveRegion="assertive"
+                  style={styles.deleteError}>{deleteError}</Text> : null}
+                <Button label={deleteBusy ? '삭제 요청 중…' : '계정과 데이터 영구 삭제'} variant="danger"
+                  onPress={() => removeAccount()}
+                  disabled={deletionSubmitDisabled({ busy: deleteBusy, phrase: deletePhrase,
+                    methodReady: deleteMethods.includes('email') && !!deletePassword })} />
+                {deleteMethods.filter((m): m is SocialProvider => m !== 'email').map((provider) =>
+                  <Button key={provider} label={`${SOCIAL_PROVIDERS[provider].short}로 재인증 후 영구 삭제`}
+                    variant="danger" onPress={() => removeAccount(provider)}
+                    disabled={deletionSubmitDisabled({ busy: deleteBusy, phrase: deletePhrase, methodReady: true })} />)}
+                <Button label="취소" variant="ghost" onPress={() => {
+                  setDeleteAccountOpen(false); setDeletePhrase(''); setDeletePassword(''); setDeleteError('');
+                }} disabled={deleteBusy} />
+              </>
             )}
           </Card>
         </Section>
@@ -309,4 +411,5 @@ const styles = StyleSheet.create({
   linkRow: {
     paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: tokens.border,
   },
+  deleteError: { color: tokens.danger, fontSize: 13, marginVertical: 8 },
 });

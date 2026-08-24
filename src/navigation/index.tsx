@@ -11,6 +11,7 @@ import { RecordFormScreen } from '../screens/records/RecordFormScreen';
 import { DashboardScreen } from '../screens/dashboard/DashboardScreen';
 import { CalendarScreen } from '../screens/dashboard/CalendarScreen';
 import { ReportScreen } from '../screens/report/ReportScreen';
+import { CareHandoffScreen } from '../screens/report/CareHandoffScreen';
 import { VaccinationScreen } from '../screens/vaccination/VaccinationScreen';
 import { SettingsScreen } from '../screens/settings/SettingsScreen';
 import { PrivacyPolicyScreen } from '../screens/settings/PrivacyPolicyScreen';
@@ -58,7 +59,7 @@ export const AppNavigation = () => (
       }}
     >
       <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
-      <Stack.Screen name="ChildForm" component={ChildFormScreen} options={{ title: '아이 프로필' }} />
+      <Stack.Screen name="ChildForm" component={ChildFormScreen} options={{ title: '대상자 등록 · 수정' }} />
       <Stack.Screen name="ChildProfile" component={ChildProfileScreen} options={{ title: '프로필' }} />
       <Stack.Screen name="RecordForm" component={RecordFormScreen} options={{ title: '기록 추가' }} />
       <Stack.Screen name="Calendar" component={CalendarScreen} options={{ title: '캘린더' }} />
@@ -66,6 +67,7 @@ export const AppNavigation = () => (
       <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: '설정' }} />
       <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicyScreen} options={{ title: '개인정보처리방침' }} />
       <Stack.Screen name="Paywall" component={PaywallScreen} options={{ title: '플랜 관리' }} />
+      <Stack.Screen name="CareHandoff" component={CareHandoffScreen} options={{ title: '공동 확인 · 진료 후 안내' }} />
     </Stack.Navigator>
   </NavigationContainer>
 );

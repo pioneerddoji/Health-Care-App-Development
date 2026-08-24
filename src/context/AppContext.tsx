@@ -1,16 +1,21 @@
 // 앱 전역 상태 — 저장소 계층(repo)의 캐시.
 // mock 모드: 샘플 데이터 / supabase 모드: 로그인 후 서버에서 로드.
 import React, {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
+import { AppState as NativeAppState, Linking } from 'react-native';
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
   GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
-  ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { repo, SignUpInput } from '../services/repo';
-import { cancelReminder, scheduleDueDateReminder } from '../services/reminders';
+import type { SocialProvider } from '../services/socialAuth';
+import type { AccountDeletionResult } from '../services/accountDeletion';
+import { cancelReminder, isNotificationDenied, scheduleDueDateReminder } from '../services/reminders';
+import { initBilling, endBillingSession } from '../services/billing';
 import { ENTITLEMENTS, TierEntitlements } from '../constants/subscription';
+import { AppResumeLifecycle } from '../services/appResumeLifecycle';
 
 interface AppState {
   mode: 'mock' | 'supabase';
@@ -23,6 +28,7 @@ interface AppState {
   medications: Medication[];
   vaccinations: Vaccination[];
   checkups: Checkup[];
+  careTasks: CareTask[];
   selectedChildId: string | null;
   selectedChild: Child | null;
 
@@ -43,14 +49,28 @@ interface AppState {
   /** 전체 데이터 재로드 — 결제 후 서버 티어 반영 등 (billing.ts 참조) */
   loadAll: () => Promise<void>;
 
+  /** 사용자별 설정 (대시보드 순서 등) — 계정 단위 저장, 부분 병합 갱신 */
+  settings: UserSettings;
+  updateSettings: (patch: Partial<UserSettings>) => Promise<void>;
+
   /** 성공 시 null, 실패 시 오류 메시지 반환 */
   signIn: (email: string, password: string) => Promise<string | null>;
+  /** 소셜 로그인(카카오/구글) — 첫 진입이면 동의 화면으로 이어진다. 성공 시 null */
+  signInWithSocial: (provider: SocialProvider) => Promise<string | null>;
   /** 성공 시 null, 이메일 확인 필요 시 'confirm', 실패 시 오류 메시지 */
   signUp: (input: SignUpInput) => Promise<string | null>;
   signOut: () => Promise<void>;
   grantConsents: () => void;
   findEmailByPhone: (phone: string) => Promise<string | null>;
   resetPassword: (email: string, phone: string, newPassword: string) => Promise<void>;
+  requestPasswordResetEmail: (email: string) => Promise<void>;
+  completePasswordRecovery: (newPassword: string) => Promise<void>;
+  recoveryRequest: { active: boolean; error?: string };
+  dismissRecovery: () => void;
+  /** 마지막 foreground 재검증에서 확인한 알림 거부 상태. */
+  notificationDenied: boolean;
+  getAccountAuthMethods: () => Promise<('email' | SocialProvider)[]>;
+  deleteAccount: (input: { password?: string; socialProvider?: SocialProvider }) => Promise<AccountDeletionResult>;
 
   selectChild: (id: string) => void;
   createChild: (input: ChildInput) => Promise<Child>;
@@ -59,6 +79,9 @@ interface AppState {
 
   createRecord: (childId: string, input: RecordInput) => Promise<DailyRecord>;
   deleteRecord: (id: string) => Promise<void>;
+  acknowledgeRecord: (recordId: string) => Promise<void>;
+  createCareTask: (input: Omit<CareTask, 'id' | 'createdBy' | 'createdAt' | 'completedAt'>) => Promise<void>;
+  completeCareTask: (taskId: string) => Promise<void>;
 
   addVaccination: (v: Omit<Vaccination, 'id'>) => Promise<void>;
   updateVaccination: (id: string, patch: Partial<Vaccination>) => Promise<void>;
@@ -67,6 +90,7 @@ interface AppState {
   listGuardians: (childId: string) => Promise<ChildGuardian[]>;
   inviteGuardian: (childId: string, email: string, role: 'editor' | 'viewer') => Promise<void>;
   updateGuardianRole: (childId: string, guardianId: string, role: 'editor' | 'viewer') => Promise<void>;
+  transferGuardianOwnership: (childId: string, guardianId: string) => Promise<void>;
   removeGuardian: (childId: string, guardianId: string) => Promise<void>;
 
   publishReport: (input: {
@@ -90,41 +114,77 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
   const [medications, setMedications] = useState<Medication[]>([]);
   const [vaccinations, setVaccinations] = useState<Vaccination[]>([]);
   const [checkups, setCheckups] = useState<Checkup[]>([]);
+  const [careTasks, setCareTasks] = useState<CareTask[]>([]);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [roles, setRoles] = useState<Record<string, GuardianRole>>({});
   const [sensitiveConsent, setSensitiveConsent] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription>({ tier: 'free' });
+  const [settings, setSettings] = useState<UserSettings>({});
+  const [recoveryRequest, setRecoveryRequest] = useState<{ active: boolean; error?: string }>({ active: false });
+  const [notificationDenied, setNotificationDenied] = useState(false);
+  const lifecycleRef = useRef<AppResumeLifecycle | null>(null);
 
-  const loadAll = useCallback(async () => {
+  const clearSession = useCallback(() => {
+    setGuardian(null); setConsented(false); setNotificationDenied(false);
+    setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+    setVaccinations([]); setCheckups([]); setCareTasks([]); setSelectedChildId(null);
+    setRoles({}); setSensitiveConsent({}); setSettings({}); setBooting(false);
+  }, []);
+
+  const loadAll = useCallback(async (isCurrent?: () => boolean) => {
     const all = await repo.loadAll();
+    // Resume invalidation must guard the data mutations themselves: a late repo
+    // result must not repopulate a cleared session between lifecycle checks.
+    if (isCurrent && !isCurrent()) return;
     setChildren(all.children);
     setRecords(all.records);
     setGrowth(all.growth);
     setMedications(all.medications);
     setVaccinations(all.vaccinations);
     setCheckups(all.checkups);
+    setCareTasks(all.careTasks);
     setRoles(all.roles);
     setSensitiveConsent(all.sensitiveConsent);
     setSubscription(all.subscription);
+    setSettings(all.settings);
     setSelectedChildId((cur) =>
       cur && all.children.some((c) => c.id === cur) ? cur : all.children[0]?.id ?? null);
   }, []);
 
-  // 앱 시작: 저장된 세션 복원 (supabase 모드)
   useEffect(() => {
-    (async () => {
-      try {
-        const profile = await repo.restoreSession();
-        if (profile) {
-          setGuardian(profile);
-          setConsented(true); // 기존 계정은 가입 시 동의 완료
-          await loadAll();
-        }
-      } finally {
+    const unsubscribe = repo.subscribePasswordRecovery((error) =>
+      setRecoveryRequest({ active: true, error }));
+    const lifecycle = new AppResumeLifecycle({
+      restoreSession: () => repo.restoreSession(),
+      loadAll,
+      notificationDenied: isNotificationDenied,
+      processAuthUrl: (url) => repo.processAuthLink(url),
+    }, {
+      now: () => Date.now(),
+      onPending: () => setBooting(true),
+      onConfirmed: ({ profile, notificationDenied: denied }) => {
+        setGuardian(profile);
+        setConsented(true);
+        initBilling(repo.mode, profile.id).catch(() => {});
+        setNotificationDenied(denied);
         setBooting(false);
-      }
-    })();
-  }, [loadAll]);
+      },
+      onInvalidated: clearSession,
+      onUrlRejected: () => setRecoveryRequest({
+        active: true,
+        error: '비밀번호 재설정 링크를 확인할 수 없습니다. 새 링크를 요청해 주세요.',
+      }),
+    });
+    lifecycleRef.current = lifecycle;
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => { void lifecycle.onUrl(url); });
+    const appStateSubscription = NativeAppState.addEventListener('change', (state) => lifecycle.onAppStateChange(state));
+    Linking.getInitialURL().then((url) => { if (url) void lifecycle.onUrl(url); }).catch(() => {});
+    lifecycle.start();
+    return () => {
+      if (lifecycleRef.current === lifecycle) lifecycleRef.current = null;
+      lifecycle.dispose(); unsubscribe(); linkSubscription.remove(); appStateSubscription.remove();
+    };
+  }, [clearSession, loadAll]);
 
   const value = useMemo<AppState>(() => ({
     mode: repo.mode,
@@ -137,6 +197,7 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     medications,
     vaccinations,
     checkups,
+    careTasks,
     selectedChildId,
     selectedChild: children.find((c) => c.id === selectedChildId) ?? null,
 
@@ -161,12 +222,32 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     },
     loadAll,
 
+    settings,
+    updateSettings: async (patch) => {
+      setSettings(await repo.saveSettings(patch));
+    },
+
     signIn: async (email, password) => {
       const out = await repo.signIn(email, password);
       if (out.error) return out.error;
       setGuardian(out.profile ?? null);
       setConsented(true); // 기존 계정은 가입 시 동의 완료
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      // sign-out invalidation 이후에는 새 인증의 bootstrap 성공 전까지 foreground
+      // refresh를 열지 않는다. rearm은 다음 AppState resume부터만 적용된다.
+      lifecycleRef.current?.rearm();
+      return null;
+    },
+
+    signInWithSocial: async (provider) => {
+      const out = await repo.signInWithSocial(provider);
+      if (out.error) return out.error;
+      setGuardian(out.profile ?? null);
+      setConsented(!out.isNewUser); // 첫 진입은 동의 화면을 거친다
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
+      await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 
@@ -176,22 +257,40 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
       if (out.needsEmailConfirm) return 'confirm';
       setGuardian(out.profile ?? null);
       setConsented(false); // 신규 가입은 동의 화면을 거친다
+      if (out.profile) initBilling(repo.mode, out.profile.id).catch(() => {});
       await loadAll();
+      lifecycleRef.current?.rearm();
       return null;
     },
 
     signOut: async () => {
+      lifecycleRef.current?.invalidate();
+      await endBillingSession().catch(() => {});
       await repo.signOut();
-      setGuardian(null);
-      setConsented(false);
-      setChildren([]); setRecords([]); setGrowth([]);
-      setMedications([]); setVaccinations([]); setCheckups([]);
-      setSelectedChildId(null);
     },
 
     grantConsents: () => setConsented(true),
     findEmailByPhone: (phone) => repo.findEmailByPhone(phone),
     resetPassword: (email, phone, pw) => repo.resetPassword(email, phone, pw),
+    requestPasswordResetEmail: (email) => repo.requestPasswordResetEmail(email),
+    completePasswordRecovery: async (newPassword) => {
+      lifecycleRef.current?.invalidate();
+      await repo.completePasswordRecovery(newPassword);
+      setRecoveryRequest({ active: false });
+    },
+    recoveryRequest,
+    dismissRecovery: () => setRecoveryRequest({ active: false }),
+    notificationDenied,
+    getAccountAuthMethods: () => repo.getAccountAuthMethods(),
+    deleteAccount: async (input) => {
+      const result = await repo.deleteAccount(input);
+      if (result.status === 'completed') {
+        setGuardian(null); setConsented(false);
+        setChildren([]); setRecords([]); setGrowth([]); setMedications([]);
+        setVaccinations([]); setCheckups([]); setSelectedChildId(null); setSettings({});
+      }
+      return result;
+    },
 
     selectChild: setSelectedChildId,
 
@@ -231,6 +330,20 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     deleteRecord: async (id) => {
       await repo.deleteRecord(id);
       setRecords((prev) => prev.filter((r) => r.id !== id));
+    },
+    acknowledgeRecord: (recordId) => repo.acknowledgeRecord(recordId),
+    createCareTask: async (input) => {
+      const task = await repo.createCareTask(input);
+      setCareTasks((prev) => [task, ...prev]);
+      if (task.dueDate) scheduleDueDateReminder({
+        id: `care-${task.id}`, title: '보호자 확인 알림', body: task.title, dueDate: task.dueDate,
+      }).catch(() => {});
+    },
+    completeCareTask: async (taskId) => {
+      await repo.completeCareTask(taskId);
+      setCareTasks((prev) => prev.map((t) => t.id === taskId
+        ? { ...t, completedAt: new Date().toISOString() } : t));
+      cancelReminder(`care-${taskId}`).catch(() => {});
     },
 
     addVaccination: async (v) => {
@@ -282,6 +395,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     inviteGuardian: (childId, email, role) => repo.inviteGuardian(childId, email, role),
     updateGuardianRole: (childId, guardianId, role) =>
       repo.updateGuardianRole(childId, guardianId, role),
+    transferGuardianOwnership: (childId, guardianId) =>
+      repo.transferGuardianOwnership(childId, guardianId),
     removeGuardian: (childId, guardianId) => repo.removeGuardian(childId, guardianId),
 
     publishReport: (input) => repo.publishReport(input),
@@ -289,7 +404,8 @@ export const AppProvider = ({ children: node }: { children: React.ReactNode }) =
     listShareLinks: (childId) => repo.listShareLinks(childId),
     revokeShareLink: (linkId) => repo.revokeShareLink(linkId),
   }), [booting, guardian, consented, children, records, growth, medications,
-       vaccinations, checkups, selectedChildId, roles, sensitiveConsent, subscription, loadAll]);
+       vaccinations, checkups, careTasks, selectedChildId, roles, sensitiveConsent, subscription,
+       settings, recoveryRequest, notificationDenied, loadAll]);
 
   return <AppContext.Provider value={value}>{node}</AppContext.Provider>;
 };
