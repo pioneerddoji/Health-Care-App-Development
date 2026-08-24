@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 const PLATFORM_VALUES = ['android', 'ios'] as const;
@@ -42,6 +43,7 @@ const CHECK_KEYS = [
 const forbiddenValue = /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:^|[^\w/])\+?\d[\d\s()-]{7,}\d|bearer\s+|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|eyJ[A-Za-z0-9_-]{8,}\.|file:\/\/|(?:^|[^A-Za-z0-9+./])\/(?!\/)(?:[^\s/]+\/)*[^\s/]+|[A-Za-z]:\\|\b(?:patient|diagnosis|medical record|symptom|medication|health data)\b|(?:환자|진단|의료기록|증상|복약|건강정보))/i;
 
 export type ValidationResult = { valid: boolean; errors: string[] };
+export type EvidenceFixtureCorpus = ReadonlyArray<{ path: string; contents: string }>;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -67,6 +69,57 @@ const scanForbiddenValues = (value: unknown, location: string, errors: string[])
   } else if (isObject(value)) {
     Object.entries(value).forEach(([key, item]) => scanForbiddenValues(item, `${location}.${key}`, errors));
   }
+};
+
+export const validateEvidenceFixtureCorpus = (manifest: unknown, corpus: EvidenceFixtureCorpus): ValidationResult => {
+  const errors: string[] = [];
+  if (!isObject(manifest)) return { valid: false, errors: ['fixture manifest must be an object'] };
+
+  requireExactKeys(manifest, ['schemaVersion', 'algorithm', 'fixtures'], 'fixtureManifest', errors);
+  if (manifest.schemaVersion !== '1.0') errors.push('fixtureManifest.schemaVersion must equal 1.0');
+  if (manifest.algorithm !== 'sha256') errors.push('fixtureManifest.algorithm must equal sha256');
+  if (!Array.isArray(manifest.fixtures) || manifest.fixtures.length === 0) {
+    errors.push('fixtureManifest.fixtures must be a non-empty array');
+    return { valid: false, errors };
+  }
+
+  const manifestPaths = new Set<string>();
+  const manifestDigests = new Map<string, string>();
+  manifest.fixtures.forEach((fixture, index) => {
+    const label = `fixtureManifest.fixtures[${index}]`;
+    if (!isObject(fixture)) {
+      errors.push(`${label} must be an object`);
+      return;
+    }
+    requireExactKeys(fixture, ['path', 'sha256'], label, errors);
+    requireString(fixture, 'path', label, errors);
+    requireString(fixture, 'sha256', label, errors);
+    if (typeof fixture.path === 'string') {
+      if (!/^[a-z0-9][a-z0-9-]*\.json$/.test(fixture.path)) errors.push(`${label}.path must be a relative JSON filename`);
+      if (manifestPaths.has(fixture.path)) errors.push(`${label}.path must be unique`);
+      manifestPaths.add(fixture.path);
+      if (typeof fixture.sha256 === 'string') manifestDigests.set(fixture.path, fixture.sha256);
+    }
+    if (typeof fixture.sha256 === 'string' && !/^[a-f0-9]{64}$/.test(fixture.sha256)) errors.push(`${label}.sha256 must be a lowercase SHA-256 digest`);
+  });
+
+  const corpusPaths = new Set<string>();
+  corpus.forEach(({ path, contents }, index) => {
+    const label = `fixtureCorpus[${index}]`;
+    if (corpusPaths.has(path)) errors.push(`${label}.path must be unique`);
+    corpusPaths.add(path);
+    const expectedDigest = manifestDigests.get(path);
+    if (!expectedDigest) {
+      errors.push(`${label}.path is not declared by fixtureManifest`);
+      return;
+    }
+    const actualDigest = createHash('sha256').update(contents).digest('hex');
+    if (actualDigest !== expectedDigest) errors.push(`${label}.contents digest does not match fixtureManifest`);
+  });
+  manifestPaths.forEach((path) => {
+    if (!corpusPaths.has(path)) errors.push(`fixtureManifest declares missing fixture ${path}`);
+  });
+  return { valid: errors.length === 0, errors };
 };
 
 export const validateEvidencePackage = (value: unknown): ValidationResult => {

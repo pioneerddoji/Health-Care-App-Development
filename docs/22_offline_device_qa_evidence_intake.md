@@ -31,7 +31,12 @@ npm run test:device-qa-evidence
 npx tsx scripts/validate-device-qa-evidence.ts <redacted-evidence.json>
 ```
 
-최상위 필수 필드는 `schemaVersion`, `source`, `devices`, `checks`다. 알 수 없는 필드도 거부한다.
+지원 schema는 현재 문자열 `1.0` 하나뿐이다. 최상위 필수 필드는 `schemaVersion`, `source`, `devices`,
+`checks`다. 알 수 없는 필드도 거부한다. `schemaVersion` 누락, legacy `0.x`, 형식이 다른 값, 또는
+unknown future `2.0` 이상은 모두 fail-closed로 거부한다. validator는 **입력을 migration·normalization·
+default 보완하지 않으며**, 구 schema를 새 schema로 변환하지 않는다. schema 확장은 별도 승인 카드에서
+새 validator/fixture corpus/manifest와 함께 명시적으로 추가하고, 이 `1.0` validator의 수용 범위를
+조용히 넓히지 않는다.
 `source`에는 full 40-character SHA, Draft PR URL, current-head CI URL, verdict URL을 모두 쓰고, §1의
 고정된 선행 결정 패킷 값과 **정확히 일치**해야 한다.
 `devices`에는 Android와 iOS 각각의 비밀이 아닌 OS/app build 식별자가 있어야 한다.
@@ -71,7 +76,16 @@ log가 아니라 `qa://capture/<redacted-id>` 형태의 외부 redacted referenc
 기기 증거가 없으면 `ABORT`와 `needs-device`를 사용한다. 이 상태 불일치는 validator가 fail-closed로
 거부하므로 정적 통과만으로 native QA PASS가 되는 false-green을 막는다.
 
-## 4. 수집 템플릿 사용법
+## 4. 결정적 fixture corpus provenance
+
+`fixtures/device-qa-evidence/manifest.json`은 corpus의 유일한 positive/negative fixture 파일명과
+각 파일의 lowercase SHA-256 digest를 고정한다. `scripts/device-qa-evidence-provenance.test.mts`는
+manifest 형식, 파일 목록 정확 일치, digest, manifest 중복 path, fixture 누락, fixture 변조를 모두
+fail-closed로 검증한다. manifest에는 상대 JSON filename·digest만 기록하므로 실제 건강정보, credential,
+absolute path를 포함하지 않는다. `npm run test:device-qa-evidence`는 이 provenance 검사와 기존 schema
+validator를 함께 실행한다.
+
+## 5. 수집 템플릿 사용법
 
 1. `positive-needs-device.json`을 복사해 접근 제어된 QA 증거 저장소에서 작성한다. 이 저장소에는
    실제 기기 연결 전에는 `qa://pending/...`만 남긴다.
@@ -81,7 +95,7 @@ log가 아니라 `qa://capture/<redacted-id>` 형태의 외부 redacted referenc
 4. validator가 통과해도 exact SHA/PR/CI/verdict가 새로 바뀌면 수집을 중단하고 새 decision packet을
    대조한다. 검증기는 어떤 build, upload, device, account 또는 production action도 시작하지 않는다.
 
-## 5. 범위와 rollback
+## 6. 범위와 rollback
 
 이 카드가 만드는 것은 문서, fixture, validator, test뿐이다. rollback은 이 작은 docs/static-test
 commit을 revert하고 Draft PR을 close하는 것이다. main 병합, package/bundle ID 확정, EAS/store,

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1.0",
+  "algorithm": "sha256",
+  "fixtures": [
+    {
+      "path": "negative-sensitive-and-false-green.json",
+      "sha256": "51441f1df8b116cc658ba9987b501f153b99e664bcf1d9023c98a2bebcad7585"
+    },
+    {
+      "path": "positive-needs-device.json",
+      "sha256": "c87c35e685b70508f311cab497d16651f363f5eef448dd180502b177f155c418"
+    }
+  ]
+}
