@@ -750,3 +750,24 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   `package.json`과 tracked files에는 analytics/five-minute WOW/app-resume/native-preflight/
   accessibility/iOS-preview-readiness/Deno contract 명령 또는 fixture가 없어, 이 항목들은 실행·PASS로
   주장하지 않는다. fresh PG16은 task boundary에 따라 parent current-head CI marker만 참조한다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence colon-prefix path 우회 차단 (review rework)
+
+**한 일**
+- local absolute path 검출 경계를 보강하여 문자열 중간의 `value:/Users/...`와
+  `value:/var/...` 같은 colon-prefix 경로도 fail-closed로 거부한다.
+- 해당 두 변조를 개별 assertion과 deterministic negative fixture matrix에 각각 고정했다.
+  `https://` source URL과 `qa://` capture reference는 계속 양성으로 허용한다.
+
+**결정과 이유**
+- URL scheme의 두 slash를 경로로 오인하지 않으면서, colon은 absolute path의 안전한 경계로
+  취급한다. fixture에는 실제 credential·개인정보·사용자 절대경로가 아니라 synthetic 예시만 쓴다.
+
+**검증**
+- reviewer가 보고한 두 colon-prefix probe를 재실행해 모두 `valid: false` 및 prohibited-value
+  오류로 확인했고, scheme control은 `valid: true`를 유지했다.
+- `npm run test:device-qa-evidence`: validator `PASS 29 / FAIL 0`, positive fixture `VALID`.
+- `npm run typecheck` 성공, `npm run test:e2e` `PASS 110 / FAIL 0`,
+  `npm run test:gating` `PASS 27 / FAIL 0`, `npx expo export --platform web --output-dir dist-web` 성공.

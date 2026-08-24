@@ -88,6 +88,14 @@ const unixAbsolutePath = makeValidPackage();
 unixAbsolutePath.checks[0].actual = '/var/private/capture.png';
 expectInvalid(unixAbsolutePath, 'POSIX absolute paths must fail closed');
 
+const colonPrefixedMacosAbsolutePath = makeValidPackage();
+colonPrefixedMacosAbsolutePath.checks[0].actual = 'value:/Users/example/private/capture.png';
+expectInvalid(colonPrefixedMacosAbsolutePath, 'colon-prefixed macOS absolute paths must fail closed');
+
+const colonPrefixedUnixAbsolutePath = makeValidPackage();
+colonPrefixedUnixAbsolutePath.checks[0].actual = 'value:/var/private/capture.png';
+expectInvalid(colonPrefixedUnixAbsolutePath, 'colon-prefixed POSIX absolute paths must fail closed');
+
 const stateMismatch = makeValidPackage();
 stateMismatch.checks[0].result = 'PASS';
 expectInvalid(stateMismatch, 'PASS cannot claim needs-device');
@@ -180,6 +188,16 @@ const negativeFixtureMatrix: Array<[string, () => unknown]> = [
     evidence.checks[0].actual = '/var/private/capture.png';
     return evidence;
   }],
+  ['colon-prefixed macOS absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'value:/Users/example/private/capture.png';
+    return evidence;
+  }],
+  ['colon-prefixed POSIX absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'value:/var/private/capture.png';
+    return evidence;
+  }],
   ['capture-reference query bypass', () => {
     const evidence = makeValidPackage();
     evidence.checks[0].captureReference = 'qa://capture/android/screen-reader?raw-log';
@@ -189,4 +207,4 @@ const negativeFixtureMatrix: Array<[string, () => unknown]> = [
 
 negativeFixtureMatrix.forEach(([name, fixture]) => expectInvalid(fixture(), `negative fixture matrix: ${name}`));
 
-console.log(`device QA evidence validator: PASS ${13 + negativeFixtureMatrix.length} / FAIL 0`);
+console.log(`device QA evidence validator: PASS ${15 + negativeFixtureMatrix.length} / FAIL 0`);
