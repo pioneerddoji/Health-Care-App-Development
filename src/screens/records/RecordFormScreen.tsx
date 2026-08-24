@@ -7,7 +7,8 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
 import { KeyboardScreen, Field, Button, Chip, Row, Section, Muted, tokens } from '../../components/ui';
 import { DateField } from '../../components/DateField';
-import { RECORD_TYPES } from '../../constants/recordTypes';
+import { recordTypesFor } from '../../constants/recordTypes';
+import { showsChildFeatures } from '../../lib/recipient';
 import { categoryLabel, DEFAULT_CATEGORY_BY_TYPE } from '../../constants/categories';
 import type { RootStackParamList } from '../../navigation/types';
 import type { CategorySlug, RecordPayload, RecordType } from '../../types';
@@ -20,6 +21,8 @@ export const RecordFormScreen = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'RecordForm'>>();
   const { selectedChild, createRecord, ent } = useApp();
   const date = route.params.date;
+  // 연령 전제 유형(학교/기관)은 아이 대상자에게만 노출
+  const availableTypes = recordTypesFor(!selectedChild || showsChildFeatures(selectedChild));
 
   const now = new Date();
   const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -133,14 +136,14 @@ export const RecordFormScreen = () => {
       <ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
         <Section title="무엇을 기록할까요?">
           <Row style={{ flexWrap: 'wrap' }}>
-            {RECORD_TYPES.filter((t) => QUICK_TYPES.includes(t.type)).map((t) => (
+            {availableTypes.filter((t) => QUICK_TYPES.includes(t.type)).map((t) => (
               <Chip key={t.type} label={`${t.emoji} ${t.label}`}
                 selected={type === t.type} onPress={() => changeType(t.type)} />
             ))}
           </Row>
           {showAllTypes && (
             <Row style={{ flexWrap: 'wrap' }}>
-              {RECORD_TYPES.filter((t) => !QUICK_TYPES.includes(t.type)).map((t) => (
+              {availableTypes.filter((t) => !QUICK_TYPES.includes(t.type)).map((t) => (
                 <Chip key={t.type} label={`${t.emoji} ${t.label}`}
                   selected={type === t.type} onPress={() => changeType(t.type)} />
               ))}

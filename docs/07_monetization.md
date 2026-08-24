@@ -46,7 +46,7 @@
 - **자격 판정**: "과금 기능 출시일 이전 가입 계정" — 서버의 `auth.users.created_at`으로
   판정 가능(추가 스키마 불필요). 구현은 Play 구독(티어당 구독 1개 + 월간/연간
   base plan 2개)의 개발자 지정 오퍼 + RevenueCat Offering 2종(default/earlybird).
-- 스토어 상품 4개: `kidcare.{standard,family}.{monthly,yearly}` (billing.ts PRODUCT_IDS
+- 스토어 상품 4개: `carenote.{standard,family}.{monthly,yearly}` (billing.ts PRODUCT_IDS
   = 웹훅 매핑과 테스트로 일관성 검증).
 - ⚠️ **법적 필수 조건(표시광고법)**: 취소선 정가는 실제 판매(될) 가격이어야 한다.
   과금 시작 후 얼리버드가 아닌 신규 가입자에게는 **반드시 정가를 부과**할 것.
@@ -62,7 +62,7 @@
 | **서버 강제** | 아이 수: `guardian_child` INSERT 트리거 / 공동 보호자 수: `invite_guardian` RPC. → 클라이언트 우회 불가 |
 | 클라이언트 게이팅 | 사진 장수·대시보드/레포트 기간·공유 링크(옵션/개수) — 우회 피해가 본인 한정이라 UI 게이팅으로 충분 |
 | UI | `PaywallScreen`(티어 비교+전환), 설정 플랜 카드, 각 화면 🔒 칩 → 페이월 유도 |
-| 데모 | `demo@kidcare.app` 로그인은 standard로 게이팅 체험, 일반 가입/로그인은 free 시작 |
+| 데모 | `demo@carenote.app` 로그인은 standard로 게이팅 체험, 일반 가입/로그인은 free 시작 |
 
 > 참고: **데이터 축적(기록 저장)은 전 티어 무제한**이다. 티어가 가르는 것은
 > 대시보드의 "조회 기간"뿐. "무제한 조회 플랜"은 30일 초과 구간에서 일 단위
@@ -85,7 +85,23 @@
 
 **안전 기본값**: env 미지정 시 실서버(supabase) 빌드는 자동으로 `hidden` —
 결제 수단 없이 구매 UI를 노출하면 Play 리젝 사유이므로, 결제 연동을 명시적으로
-켜기(`live`) 전까지 전환 버튼이 보이지 않는다. 1차 무료 출시는 그대로 빌드하면 된다.
+결제 연동을 명시적으로 켜기(`live`) 전까지 전환 버튼이 보이지 않는다. 1차 무료 출시는 그대로 빌드하면 된다.
+
+### P0 채널 통합 entitlement 처리 계약
+
+`schema_entitlement_ledger.sql`의 `billing_event_inbox` → `subscriptions` projection이
+웹(Polar)·iOS(Apple)·Android(Google Play)·RevenueCat을 위한 단일 서버 상태 머신이다.
+각 provider adapter는 검증된 event를 `provider_event_id`, `effective_at`, canonical event
+type(purchase/renewal/cancellation/refund/expiration/restore/revoke)로 정규화해 service-role
+RPC에만 전달한다. 중복은 유니크 키로 no-op, 역순/동시 delivery는 projection의 마지막
+`effective_at`보다 엄격히 최신인 경우만 전이한다. unknown product/user는 entitlement를
+변경하지 않는 dead-letter로 남긴다.
+
+현재 배포 가능 adapter는 RevenueCat의 bearer webhook과 `SANDBOX_WEBHOOK_TOKEN`으로
+격리된 테스트 double뿐이다. Polar·Apple·Google은 공급자별 서명 검증(JWS/OAuth)을 실제
+운영 키로 연결하기 전 503 fail-closed다. 그러므로 이 변경은 실제 상품/가격/키/과금/배포를
+수행하지 않으며, 운영자는 검증 adapter와 관측 가능한 dead-letter replay worker를 별도
+승인·배포해야 한다.
 
 ### 결제 수단 선택 검토 (2026-07-12, 사용자와 논의)
 
@@ -108,20 +124,31 @@
 **단계**: v1.0 한국 무료(hidden) → v1.1 RevenueCat 과금 → 글로벌은 Play 국가 추가
 → (선택) 웹 채널(연간 플랜 등).
 
-### 실연동 절차 (스토어 계정 확보 후)
-1. Play Console/App Store Connect에 구독 상품 등록 — ID는 `billing.ts`의
-   `PRODUCT_IDS` 그대로 (`kidcare.standard.monthly`, `kidcare.family.monthly`).
-2. `npx expo install react-native-purchases` (**development build 필요 — Expo Go 불가**),
-   앱 시작 시 `Purchases.configure()`, 로그인 직후 `Purchases.logIn(<supabase user id>)`
-   — 이게 웹훅의 `app_user_id`가 된다.
-3. `billing.ts`의 `purchaseWithStore()`/`restorePurchases()` 내부를 주석의 가이드
-   코드로 교체 (이 파일 밖은 수정 불필요).
-4. 웹훅 배포: `supabase secrets set RC_WEBHOOK_TOKEN=<랜덤>` →
+### 실연동 절차 (2026-07-17 코드 측 완료 — 남은 것은 전부 계정 작업)
+
+**코드는 끝났다**: react-native-purchases 설치·`billing.ts` 실구현
+(configure/logIn/구매/복원, Google `상품ID:basePlanId` 형식 대응, 사용자 취소 처리),
+AppContext가 로그인/복원 시 `initBilling(uid)`·로그아웃 시 세션 정리를 호출한다.
+SDK는 live 모드 + env 키가 있을 때만 지연 로드되므로 demo/hidden 빌드와
+Expo Go/웹은 영향이 없다.
+
+남은 계정 작업 체크리스트:
+1. [ ] Play Console/App Store Connect에 구독 상품 등록 — ID는 `PRODUCT_IDS` 4개
+   (`carenote.{standard,family}.{monthly,yearly}`; Play는 구독 2개 × base plan
+   monthly/yearly 구성 권장 — 앱은 `:basePlanId` 형식도 매칭한다).
+2. [ ] RevenueCat 프로젝트 생성 → 스토어 연결 → Entitlement/Offering 구성.
+   얼리버드는 Offering 2종(default/earlybird) + **Targeting(가입일 기준)**으로
+   서버에서 노출을 제어 — 앱은 current offering만 읽으므로 앱 업데이트 불필요.
+3. [ ] 공개 SDK 키를 EAS Secrets로: `EXPO_PUBLIC_RC_API_KEY_ANDROID`(/`_IOS`).
+4. [ ] 웹훅 배포: `supabase secrets set RC_WEBHOOK_TOKEN=<랜덤>` →
    `supabase functions deploy billing-webhook --no-verify-jwt` →
    RevenueCat 대시보드에 URL+Authorization 헤더 등록.
-5. 운영 빌드 env에 `EXPO_PUBLIC_PAYWALL_MODE=live` 추가.
+5. [ ] 운영 빌드 env에 `EXPO_PUBLIC_PAYWALL_MODE=live` 추가 후
+   **development/production build**(Expo Go 불가).
    ⚠️ EXPO_PUBLIC env 변경은 Metro 캐시에 안 잡힘 — 빌드 시 `--clear` 필요.
-6. 심사 주의: 구독 안내에 가격·기간·자동갱신 고지 필수. 복원 버튼은 이미 있음.
+6. [ ] 심사 주의: 구독 안내에 가격·기간·자동갱신 고지 필수. 복원 버튼은 이미 있음.
+7. [ ] 샌드박스 결제 테스트: 구매 → 웹훅 수신 → subscriptions 갱신 → 앱 loadAll
+   반영까지 한 사이클 확인.
 
 ## 검증 (이번 커밋)
 - RLS 통합 테스트 44건 통과: free 아이 1명 한도(트리거), free 초대 차단(RPC),

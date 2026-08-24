@@ -1,4 +1,4 @@
--- kidcare: 아이 건강 관리 앱 스키마 (Supabase PostgreSQL)
+-- carenote: 아이 건강 관리 앱 스키마 (Supabase PostgreSQL)
 -- 적용: supabase db push 또는 SQL Editor에서 실행
 
 create extension if not exists "pgcrypto";
@@ -41,7 +41,8 @@ create table guardian_child (
   guardian_id uuid not null references profiles(id) on delete cascade,
   child_id    uuid not null references children(id) on delete cascade,
   role        text not null default 'owner' check (role in ('owner','editor','viewer')),
-  invited_by  uuid references profiles(id),
+  -- Invitation provenance is nullable metadata; never block profile erasure or invent a replacement author.
+  invited_by  uuid references profiles(id) on delete set null,
   created_at  timestamptz not null default now(),
   primary key (guardian_id, child_id)
 );

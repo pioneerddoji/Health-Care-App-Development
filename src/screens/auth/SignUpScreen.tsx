@@ -3,12 +3,14 @@ import { ScrollView, Text, StyleSheet, View, Alert } from 'react-native';
 import { useApp } from '../../context/AppContext';
 import { KeyboardScreen, Field, Button, Chip, Row, Muted, Card, tokens } from '../../components/ui';
 import { isValidEmail, passwordError, digitsOnly, isValidPhone } from '../../lib/validation';
-import { requestOtp, verifyOtp } from '../../services/smsAuth';
+import { requestOtp, verifyOtp, resolveSmsMode } from '../../services/smsAuth';
 
-const RELATIONSHIPS = ['엄마', '아빠', '조부모', '기타'];
+// 전연령: 아이 보호자뿐 아니라 본인 기록·성인 가족 돌봄 사용자도 포함한다
+const RELATIONSHIPS = ['엄마', '아빠', '배우자', '자녀', '본인', '기타'];
 
 export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
-  const { signUp } = useApp();
+  const { signUp, mode } = useApp();
+  const smsMode = resolveSmsMode(mode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -33,7 +35,7 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
   const sendOtp = async () => {
     setBusy(true);
     try {
-      const { demoCode: code } = await requestOtp(digitsOnly(phone));
+      const { demoCode: code } = await requestOtp(digitsOnly(phone), smsMode);
       setDemoCode(code);
       setOtpSent(true);
       setOtpInput('');
@@ -42,12 +44,8 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
-  const confirmSignUp = async () => {
-    const result = verifyOtp(digitsOnly(phone), otpInput);
-    if (!result.ok) {
-      Alert.alert('인증 실패', result.reason ?? '인증번호를 확인해 주세요.');
-      return;
-    }
+  // 문자 인증이 꺼진 빌드(smsMode='off'): OTP 없이 바로 가입 — 이메일 확인으로 검증
+  const doSignUp = async () => {
     setBusy(true);
     try {
       const error = await signUp({
@@ -66,11 +64,20 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
+  const confirmSignUp = async () => {
+    const result = verifyOtp(digitsOnly(phone), otpInput);
+    if (!result.ok) {
+      Alert.alert('인증 실패', result.reason ?? '인증번호를 확인해 주세요.');
+      return;
+    }
+    await doSignUp();
+  };
+
   return (
     <KeyboardScreen>
       <ScrollView contentContainerStyle={{ padding: 24 }} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>보호자 회원가입</Text>
-        <Muted>아이케어는 만 14세 미만 아동의 법정대리인(부모 등 보호자) 본인만 가입할 수 있습니다. 다음 단계인 이용 동의에서 법정대리인 확인과 건강정보 수집·이용 동의를 진행합니다.</Muted>
+        <Text style={styles.title}>회원가입</Text>
+        <Muted>케어노트는 성인 본인만 가입할 수 있습니다. 가입 후 아이와 성인 가족을 관리 대상자로 등록할 수 있으며, 필요한 동의(미성년자는 법정대리인 동의, 성인 가족은 본인 동의)는 대상자를 등록할 때 각각 확인합니다.</Muted>
         <View style={{ height: 16 }} />
 
         <Field label="이메일" value={email} onChangeText={setEmail}
@@ -85,7 +92,7 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
         <Field label="보호자 이름" value={name} onChangeText={setName} placeholder="김보호"
           editable={!otpSent} />
 
-        <Text style={styles.label}>아이와의 관계</Text>
+        <Text style={styles.label}>주로 기록할 대상자와의 관계</Text>
         <Row style={{ flexWrap: 'wrap', marginBottom: 12 }}>
           {RELATIONSHIPS.map((r) => (
             <Chip key={r} label={r} selected={relationship === r}
@@ -99,7 +106,10 @@ export const SignUpScreen = ({ onBack }: { onBack: () => void }) => {
           editable={!otpSent} />
         {phoneErr && <Text style={styles.error}>{phoneErr}</Text>}
 
-        {!otpSent ? (
+        {smsMode === 'off' ? (
+          <Button label={busy ? '가입 중…' : '가입 완료'}
+            onPress={doSignUp} disabled={busy || !formValid} />
+        ) : !otpSent ? (
           <Button label={busy ? '발송 중…' : '휴대폰 인증번호 받기'}
             onPress={sendOtp} disabled={busy || !formValid} />
         ) : (

@@ -44,15 +44,19 @@ export const Section = ({ title, children }: { title: string; children: React.Re
   </View>
 );
 
-export const Button = ({
-  label, onPress, variant = 'primary', disabled,
-}: {
+export const Button = React.forwardRef<React.ComponentRef<typeof Pressable>, {
   label: string;
   onPress: () => void;
   variant?: 'primary' | 'ghost' | 'danger';
   disabled?: boolean;
-}) => (
+}>(({
+  label, onPress, variant = 'primary', disabled,
+}, ref) => (
   <Pressable
+    ref={ref}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    accessibilityState={{ disabled: !!disabled }}
     onPress={onPress}
     disabled={disabled}
     style={({ pressed }) => [
@@ -65,13 +69,17 @@ export const Button = ({
   >
     <Text style={[s.btnLabel, variant === 'ghost' && { color: tokens.ink }]}>{label}</Text>
   </Pressable>
-);
+));
 
 export const Chip = ({
   label, selected, onPress,
 }: { label: string; selected?: boolean; onPress?: () => void }) => (
   <Pressable
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    accessibilityState={{ selected: !!selected, disabled: !onPress }}
     onPress={onPress}
+    disabled={!onPress}
     style={[s.chip, selected && { backgroundColor: tokens.primarySoft, borderColor: tokens.primary }]}
   >
     <Text style={[s.chipLabel, selected && { color: tokens.primary, fontWeight: '600' }]}>{label}</Text>
@@ -84,6 +92,8 @@ export const Field = ({
   <View style={{ marginBottom: 12 }}>
     <Text style={s.fieldLabel}>{label}</Text>
     <TextInput
+      accessibilityLabel={inputProps.accessibilityLabel ?? label}
+      accessibilityState={{ disabled: inputProps.editable === false }}
       placeholderTextColor={tokens.muted}
       {...inputProps}
       style={[s.input, inputProps.multiline && { height: 80, textAlignVertical: 'top' }]}

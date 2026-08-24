@@ -1,11 +1,13 @@
 // 저장소 계층 — 화면/컨텍스트는 이 인터페이스만 사용한다.
 // env(EXPO_PUBLIC_SUPABASE_*)가 있으면 Supabase, 없으면 인메모리(mock)로 동작.
 import type {
-  Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
-  GuardianRole, ISODate, Medication, Profile, RecordInput, Report,
-  ShareLinkInfo, Subscription, SubscriptionTier, Vaccination,
+  CareTask, Child, ChildGuardian, ChildInput, Checkup, DailyRecord, GrowthMeasurement,
+  GuardianRole, ISODate, Medication, Profile, RecordAcknowledgement, RecordInput, Report,
+  ShareLinkInfo, Subscription, SubscriptionTier, UserSettings, Vaccination,
 } from '../types';
 import { isMockMode } from '../lib/supabase';
+import type { SocialProvider } from './socialAuth';
+import type { AccountDeletionResult } from './accountDeletion';
 import { memoryRepo } from './memoryRepo';
 import { supabaseRepo } from './supabaseRepo';
 
@@ -21,6 +23,8 @@ export interface AuthOutcome {
   profile?: Profile;
   /** 이메일 확인이 켜진 프로젝트에서 가입 직후 세션이 없는 경우 */
   needsEmailConfirm?: boolean;
+  /** 소셜 로그인 첫 진입(프로필 신규 생성) — 동의 화면을 거쳐야 한다 */
+  isNewUser?: boolean;
   error?: string;
 }
 
@@ -31,12 +35,16 @@ export interface AllData {
   medications: Medication[];
   vaccinations: Vaccination[];
   checkups: Checkup[];
+  recordAcknowledgements: RecordAcknowledgement[];
+  careTasks: CareTask[];
   /** 아이별 내 역할 — viewer면 읽기 전용 UI */
   roles: Record<string, GuardianRole>;
   /** 아이별 민감정보(건강정보) 동의 유효 여부 — false면 새 기록 입력 차단 */
   sensitiveConsent: Record<string, boolean>;
   /** 현재 구독 (없으면 free) — 진실 원천은 서버 subscriptions 테이블 */
   subscription: Subscription;
+  /** 사용자별 앱 설정 (대시보드 순서 등) — 계정 단위로 저장/동기화 */
+  settings: UserSettings;
 }
 
 export interface Repo {
@@ -44,6 +52,9 @@ export interface Repo {
 
   signUp(input: SignUpInput): Promise<AuthOutcome>;
   signIn(email: string, password: string): Promise<AuthOutcome>;
+  /** 소셜 OAuth 로그인(카카오/구글) — 첫 진입이면 isNewUser=true(동의 화면 경유).
+   *  공급자별 노출 여부는 socialAuth.ts의 resolveSocialLogin() 플래그가 결정 */
+  signInWithSocial(provider: SocialProvider): Promise<AuthOutcome>;
   signOut(): Promise<void>;
   /** 앱 시작 시 저장된 세션 복원 */
   restoreSession(): Promise<Profile | null>;
@@ -53,6 +64,18 @@ export interface Repo {
   findEmailByPhone(phone: string): Promise<string | null>;
   /** 비밀번호 재설정: 이메일+연락처 일치 확인 후 새 비밀번호 저장 */
   resetPassword(email: string, phone: string, newPassword: string): Promise<void>;
+  /** 비밀번호 재설정 메일 발송 — 문자 인증이 꺼진 빌드(smsMode='off')의 대체 경로.
+   *  계정 존재 여부를 노출하지 않기 위해 미가입 이메일도 성공으로 처리한다 */
+  requestPasswordResetEmail(email: string): Promise<void>;
+  /** 복구 링크가 만든 제한 세션에서 새 비밀번호를 설정하고 세션을 정리한다. */
+  completePasswordRecovery(newPassword: string): Promise<void>;
+  /** Supabase PASSWORD_RECOVERY 이벤트와 네이티브 deep link를 공통 상태로 전달한다. */
+  subscribePasswordRecovery(listener: (error?: string) => void): () => void;
+  processAuthLink(url: string): Promise<void>;
+  /** 현재 계정에서 실제로 사용할 수 있는 재인증 방법. */
+  getAccountAuthMethods(): Promise<('email' | SocialProvider)[]>;
+  /** 재인증 뒤 Edge Function이 반환한 완전/부분 삭제 결과. */
+  deleteAccount(input: { password?: string; socialProvider?: SocialProvider }): Promise<AccountDeletionResult>;
 
   /** 로그인한 보호자가 접근 가능한 전체 데이터 로드 */
   loadAll(): Promise<AllData>;
@@ -72,6 +95,13 @@ export interface Repo {
    *  표시용(서명) URL로 치환된 레코드를 반환한다 */
   createRecord(childId: string, input: RecordInput): Promise<DailyRecord>;
   deleteRecord(id: string): Promise<void>;
+  acknowledgeRecord(recordId: string): Promise<void>;
+  listRecordAcknowledgements(childId: string): Promise<RecordAcknowledgement[]>;
+
+  // ── 공동 확인 / 진료 후 지시 ──
+  createCareTask(input: Omit<CareTask, 'id' | 'createdBy' | 'createdAt' | 'completedAt'>): Promise<CareTask>;
+  listCareTasks(childId: string): Promise<CareTask[]>;
+  completeCareTask(taskId: string): Promise<void>;
 
   addVaccination(v: Omit<Vaccination, 'id'>): Promise<Vaccination>;
   updateVaccination(id: string, patch: Partial<Vaccination>): Promise<void>;
@@ -95,11 +125,17 @@ export interface Repo {
   /** 데모(mock) 전용 티어 전환 — supabase 모드에서는 스토어 결제로만 변경 가능(오류) */
   setSubscriptionTier(tier: SubscriptionTier): Promise<Subscription>;
 
+  // ── 사용자별 설정 ──
+  /** 부분 병합 저장 — 전달한 키만 갱신하고 병합 결과를 반환한다 */
+  saveSettings(patch: Partial<UserSettings>): Promise<UserSettings>;
+
   // ── 보호자 공동 관리 (owner 전용 조작) ──
   listGuardians(childId: string): Promise<ChildGuardian[]>;
   /** 가입된 이메일로 초대 — supabase 모드는 invite_guardian RPC */
   inviteGuardian(childId: string, email: string, role: 'editor' | 'viewer'): Promise<void>;
   updateGuardianRole(childId: string, guardianId: string, role: 'editor' | 'viewer'): Promise<void>;
+  /** 기존 editor에게만 owner를 원자적으로 이전하고, 호출자는 editor로 강등된다. */
+  transferGuardianOwnership(childId: string, guardianId: string): Promise<void>;
   removeGuardian(childId: string, guardianId: string): Promise<void>;
 }
 

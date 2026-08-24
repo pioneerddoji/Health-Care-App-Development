@@ -1,16 +1,17 @@
 // 예방접종 · 건강검진 — 수동 입력, 예정/완료, 이상반응, 예정일 로컬 알림
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { ScrollView, Text, StyleSheet, View, Alert, Linking, Platform } from 'react-native';
 import { useRoute, RouteProp } from '@react-navigation/native';
 import { useApp } from '../../context/AppContext';
 import { Screen, Card, Button, Field, Row, Muted, Section, tokens } from '../../components/ui';
-import { isNotificationDenied } from '../../services/reminders';
 import { formatKorean, today } from '../../lib/date';
 import type { RootStackParamList } from '../../navigation/types';
 
 export const VaccinationScreen = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'Vaccination'>>();
-  const { vaccinations, checkups, addVaccination, updateVaccination, addCheckup, canEdit } = useApp();
+  const {
+    vaccinations, checkups, addVaccination, updateVaccination, addCheckup, canEdit, notificationDenied,
+  } = useApp();
   const childId = route.params.childId;
   const editable = canEdit(childId);
 
@@ -18,11 +19,6 @@ export const VaccinationScreen = () => {
   const [doseNo, setDoseNo] = useState('1');
   const [dueDate, setDueDate] = useState('');
   const [showForm, setShowForm] = useState(false);
-  const [notifDenied, setNotifDenied] = useState(false);
-
-  useEffect(() => {
-    isNotificationDenied().then(setNotifDenied).catch(() => {});
-  }, []);
 
   const myVaccs = vaccinations.filter((v) => v.childId === childId);
   const planned = myVaccs.filter((v) => !v.doneDate);
@@ -45,7 +41,7 @@ export const VaccinationScreen = () => {
   return (
     <Screen>
       <ScrollView contentContainerStyle={{ padding: 16 }}>
-        {notifDenied && (
+        {notificationDenied && (
           <Card style={{ borderColor: tokens.danger, borderWidth: 1 }}>
             <Text style={styles.reaction}>🔕 알림 권한이 꺼져 있어 예정일 알림을 보낼 수 없어요.</Text>
             {Platform.OS !== 'web' && (

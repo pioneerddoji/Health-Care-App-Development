@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "아이케어",
-    "slug": "kidcare",
+    "name": "케어노트",
+    "slug": "carenote",
     "version": "0.1.0",
     "orientation": "portrait",
-    "scheme": "kidcare",
+    "scheme": "carenote",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",
@@ -15,15 +15,15 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.kidcare.mvp",
+      "bundleIdentifier": "app.carenote.mvp",
       "buildNumber": "1",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "아이의 증상·기록 사진을 첨부하기 위해 사진 보관함에 접근합니다.",
+        "NSPhotoLibraryUsageDescription": "증상·처방전 등 기록 사진을 첨부하기 위해 사진 보관함에 접근합니다.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "app.kidcare.mvp",
+      "package": "app.carenote.mvp",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

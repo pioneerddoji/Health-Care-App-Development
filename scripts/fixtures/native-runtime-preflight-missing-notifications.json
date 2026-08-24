@@ -1,0 +1,11 @@
+{
+  "description": "Negative fixture: missing Android notification declaration must fail static preflight.",
+  "appJson": {
+    "expo": {
+      "scheme": "kidcare",
+      "android": { "permissions": ["READ_MEDIA_IMAGES"] },
+      "plugins": []
+    }
+  },
+  "expectedError": "android.permissions.POST_NOTIFICATIONS"
+}

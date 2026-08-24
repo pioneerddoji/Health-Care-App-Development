@@ -41,6 +41,7 @@ export const ReportScreen = () => {
   const [days, setDays] = useState(ent.reportPeriods.includes(14) ? 14 : ent.reportPeriods[0]);
   const [questions, setQuestions] = useState<string[]>([]);
   const [draft, setDraft] = useState('');
+  const [briefingNote, setBriefingNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [expiryHours, setExpiryHours] = useState(
     ent.shareExpiryHours.includes(72) ? 72 : ent.shareExpiryHours[0]);
@@ -50,7 +51,7 @@ export const ReportScreen = () => {
   if (!selectedChild) {
     return (
       <Screen style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <Muted>홈에서 아이를 먼저 선택해 주세요</Muted>
+        <Muted>홈에서 대상자를 먼저 선택해 주세요</Muted>
       </Screen>
     );
   }
@@ -76,6 +77,7 @@ export const ReportScreen = () => {
     periodStart: from,
     periodEnd: to,
     questionsForDoctor: questions,
+    briefingNote,
     guardianName: guardian?.name ?? '보호자',
   });
 
@@ -171,12 +173,21 @@ export const ReportScreen = () => {
                 onPress={() => setQuestions((qs) => qs.filter((_, j) => j !== i))}> 삭제</Text>
             </Row>
           ))}
-          <Field label="" value={draft} onChangeText={setDraft}
+          <Field label="" accessibilityLabel="의사에게 질문" value={draft} onChangeText={setDraft}
             placeholder="예: 열이 떨어진 뒤에도 기침이 계속되는데 괜찮을까요?" />
           <Button label="+ 질문 추가" variant="ghost" onPress={addQuestion} />
         </Card>
 
+        <Card>
+          <Text style={styles.cardTitle}>보호자 전달 메모</Text>
+          <Muted>진료실에 전달할 관찰 내용을 직접 수정해 정리하세요. 앱은 진단이나 처방을 만들지 않습니다.</Muted>
+          <View style={{ height: 8 }} />
+          <Field label="" accessibilityLabel="보호자 전달 메모" value={briefingNote} onChangeText={setBriefingNote} multiline
+            placeholder="예: 열이 난 시간과 집에서 관찰한 변화를 함께 확인하고 싶습니다." />
+        </Card>
+
         <Button label={busy ? '생성 중…' : 'PDF 레포트 생성 · 바로 공유'} onPress={generate} disabled={busy} />
+        <Button label="공동 확인 · 진료 후 안내" variant="ghost" onPress={() => nav.navigate('CareHandoff')} />
 
         <Card>
           <Text style={styles.cardTitle}>🔗 만료형 공유 링크 만들기</Text>

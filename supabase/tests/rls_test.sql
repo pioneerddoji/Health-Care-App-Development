@@ -1,7 +1,7 @@
 -- RLS 통합 테스트 — 로컬 PostgreSQL에서 Supabase 환경(auth/storage)을 셈으로 만들어
--- schema.sql + schema_stage3.sql을 적용하고 2계정 권한 시나리오를 검증한다.
+-- schema.sql부터 schema_security.sql까지 전부 적용하고 2계정 권한 시나리오를 검증한다.
 --
--- 실행 (이 디렉터리 kidcare/supabase/tests 에서 — \i 경로 기준):
+-- 실행 (이 디렉터리 carenote/supabase/tests 에서 — \i 경로 기준):
 --   initdb로 임시 클러스터를 만든 뒤:
 --   psql -U postgres -d postgres -v ON_ERROR_STOP=1 -f rls_test.sql
 --   출력에서 FAIL이 없으면 통과. (매 실행마다 새 DB 필요)
@@ -10,6 +10,8 @@
 -- editor/viewer 권한, 공동 보호자 프로필 열람, Storage 경로 정책,
 -- 나가기/외부인 차단, owner 삭제 cascade.
 \set ON_ERROR_STOP on
+\pset format unaligned
+\pset tuples_only on
 -- ── Supabase 환경 셈 (auth / storage 스키마) ──
 create schema auth;
 create table auth.users (id uuid primary key, email text unique);
@@ -20,15 +22,27 @@ create table storage.buckets (id text primary key, name text, public boolean);
 create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
 alter table storage.objects enable row level security;
 create role authenticated;
+create role anon;
+create role service_role;
 
 \i ../schema.sql
 \i ../schema_stage3.sql
 \i ../schema_subscriptions.sql
+\i ../schema_settings.sql
+\i ../schema_recipients.sql
+\i ../schema_security.sql
+\i ../schema_consent_deletion.sql
+\i ../schema_stage4_share_security.sql
+\i ../schema_entitlement_ledger.sql
+\i ../schema_care_handoff.sql
 
 grant usage on schema public to authenticated;
 grant all on all tables in schema public to authenticated;
+grant usage on schema auth to authenticated;
 grant usage on schema storage to authenticated;
 grant all on storage.objects, storage.buckets to authenticated;
+-- Supabase의 anon 역할은 스키마 이름을 해석할 수 있지만 인증 전용 RPC EXECUTE는 없어야 한다.
+grant usage on schema public, auth to anon;
 
 -- 테스트 사용자
 insert into auth.users values
@@ -52,26 +66,157 @@ begin execute stmt; get diagnostics n = row_count;
   else return 'FAIL ' || label || ' — rows=' || n || ', expected ' || expected; end if;
 end $fn$;
 
+-- create_recipient가 children INSERT를 마친 뒤 다음 쓰기에서 실패하도록 만드는 테스트 전용 fault.
+-- quota 선검사 실패가 아니라 실제 트랜잭션 중간 실패의 rollback을 검증한다.
+create function fail_guardian_link_after_child_insert() returns trigger language plpgsql as $fn$
+begin
+  if new.child_id = '66666666-6666-6666-6666-666666666666'::uuid then
+    raise exception 'TEST_ONLY failure after children INSERT';
+  end if;
+  return new;
+end $fn$;
+create trigger test_fail_guardian_link_after_child_insert
+  before insert on guardian_child
+  for each row execute function fail_guardian_link_after_child_insert();
+
+-- ── SECURITY DEFINER 메타데이터·익명 실행 경계 ──
+select case when (
+  select count(*) from pg_proc
+  where oid in (
+    'create_recipient(jsonb)'::regprocedure,
+    'invite_guardian(uuid,text,text)'::regprocedure,
+    'set_guardian_role(uuid,uuid,text)'::regprocedure,
+    'transfer_guardian_ownership(uuid,uuid)'::regprocedure
+  ) and prosecdef and proconfig = array['search_path=public']
+) = 3 then 'PASS 기존 SECURITY DEFINER RPC는 고정 search_path 사용' else 'FAIL 기존 SECURITY DEFINER/search_path 설정' end;
+select case when (select proconfig from pg_proc where oid = 'transfer_guardian_ownership(uuid,uuid)'::regprocedure)
+  = array['search_path=pg_catalog, public, pg_temp']
+  then 'PASS 소유권 이전 RPC는 pg_temp shadowing을 막는 search_path 사용' else 'FAIL 소유권 이전 RPC search_path' end;
+select case when exists (
+  select 1 from pg_trigger where tgname = 'guardian_child_exactly_one_owner' and tgdeferrable and tginitdeferred
+) then 'PASS guardian_child 단일 owner deferred constraint trigger' else 'FAIL guardian_child 단일 owner constraint trigger' end;
+select case when
+  has_function_privilege('authenticated', 'create_recipient(jsonb)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'invite_guardian(uuid,text,text)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  and has_function_privilege('authenticated', 'transfer_guardian_ownership(uuid,uuid)', 'EXECUTE')
+  and not has_function_privilege('anon', 'create_recipient(jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'invite_guardian(uuid,text,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'set_guardian_role(uuid,uuid,text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'transfer_guardian_ownership(uuid,uuid)', 'EXECUTE')
+  then 'PASS RPC EXECUTE는 authenticated에만 최소 부여' else 'FAIL RPC EXECUTE 권한 범위' end;
+
+set role anon;
+select expect_error($q$select create_recipient('{}'::jsonb)$q$, 'anon EXECUTE 차단 — create_recipient');
+select expect_error($q$select invite_guardian(gen_random_uuid(), 'x@example.com', 'viewer')$q$, 'anon EXECUTE 차단 — invite_guardian');
+select expect_error($q$select set_guardian_role(gen_random_uuid(), gen_random_uuid(), 'viewer')$q$, 'anon EXECUTE 차단 — set_guardian_role');
+select expect_error($q$select transfer_guardian_ownership(gen_random_uuid(), gen_random_uuid())$q$, 'anon EXECUTE 차단 — transfer_guardian_ownership');
+
 set role authenticated;
 
--- ── A(엄마): 가입 → 아이 → 동의 → 기록 ──
+-- ── A(엄마): 원자적 대상자 생성 → 동의 → 기록 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_ok($q$insert into profiles(id, name) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '엄마')$q$, 'A 프로필 생성');
-select expect_ok($q$insert into children(id, name, birth_date, sex) values ('11111111-1111-1111-1111-111111111111', '하은', '2023-01-01', 'female')$q$, 'A 아이 생성');
-select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '11111111-1111-1111-1111-111111111111', 'owner')$q$, 'A owner 부트스트랩');
-select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '민감정보 동의 전 기록 차단');
-select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'guardian_legal'), ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 동의 기록');
-select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '동의 후 기록 허용');
+select expect_error($q$insert into children(id, name, birth_date, sex) values ('11111111-1111-1111-1111-111111111111', '직접생성', '2023-01-01', 'female')$q$, '직접 대상자 생성 차단');
+select expect_ok($q$select create_recipient('{"id":"11111111-1111-1111-1111-111111111111","name":"하은","birth_date":"2023-01-01","sex":"female"}'::jsonb)$q$, 'A 대상자·owner·필수 동의 원자 생성');
+select case when (select count(*) from guardian_child where child_id = '11111111-1111-1111-1111-111111111111' and guardian_id = auth.uid() and role = 'owner') = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111' and type = 'guardian_legal' and revoked_at is null) = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null) = 1
+  then 'PASS 대상자 생성은 owner·필수 동의와 함께 커밋' else 'FAIL 대상자 생성 원자성/필수 동의' end;
+select expect_ok($q$select create_recipient('{"id":"11111111-1111-1111-1111-111111111111","name":"하은","birth_date":"2023-01-01","sex":"female"}'::jsonb)$q$, '동일 id 재시도 멱등 성공');
+select case when
+  (select count(*) from children where id = '11111111-1111-1111-1111-111111111111') = 1
+  and (select count(*) from guardian_child where child_id = '11111111-1111-1111-1111-111111111111') = 1
+  and (select count(*) from consents where child_id = '11111111-1111-1111-1111-111111111111') = 2
+  then 'PASS 재시도 멱등 — 대상자·owner·동의 중복 없음' else 'FAIL 재시도 중복 생성' end;
+-- 서버 trigger가 초기 원자 동의의 증빙을 실제 문서 snapshot으로 남긴다.
+select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111') = 2
+  then 'PASS 초기 대상자 동의 증빙 2건 캡처' else 'FAIL 초기 대상자 동의 증빙 누락' end;
+select case when exists (select 1 from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111' and document_type = 'guardian_legal' and subject_role = 'guardian')
+  then 'PASS 법정대리인 증빙 주체 서버 결정' else 'FAIL 법정대리인 증빙 주체' end;
+select case when exists (select 1 from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111' and document_type = 'sensitive_health' and document_version = 'v1' and jsonb_array_length(document_items) > 0)
+  then 'PASS 민감정보 증빙 문서 snapshot' else 'FAIL 민감정보 증빙 snapshot' end;
+select expect_error($q$insert into consents(child_id, guardian_id, type, doc_version) values ('11111111-1111-1111-1111-111111111111', auth.uid(), 'sensitive_health', 'v1')$q$, '대상자 동의 직접 INSERT 차단');
+select expect_error($q$insert into recipient_consent_evidence(consent_id, child_id, guardian_id, document_type, document_version, document_items, subject_role, accepted_at) values (gen_random_uuid(), '11111111-1111-1111-1111-111111111111', auth.uid(), 'sensitive_health', 'v1', '["forged"]'::jsonb, 'guardian', now())$q$, '대상자 증빙 직접 INSERT 차단');
+select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '원자 생성 후 기록 허용');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, '기록 author_id 위조 차단');
+select expect_error($q$update daily_records set author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where child_id = '11111111-1111-1111-1111-111111111111'$q$, '기록 author_id 재작성 차단');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id) select id, auth.uid() from daily_records where child_id = '11111111-1111-1111-1111-111111111111' limit 1$q$, 'A 기록 확인 상태 저장');
 
 -- ── 구독 한도 (free → standard 업그레이드) ──
-select expect_ok($q$insert into children(id, name, birth_date, sex) values ('33333333-3333-3333-3333-333333333333', '둘째', '2024-06-01', 'male')$q$, 'A 두번째 아이 행 생성');
-select expect_error($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'owner')$q$, 'free 티어 아이 1명 한도(트리거)');
+select expect_error($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'free 티어 대상자 한도·실패 원자성');
+select case when (select count(*) from children where id = '33333333-3333-3333-3333-333333333333') = 0 then 'PASS 한도 실패는 고아 대상자를 남기지 않음' else 'FAIL 한도 실패 후 고아 대상자' end;
 select expect_error($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'free 티어 공동 보호자 초대 차단(RPC)');
 -- 스토어 결제 웹훅 시뮬레이션: service_role만 subscriptions에 쓸 수 있다
 reset role;
 insert into subscriptions (user_id, tier) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'standard');
 set role authenticated;
-select expect_ok($q$insert into guardian_child(guardian_id, child_id, role) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'owner')$q$, 'standard 업그레이드 후 두번째 아이 허용');
+select expect_ok($q$select create_recipient('{"id":"33333333-3333-3333-3333-333333333333","name":"둘째","birth_date":"2024-06-01","sex":"male"}'::jsonb)$q$, 'standard 업그레이드 후 두번째 대상자 허용');
+-- ── Entitlement ledger: provider inbox → ordered projection ──
+-- 실제 provider credential 없이도 service_role 경계, 중복/역순/환불/복원 상태 전이를 fresh DB에서 공격한다.
+set role service_role;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-initial-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'carenote.standard.monthly', '2026-08-01T00:00:00Z',
+  '{"expires_at":"2026-09-01T00:00:00Z"}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS entitlement purchase projects standard tier' else 'FAIL entitlement purchase projection' end;
+select case when (select tier = 'standard' and status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS entitlement projection is subscriptions source of truth' else 'FAIL entitlement source projection' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-initial-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'carenote.standard.monthly', '2026-08-01T00:00:00Z', '{}'::jsonb)->>'outcome') = 'duplicate'
+  then 'PASS duplicate provider event is idempotent' else 'FAIL duplicate event reapplied' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-expired-old', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'expiration', null, '2026-07-31T23:59:59Z', '{}'::jsonb)->>'outcome') = 'ignored_stale'
+  then 'PASS older expiration cannot reverse newer entitlement' else 'FAIL out-of-order entitlement reversal' end;
+select case when (select status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS stale event leaves projection active' else 'FAIL stale event mutated projection' end;
+select case when (ingest_entitlement_event(
+  'apple', 'evt-refund-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'refund', null, '2026-08-02T00:00:00Z', '{}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS refund revokes entitlement' else 'FAIL refund transition' end;
+select case when (select tier = 'free' and status = 'revoked' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS refund projection is free and revoked' else 'FAIL refund projection state' end;
+select case when (ingest_entitlement_event(
+  'google_play', 'evt-restore-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'restore', 'carenote.family.yearly', '2026-08-03T00:00:00Z',
+  '{"expires_at":"2027-08-03T00:00:00Z"}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS restore reactivates entitlement' else 'FAIL restore transition' end;
+select case when (select tier = 'family' and status = 'active' from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS restore projects family entitlement' else 'FAIL restore projection state' end;
+select case when (ingest_entitlement_event(
+  'revenuecat', 'evt-cancel-1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'cancellation', null, '2026-08-03T12:00:00Z', '{}'::jsonb)->>'outcome') = 'applied'
+  then 'PASS cancellation records pending non-renewal' else 'FAIL cancellation transition' end;
+select case when (select tier = 'family' and status = 'active' and auto_renew = false from subscriptions
+                  where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS cancellation retains entitlement until expiration' else 'FAIL cancellation prematurely revoked entitlement' end;
+select case when (ingest_entitlement_event(
+  'polar', 'evt-unknown-product', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  'purchase', 'unregistered.product', '2026-08-04T00:00:00Z', '{}'::jsonb)->>'outcome') = 'dead_letter'
+  then 'PASS unknown product is dead-lettered without projection' else 'FAIL unknown product was projected' end;
+select case when (replay_entitlement_event((select id from billing_event_inbox where provider_event_id = 'evt-unknown-product'))->>'outcome') = 'dead_letter'
+  then 'PASS dead-letter replay preserves fail-closed projection' else 'FAIL dead-letter replay result' end;
+select case when exists (select 1 from billing_event_inbox where replay_of =
+  (select id from billing_event_inbox where provider_event_id = 'evt-unknown-product'))
+  then 'PASS replay creates linked audit delivery' else 'FAIL replay audit linkage' end;
+reset role;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select case when (select count(*) from billing_event_inbox) = 0
+  then 'PASS client cannot read provider inbox' else 'FAIL provider inbox exposed to client' end;
+select expect_error($q$select ingest_entitlement_event('revenuecat', 'forged', auth.uid(), 'purchase', 'carenote.standard.monthly', now(), '{}'::jsonb)$q$, 'authenticated entitlement ingest RPC 차단');
+select expect_error($q$select create_recipient('{"id":"66666666-6666-6666-6666-666666666666","name":"롤백검증","birth_date":"2022-06-01","sex":"female"}'::jsonb)$q$, 'children INSERT 이후 guardian 연결 실패');
+select case when
+  (select count(*) from children where id = '66666666-6666-6666-6666-666666666666') = 0
+  and (select count(*) from guardian_child where child_id = '66666666-6666-6666-6666-666666666666') = 0
+  and (select count(*) from consents where child_id = '66666666-6666-6666-6666-666666666666') = 0
+  then 'PASS INSERT 이후 실패는 전체 트랜잭션 rollback' else 'FAIL INSERT 이후 실패가 부분 행을 남김' end;
 
 -- ── B(아빠): 초대 전에는 아무것도 못 함 ──
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
@@ -92,13 +237,66 @@ select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from children) = 1 then 'PASS B가 초대 후 아이 보임' else 'FAIL B가 아이 안 보임' end;
 select case when (select count(*) from profiles) = 2 then 'PASS B가 공동 보호자 프로필(A) 열람' else 'FAIL 프로필 열람 실패' end;
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'meal')$q$, 'B(editor) 기록 허용');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id)
+  select id, auth.uid() from daily_records
+  where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid() limit 1$q$, 'B(editor) 본인 기록 확인 저장');
+-- Edge cleanup contract fixture: seed a B-authored task under the service boundary.
+-- The assertion below verifies its required pre-Auth deletion cleanup independently of task UI permissions.
+reset role;
+select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assignee_id, created_by)
+  select '77777777-7777-7777-7777-777777777777', '11111111-1111-1111-1111-111111111111', id,
+    'B 작성 탈퇴 정리', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', auth.uid()
+  from daily_records where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid() limit 1$q$, 'B(editor) 작성 care-task 생성');
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into record_acknowledgements(record_id, guardian_id)
+  select id, auth.uid() from daily_records
+  where child_id = '11111111-1111-1111-1111-111111111111'
+    and author_id = auth.uid()
+    and id not in (select record_id from record_acknowledgements where guardian_id = auth.uid())
+  limit 1$q$, 'A(owner) 공동 대상자 기록 확인 보존용 저장');
+select expect_ok($q$insert into care_tasks(id, child_id, record_id, title, assignee_id, created_by) select '88888888-8888-8888-8888-888888888888', '11111111-1111-1111-1111-111111111111', id, '진료 후 안내 확인', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', auth.uid() from daily_records where child_id = '11111111-1111-1111-1111-111111111111' limit 1$q$, 'A가 B 담당 care-task 생성');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_error($q$update care_tasks set title = '변조' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 제목 변조 차단');
+select expect_error($q$update care_tasks set child_id = '33333333-3333-3333-3333-333333333333' where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 대상자 변조 차단');
+select expect_error($q$update care_tasks set record_id = null where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 기록 연결 직접 해제 차단');
+select expect_error($q$update care_tasks set assignee_id = null where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 배정 직접 해제 차단');
+select expect_ok($q$update care_tasks set completed_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, '담당자 care-task 완료 전이 허용');
+select expect_error($q$update care_tasks set completed_at = null where id = '88888888-8888-8888-8888-888888888888'$q$, '완료 care-task 재개방 차단');
 select expect_rows($q$update guardian_child set role = 'owner' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 0, 'B 자기승격(구멍②) 무효');
 
--- ── A가 B를 열람자로 강등 → B 기록 차단 ──
+-- ── 단일 owner 소유권 이전: 기존 editor에게만 원자적으로 넘기고 항상 owner 1명을 유지 ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update guardian_child set role = 'viewer' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A가 B를 viewer로 변경');
+select expect_ok($q$select invite_guardian('33333333-3333-3333-3333-333333333333'::uuid, 'dad@example.com', 'editor')$q$, 'A가 둘째 대상자 소유권 이전용 B를 editor로 초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_error($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'editor B의 소유권 이전 시도 차단');
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid)$q$, 'A가 기존 editor B에게 소유권 이전');
+-- authenticated actor의 RLS-visible subset이 아니라 service/reset-role 경계에서 두 관계 행을
+-- 모두 확인한다. 그래야 owner가 정확히 한 명인지 실제 테이블 상태를 검증한다.
+reset role;
+select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
+  and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')
+  and (select role = 'editor' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 소유권 이전은 단일 owner를 보존하고 이전 owner를 editor로 강등' else 'FAIL 소유권 이전 owner 불변식' end;
+set role authenticated;
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select transfer_guardian_ownership('33333333-3333-3333-3333-333333333333'::uuid, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid)$q$, 'B가 A에게 소유권 되돌림');
+reset role;
+select case when (select count(*) from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and role = 'owner') = 1
+  and (select role = 'owner' from guardian_child where child_id = '33333333-3333-3333-3333-333333333333' and guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 소유권 이전 재시도도 단일 owner 보존' else 'FAIL 소유권 되돌림 owner 불변식' end;
+
+-- ── A가 B를 열람자로 강등 → B 기록 차단 ──
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_rows($q$update guardian_child set role = 'viewer' where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 0, '직접 역할 변경 차단');
+select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'viewer')$q$, 'A가 RPC로 B를 viewer로 변경');
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, 'note')$q$, 'B(viewer) 기록 차단');
+select expect_error($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'B(viewer) 민감정보 동의 증빙 생성 차단');
 select case when (select count(*) from daily_records) = 2 then 'PASS B(viewer) 열람은 가능' else 'FAIL viewer 열람 실패' end;
 
 -- ── Storage 정책 ──
@@ -111,32 +309,281 @@ select case when (select count(*) from storage.objects) = 1 then 'PASS B(viewer)
 -- ── 레포트 발행 / 공유 링크 (4단계) ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 select expect_ok($q$insert into reports(id, child_id, created_by, period_start, period_end) values ('99999999-9999-9999-9999-999999999999', '11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date - 13, current_date)$q$, 'A(owner) 레포트 발행');
+select expect_error($q$insert into reports(child_id, created_by, period_start, period_end) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date - 13, current_date)$q$, '레포트 created_by 위조 차단');
+select expect_error($q$update reports set created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' where id = '99999999-9999-9999-9999-999999999999'$q$, '레포트 created_by 재작성 차단');
 select expect_ok($q$insert into storage.objects(bucket_id, name) values ('reports', '11111111-1111-1111-1111-111111111111/99999999-9999-9999-9999-999999999999.pdf')$q$, 'A(owner) 레포트 PDF 업로드 허용');
-select expect_ok($q$insert into share_links(id, report_id, expires_at) values ('88888888-8888-8888-8888-888888888888', '99999999-9999-9999-9999-999999999999', now() + interval '72 hours')$q$, 'A(owner) 공유 링크 생성');
+-- consume RPC는 Edge Function에 5분짜리 signed URL을 만들 경로만 반환하므로, test fixture에도
+-- 레포트 메타데이터의 storage_path를 실제 업로드 경로로 연결한다.
+select expect_ok($q$update reports set storage_path = '11111111-1111-1111-1111-111111111111/99999999-9999-9999-9999-999999999999.pdf' where id = '99999999-9999-9999-9999-999999999999'$q$, 'A 레포트 storage path 연결');
+select expect_error($q$insert into share_links(report_id, token_hash, expires_at) values ('99999999-9999-9999-9999-999999999999', repeat('a', 64), now() + interval '72 hours')$q$, 'A 직접 공유 토큰 hash 삽입 차단');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 72)$q$, 'A(owner) 보안 공유 링크 RPC 생성');
+select case when (select token_hash ~ '^[0-9a-f]{64}$' from share_links limit 1)
+  then 'PASS 원문 아닌 SHA-256 token hash만 저장' else 'FAIL token hash 형식' end;
+select case when (select (create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)->>'token')
+                         ~ '^[0-9a-f]{64}$')
+  then 'PASS 발행 token은 256-bit 난수' else 'FAIL 발행 token 형식' end;
+select case when
+  has_function_privilege('service_role', 'consume_share_link_token(text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'consume_share_link_token(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'consume_share_link_token(text)', 'EXECUTE')
+  then 'PASS consume RPC는 service_role 전용' else 'FAIL consume RPC 권한 범위' end;
+select expect_error($q$select consume_share_link_token(repeat('a', 64))$q$, 'authenticated 직접 consume RPC 우회 차단');
+select set_config('test.share_token_hash', (select token_hash from share_links order by created_at limit 1), false);
+select set_config('test.expired_share_token_hash', (select token_hash from share_links order by created_at offset 1 limit 1), false);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.share_token_hash')) is not null
+  then 'PASS service_role 유효 token hash는 한 번 소비 가능' else 'FAIL service_role 유효 token hash 접근' end;
+select case when consume_share_link_token(current_setting('test.share_token_hash')) is null
+  then 'PASS 동시 replay/rate-limit 차단' else 'FAIL replay 허용' end;
+select case when consume_share_link_token(repeat('0', 64)) is null
+  then 'PASS 변조 token hash 차단' else 'FAIL 변조 token hash 허용' end;
+-- 동시 거절 20회도 링크당 분당 1개 표본만 남겨 write/retention 증폭을 막는다.
+select count(*) from generate_series(1, 20) cross join lateral (
+  select consume_share_link_token(current_setting('test.share_token_hash') || right(generate_series::text, 0))
+) ignored;
+reset role;
+select case when (select count(*) from share_link_access_audit_hourly where outcome = 'rate_limited') = 1
+  then 'PASS 거절 audit은 전역 시간별 집계 1행으로 제한' else 'FAIL 거절 audit write amplification' end;
+-- 발급 폭주도 원시 audit 행을 만들지 않는다. 200회 발급은 현재 시간대 issued 집계 하나만 증가시킨다.
+select count(*) from generate_series(1, 200) cross join lateral (
+  select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, (24 + generate_series * 0)::integer)
+) ignored;
+select case when (select count(*) from share_link_access_audit_hourly
+                  where outcome = 'issued' and bucket_at = date_trunc('hour', clock_timestamp() at time zone 'UTC')) = 1
+                 and (select event_count from share_link_access_audit_hourly
+                      where outcome = 'issued' and bucket_at = date_trunc('hour', clock_timestamp() at time zone 'UTC')) >= 202
+  then 'PASS 발급 폭주는 전역 hourly audit 집계 하나로 수렴' else 'FAIL 발급 audit input unbounded' end;
+-- admitted audit input is exactly four global hourly buckets (issued/granted/rate_limited/revoked),
+-- while the scheduled worker drains 100 batches x 1,000 raw rows/hour.
+select case when share_link_audit_max_rows_per_hour() = 4 and 100 * 1000 > share_link_audit_max_rows_per_hour()
+  then 'PASS 지속부하 audit 입력 상한(4/h)보다 scheduled drain(100000/h)이 큼' else 'FAIL scheduled drain capacity contract' end;
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+values ((select id from share_links order by created_at limit 1), 'granted', now() - interval '31 days');
+set role service_role;
+select case when purge_share_link_access_audit(interval '30 days') >= 1
+  then 'PASS service_role 감사 보존 purge 실행' else 'FAIL 감사 보존 purge 미실행' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS 만료 audit 보존 purge 확인' else 'FAIL 만료 audit 보존' end;
+-- 트래픽과 독립적인 예약 경로: idle 상태에서도 service_role scheduled runner가 만료 audit을 지운다.
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+values ((select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days');
+set role service_role;
+select case when run_scheduled_share_link_audit_retention() >= 1
+  then 'PASS idle scheduled retention purge 실행' else 'FAIL idle scheduled retention purge 미실행' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS idle 상태에서도 만료 audit 보존' else 'FAIL idle retention 누락' end;
+-- 새 aggregate audit도 트래픽 없는 상태에서 scheduled runner가 보존 기한을 강제한다.
+insert into share_link_access_audit_hourly(bucket_at, outcome, event_count)
+values (date_trunc('hour', (clock_timestamp() at time zone 'UTC') - interval '31 days'), 'revoked', 1);
+set role service_role;
+select case when run_scheduled_share_link_audit_retention() >= 1
+  then 'PASS idle scheduled aggregate audit purge 실행' else 'FAIL idle aggregate retention purge 미실행' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit_hourly
+                             where bucket_at < (clock_timestamp() at time zone 'UTC') - interval '30 days')
+  then 'PASS idle aggregate audit도 30일 보존' else 'FAIL idle aggregate retention 누락' end;
+-- 1,000행보다 큰 backlog도 예약 runner가 반복 bounded batch로 모두 drain한다.
+insert into share_link_access_audit(share_link_id, outcome, occurred_at)
+select (select id from share_links order by created_at desc limit 1), 'granted', now() - interval '31 days'
+from generate_series(1, 1201);
+set role service_role;
+select case when run_scheduled_share_link_audit_retention() >= 1201
+  then 'PASS scheduled retention backlog>1000 drain' else 'FAIL scheduled retention backlog drain' end;
+reset role;
+select case when not exists (select 1 from share_link_access_audit where occurred_at < now() - interval '30 days')
+  then 'PASS scheduled retention backlog 완전 제거' else 'FAIL scheduled retention backlog 잔존' end;
+select case when
+  has_function_privilege('service_role', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('anon', 'run_scheduled_share_link_audit_retention()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
+  and not has_function_privilege('anon', 'revoke_issued_share_links_on_guardian_removal()', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'record_share_link_access_audit(text)', 'EXECUTE')
+  and not has_function_privilege('anon', 'record_share_link_access_audit(text)', 'EXECUTE')
+  then 'PASS scheduled/helper RPC는 service_role 외 실행 불가' else 'FAIL scheduled/helper RPC 권한 범위' end;
+set role anon;
+select expect_error($q$select run_scheduled_share_link_audit_retention()$q$, 'anon scheduled retention helper 실행 차단');
+select expect_error($q$select revoke_issued_share_links_on_guardian_removal()$q$, 'anon issuer revoke helper 실행 차단');
+select expect_error($q$select record_share_link_access_audit('issued')$q$, 'anon aggregate audit helper 실행 차단');
+reset role;
+update share_links set expires_at = now() - interval '1 second'
+where id = (select id from share_links order by created_at offset 1 limit 1);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.expired_share_token_hash')) is null
+  then 'PASS 만료 token hash 차단' else 'FAIL 만료 token hash 허용' end;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
 
 select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
 select case when (select count(*) from reports) = 1 then 'PASS B(viewer) 레포트 메타 열람 가능' else 'FAIL' end;
 select expect_error($q$insert into reports(child_id, created_by, period_start, period_end) values ('11111111-1111-1111-1111-111111111111', 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', current_date, current_date)$q$, 'B(viewer) 레포트 발행 차단');
 select case when (select count(*) from share_links) = 0 then 'PASS B(viewer) 공유 링크 목록 비공개(owner/editor만)' else 'FAIL B가 공유 링크를 봄' end;
+select expect_error($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 72)$q$, 'B(viewer) 공유 링크 생성 차단');
 
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update share_links set revoked_at = now() where id = '88888888-8888-8888-8888-888888888888'$q$, 1, 'A(owner) 공유 링크 회수');
+select expect_rows($q$update share_links set revoked_at = now()$q$, 0, 'A 직접 공유 링크 회수 차단(RPC 전용)');
+select expect_ok($q$select revoke_secure_share_link((select id from share_links order by created_at limit 1))$q$, 'A(owner) 공유 링크 회수 RPC');
+select set_config('test.revoked_share_token_hash', (select token_hash from share_links order by created_at limit 1), false);
+set role service_role;
+select case when consume_share_link_token(current_setting('test.revoked_share_token_hash')) is null
+  then 'PASS 회수 후 Edge token 소비 차단' else 'FAIL 회수 뒤 token 재사용' end;
+set role authenticated;
 
--- ── B 스스로 나가기 / C(외부인) 완전 차단 ──
-select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'); -- 이하 B 본인 시점으로 복귀
-select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 스스로 나가기');
-select case when (select count(*) from children) = 0 then 'PASS 나간 후 아이 안 보임' else 'FAIL' end;
+-- ── 발행자 현재 권한: owner 제거 / self-leave / 계정 삭제가 bearer URL을 즉시 회수한다 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select set_guardian_role('11111111-1111-1111-1111-111111111111'::uuid, 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid, 'editor')$q$, 'A가 B를 issuer 회귀용 editor로 승격');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B(editor) 서버 발행자 링크 생성');
+select set_config('test.owner_removed_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' order by created_at desc limit 1), false);
+select case when (select issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid from share_links where token_hash = current_setting('test.owner_removed_issuer_token_hash'))
+  then 'PASS issued_by는 서버 auth.uid로 기록' else 'FAIL issued_by 서버 결정 누락' end;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A owner가 B 관계 제거');
+select case when (select revoked_at is not null from share_links where token_hash = current_setting('test.owner_removed_issuer_token_hash'))
+  then 'PASS owner 제거는 B 발행 링크 회수' else 'FAIL owner 제거 issuer link 회수 누락' end;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.owner_removed_issuer_token_hash')) is null
+  then 'PASS owner 제거 뒤 consume 현재권한 차단' else 'FAIL owner 제거 뒤 stale issuer 접근' end;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'A가 self-leave 회귀용 B 재초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B self-leave 전 링크 생성');
+select set_config('test.self_leave_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and revoked_at is null order by created_at desc limit 1), false);
+select expect_rows($q$delete from guardian_child where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and child_id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'B 스스로 나가기');
+set role service_role;
+select case when consume_share_link_token(current_setting('test.self_leave_issuer_token_hash')) is null
+  then 'PASS self-leave 뒤 B 발행 링크 차단' else 'FAIL self-leave 뒤 stale issuer 접근' end;
+set role authenticated;
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select invite_guardian('11111111-1111-1111-1111-111111111111'::uuid, 'dad@example.com', 'editor')$q$, 'A가 account-delete 회귀용 B 재초대');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 168)$q$, 'B account deletion 전 링크 생성');
+select set_config('test.account_deleted_issuer_token_hash', (select token_hash from share_links where issued_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' and revoked_at is null order by created_at desc limit 1), false);
+reset role;
+-- delete-account Edge Function removes authored rows before Auth deletion; model that order so the
+-- auth.users cascade reaches guardian_child and exercises issuer-link revocation.
+select expect_rows($q$delete from care_tasks where created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 작성 care-task를 Auth 삭제 전 정리');
+select case when (select count(*) from care_tasks where created_by = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') = 0
+  then 'PASS B 작성 care-task가 탈퇴 전에 모두 제거됨' else 'FAIL B 작성 care-task 정리 누락' end;
+delete from daily_records where author_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+select case when (select count(*) from record_acknowledgements where guardian_id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb') = 0
+  then 'PASS B 작성 기록 삭제는 B acknowledgement를 cascade 정리' else 'FAIL B acknowledgement cascade 누락' end;
+select case when (select count(*) from record_acknowledgements where guardian_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa') = 1
+  and exists (select 1 from children where id = '11111111-1111-1111-1111-111111111111')
+  and exists (select 1 from daily_records where child_id = '11111111-1111-1111-1111-111111111111' and author_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  then 'PASS 공동 대상자와 다른 보호자 acknowledgement/기록 보존' else 'FAIL 공동 데이터 보존' end;
+select expect_rows($q$delete from auth.users where id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'$q$, 1, 'B 계정 삭제 cascade');
+set role service_role;
+select case when consume_share_link_token(current_setting('test.account_deleted_issuer_token_hash')) is null
+  then 'PASS account deletion 뒤 B 발행 링크 차단' else 'FAIL account deletion 뒤 stale issuer 접근' end;
+set role authenticated;
+
+-- ── 업그레이드 fail-closed: old stage4 hashed active link has no provable issuer ──
+-- B가 실제 발행했다고 모델링하되 구 스키마에는 issued_by가 없었다. 작성자 A로 backfill하면
+-- B 제거 뒤에도 stale authorization이 살아난다. migration 재적용은 반드시 즉시 revoke해야 한다.
+reset role;
+insert into share_links(report_id, token_hash, expires_at, issued_by)
+values ('99999999-9999-9999-9999-999999999999', repeat('f', 64), now() + interval '7 days', null);
+\i ../schema_stage4_share_security.sql
+select case when (select revoked_at is not null from share_links where token_hash = repeat('f', 64))
+  then 'PASS issued_by NULL legacy active link migration fail-closed revoke' else 'FAIL legacy NULL issuer backfilled or active' end;
+set role service_role;
+select case when consume_share_link_token(repeat('f', 64)) is null
+  then 'PASS legacy NULL issuer link cannot consume after migration' else 'FAIL legacy NULL issuer stale access' end;
+set role authenticated;
+
+-- ── C(외부인) 완전 차단 ──
 select set_user('cccccccc-cccc-cccc-cccc-cccccccccccc');
 select case when (select count(*) from children) + (select count(*) from daily_records) + (select count(*) from storage.objects) = 0 then 'PASS 외부인 C 완전 차단' else 'FAIL 외부인 접근' end;
 
 -- ── 동의 철회/재동의 (5단계) ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
-select expect_rows($q$update consents set revoked_at = now() where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null$q$, 1, 'A 민감정보 동의 철회');
+-- 소비 시점 재검사: trigger/RPC를 우회한 기존 활성 링크도 동의 부재에서는 열리지 않는다.
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '소비 시 동의 재검사용 공유 링크 발행');
+select set_config('test.consent_recheck_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
+reset role;
+update consents set revoked_at = now()
+  where child_id = '11111111-1111-1111-1111-111111111111' and type = 'sensitive_health' and revoked_at is null;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.consent_recheck_share_token_hash')) is null
+  then 'PASS 소비 시 민감정보 동의 재검사 차단' else 'FAIL 소비 시 동의 우회' end;
+set role authenticated;
+select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, '소비 재검사 후 재동의');
+-- 철회 직전 발행한 링크는 정상 RPC 경로에서 즉시 cascade 회수되어야 한다.
+select expect_ok($q$select create_secure_share_link('99999999-9999-9999-9999-999999999999'::uuid, 24)$q$, '철회 cascade 공격 회귀용 공유 링크 발행');
+select set_config('test.consent_revoked_share_token_hash', (select token_hash from share_links order by created_at desc limit 1), false);
+select expect_ok($q$select revoke_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health')$q$, 'A 민감정보 동의 철회');
+select case when (select revoked_at is not null from share_links where token_hash = current_setting('test.consent_revoked_share_token_hash'))
+  then 'PASS 동의 철회는 활성 공유 링크를 cascade 회수' else 'FAIL 동의 철회 cascade 누락' end;
+set role service_role;
+select case when consume_share_link_token(current_setting('test.consent_revoked_share_token_hash')) is null
+  then 'PASS 동의 철회 cascade 후 service_role consume 차단' else 'FAIL 동의 철회 뒤 공유 링크 재사용' end;
+set role authenticated;
 select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '철회 후 기록 차단');
-select expect_ok($q$insert into consents(child_id, guardian_id, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'sensitive_health')$q$, 'A 재동의');
+select expect_ok($q$select record_recipient_consent('11111111-1111-1111-1111-111111111111'::uuid, 'sensitive_health', 'v1', 'guardian')$q$, 'A 최종 재동의');
+select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111' and document_type = 'sensitive_health') = 3
+  then 'PASS 재동의는 별도 민감정보 증빙 보존' else 'FAIL 재동의 증빙 누락' end;
+select case when (select count(*) from recipient_consent_evidence where child_id = '11111111-1111-1111-1111-111111111111') = 4
+  then 'PASS 철회 전 증빙은 재동의 후에도 보존' else 'FAIL 철회 증빙 보존' end;
 select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '재동의 후 기록 허용');
+
+-- ── 사용자별 설정 (user_settings) — 본인 행만 읽기/쓰기 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$insert into user_settings(user_id, settings) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{"dashboardOrder":["sleep","temp"]}'::jsonb)$q$, 'A 설정 저장');
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select case when (select count(*) from user_settings) = 0 then 'PASS 타인 설정 비노출' else 'FAIL B가 타인 설정을 봄' end;
+select expect_error($q$insert into user_settings(user_id, settings) values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{}'::jsonb)$q$, '타인 user_id로 설정 쓰기 차단');
+select expect_rows($q$update user_settings set settings = '{}'::jsonb where user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'$q$, 0, '타인 설정 수정 무효');
+
+-- ── 전연령 확대: 성인 대상자도 동일한 동의 게이트가 걸린다 ──
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_ok($q$select create_recipient('{"id":"44444444-4444-4444-4444-444444444444","name":"아버지","birth_date":"1955-03-02","sex":"male","recipient_type":"adult","is_self":false}'::jsonb)$q$, '성인 대상자·위임 동의 원자 생성');
+select expect_error($q$select create_recipient('{"id":"55555555-5555-5555-5555-555555555555","name":"잘못된유형","birth_date":"2000-01-01","sex":"male","recipient_type":"pet"}'::jsonb)$q$, '허용되지 않은 recipient_type 차단');
+select expect_ok($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 동의 후 기록 허용');
+select case when exists (select 1 from recipient_consent_evidence where child_id = '44444444-4444-4444-4444-444444444444' and document_type = 'sensitive_health' and subject_role = 'delegated_adult')
+  then 'PASS 성인 민감정보 증빙 위임 주체 서버 결정' else 'FAIL 성인 민감정보 증빙 주체' end;
+-- 위임 동의만 철회해도 민감정보 동의가 살아 있으면 기록은 계속된다(게이트는 sensitive_health 하나)
+select expect_ok($q$select revoke_recipient_consent('44444444-4444-4444-4444-444444444444'::uuid, 'sensitive_health')$q$, '성인 대상자 민감정보 동의 철회');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('44444444-4444-4444-4444-444444444444', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', current_date, 'note')$q$, '성인 대상자 — 철회 후 기록 차단');
+select case when (select count(*) from children where recipient_type = 'child') = 2 then 'PASS 기존 행은 child 기본값 유지' else 'FAIL recipient_type 기본값' end;
+
+-- ── owner의 아이 삭제 cascade ──
+-- ── 동의 증빙과 계정 삭제 요청 계약 ───────────────────────────────
+-- account deletion은 Edge Function이 실제 Storage/Auth 파기를 수행한다. 여기서는
+-- DB 신뢰 경계(재인증 claim, RLS, dry-run, 멱등 request)를 fresh PG에서 공격한다.
+select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_error($q$insert into account_consent_evidence(document_type, document_version, document_items, subject_id, accepted_at) values ('terms', 'v1', '[]'::jsonb, auth.uid(), now())$q$, '계정 약관 증빙 직접 INSERT 차단');
+select expect_error($q$insert into account_consent_evidence(document_type, document_version, document_items, subject_id, subject_role, accepted_at) values ('terms', 'v1', '["forged"]'::jsonb, auth.uid(), 'self', now())$q$, '계정 약관 증빙 유효형 직접 INSERT 차단');
+select expect_error($q$select record_account_consent('terms', 'unknown', 'self')$q$, '알 수 없는 약관 버전 차단');
+select expect_ok($q$select record_account_consent('terms', 'v1', 'self')$q$, '계정 약관 버전·항목·시각 서버 증빙');
+select case when (select count(*) from account_consent_evidence where subject_id = auth.uid() and document_type = 'terms' and document_version = 'v1' and jsonb_array_length(document_items) > 0) = 1
+  then 'PASS 계정 약관 증빙은 문서 항목을 스냅샷한다' else 'FAIL 계정 약관 증빙 스냅샷' end;
+select case when (select document_items from account_consent_evidence where subject_id = auth.uid() and document_type = 'terms' order by recorded_at desc limit 1) = '["service_terms","adult_account","health_record_not_medical_advice"]'::jsonb
+  then 'PASS 계정 약관 증빙 항목은 서버 문서와 일치' else 'FAIL 계정 약관 증빙 항목' end;
+select expect_error($q$update account_consent_evidence set document_version = 'v2'$q$, '계정 약관 증빙 수정 차단');
+select expect_error($q$select request_account_deletion(false)$q$, '재인증 claim 없는 탈퇴 요청 차단');
+select set_config('request.jwt.claims', json_build_object('sub', auth.uid(), 'reauthenticated_at', to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SSOF'))::text, false);
+select expect_ok($q$select request_account_deletion(true)$q$, '재인증 후 dry-run 탈퇴 계획 생성');
+select case when (select count(*) from account_deletion_jobs where user_id = auth.uid()) = 0
+  then 'PASS dry-run은 삭제 작업을 만들지 않음' else 'FAIL dry-run이 삭제 작업을 남김' end;
+select expect_ok($q$select request_account_deletion(false)$q$, '재인증 후 탈퇴 작업 생성');
+select expect_ok($q$select request_account_deletion(false)$q$, '동일 탈퇴 요청 멱등 성공');
+select case when (select count(*) from account_deletion_jobs where user_id = auth.uid() and status = 'requested') = 1
+  then 'PASS 탈퇴 재시도는 활성 작업 하나만 유지' else 'FAIL 탈퇴 작업 중복 생성' end;
+select set_user('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb');
+select case when (select count(*) from account_deletion_jobs) = 0
+  then 'PASS 공동 보호자는 타인 탈퇴 작업을 볼 수 없음' else 'FAIL 탈퇴 작업 정보 노출' end;
+select expect_error($q$select request_account_deletion(false)$q$, '재인증 claim의 다른 계정 재사용 차단');
 
 -- ── owner의 아이 삭제 cascade ──
 select set_user('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select expect_error($q$insert into daily_records(child_id, author_id, record_date, type) values ('11111111-1111-1111-1111-111111111111', auth.uid(), current_date, 'note')$q$, '탈퇴 요청 후 새 건강 기록 차단');
 select expect_rows($q$delete from children where id = '11111111-1111-1111-1111-111111111111'$q$, 1, 'A(owner) 아이 삭제');
-select case when (select count(*) from daily_records) = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
+-- 삭제한 대상자의 기록만 사라져야 한다 (다른 대상자의 기록은 남아 있어야 정상)
+select case when (select count(*) from daily_records where child_id = '11111111-1111-1111-1111-111111111111') = 0 then 'PASS 기록 cascade 삭제' else 'FAIL cascade' end;
+select case when (select count(*) from daily_records where child_id = '44444444-4444-4444-4444-444444444444') = 1 then 'PASS 다른 대상자 기록은 보존' else 'FAIL 무관한 기록까지 삭제됨' end;
+
+\echo RLS_SUITE_COMPLETE expected=181

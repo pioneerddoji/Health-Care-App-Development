@@ -32,7 +32,7 @@ const describePayload = (r: DailyRecord): string => {
 };
 
 export const buildReportHtml = (input: ReportInput): string => {
-  const { child, periodStart, periodEnd, questionsForDoctor } = input;
+  const { child, periodStart, periodEnd, questionsForDoctor, briefingNote } = input;
   const records = inPeriod(input.records, periodStart, periodEnd)
     .sort((a, b) => (a.recordDate + (a.recordTime ?? '')).localeCompare(b.recordDate + (b.recordTime ?? '')));
   const summary = summarizePeriod(records, periodStart, periodEnd);
@@ -156,7 +156,7 @@ export const buildReportHtml = (input: ReportInput): string => {
   .page-break { page-break-before: always; }
 </style>
 
-<h1>아이 건강 기록 레포트</h1>
+<h1>건강 기록 레포트</h1>
 <div class="sub">
   ${esc(child.name)} (${child.sex === 'female' ? '여' : '남'}, ${koreanAge(child.birthDate)},
   생년월일 ${formatKorean(child.birthDate)})
@@ -210,6 +210,9 @@ ${vaccs.map((v) => `<tr><td>${esc(v.vaccineName)}</td><td>${v.doseNo}차</td><td
 ${questionsForDoctor.length
     ? `<ol class="q">${questionsForDoctor.map((q) => `<li>${esc(q)}</li>`).join('')}</ol>`
     : '<p class="empty">작성된 질문이 없습니다.</p>'}
+
+<h2>13. 보호자 전달 메모</h2>
+${briefingNote?.trim() ? `<p>${esc(briefingNote.trim())}</p>` : '<p class="empty">작성된 전달 메모가 없습니다.</p>'}
 
 <div class="disclaimer">
   본 레포트는 보호자가 앱에 입력한 관찰 기록을 정리한 문서로, 의학적 진단·소견·처방이 아닙니다.

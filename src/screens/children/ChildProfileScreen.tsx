@@ -1,4 +1,5 @@
-// 아이 프로필 상세 + 성장(키/체중/BMI) 그래프 + 접종/검진 진입
+// 대상자 프로필 상세 + 성장(키/체중/BMI) 그래프 + 접종/검진 진입
+// 출생 정보·성장 그래프처럼 연령 전제가 있는 항목은 아이 대상자에게만 노출한다.
 import React from 'react';
 import { ScrollView, Text, StyleSheet, View } from 'react-native';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -7,6 +8,7 @@ import { useApp } from '../../context/AppContext';
 import { Screen, Card, Button, Row, Muted, tokens } from '../../components/ui';
 import { LineChart } from '../../components/charts/Charts';
 import { formatKorean, formatShort, koreanAge } from '../../lib/date';
+import { showsChildFeatures } from '../../lib/recipient';
 import { PALETTE } from '../../components/charts/svg';
 import type { RootStackParamList } from '../../navigation/types';
 
@@ -27,6 +29,7 @@ export const ChildProfileScreen = () => {
   const child = children.find((c) => c.id === route.params.childId);
   if (!child) return null;
   const editable = canEdit(child.id);
+  const childFeatures = showsChildFeatures(child);
 
   const g = growth
     .filter((m) => m.childId === child.id)
@@ -42,15 +45,31 @@ export const ChildProfileScreen = () => {
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <Card>
           <Row>
-            <Text style={{ fontSize: 40, marginRight: 14 }}>{child.sex === 'female' ? '👧' : '👦'}</Text>
+            <Text style={{ fontSize: 40, marginRight: 14 }}>
+              {childFeatures
+                ? (child.sex === 'female' ? '👧' : '👦')
+                : (child.sex === 'female' ? '👩' : '👨')}
+            </Text>
             <View>
-              <Text style={styles.name}>{child.name}{child.nickname ? ` (${child.nickname})` : ''}</Text>
-              <Muted>{formatKorean(child.birthDate)} 출생 · {koreanAge(child.birthDate)} · {child.sex === 'female' ? '여아' : '남아'}</Muted>
+              <Text style={styles.name}>
+                {child.name}{child.nickname ? ` (${child.nickname})` : ''}
+                {child.isSelf ? ' · 본인' : ''}
+              </Text>
+              <Muted>
+                {formatKorean(child.birthDate)} 출생 · {koreanAge(child.birthDate)} ·{' '}
+                {childFeatures
+                  ? (child.sex === 'female' ? '여아' : '남아')
+                  : (child.sex === 'female' ? '여성' : '남성')}
+              </Muted>
             </View>
           </Row>
           <View style={{ height: 12 }} />
-          <InfoRow label="출생 체중" value={child.birthWeightG ? `${child.birthWeightG}g` : undefined} />
-          <InfoRow label="재태 주수" value={child.gestationalWeeks ? `${child.gestationalWeeks}주${child.isPreterm ? ' (조산)' : ''}` : undefined} />
+          {childFeatures && (
+            <>
+              <InfoRow label="출생 체중" value={child.birthWeightG ? `${child.birthWeightG}g` : undefined} />
+              <InfoRow label="재태 주수" value={child.gestationalWeeks ? `${child.gestationalWeeks}주${child.isPreterm ? ' (조산)' : ''}` : undefined} />
+            </>
+          )}
           <InfoRow label="혈액형" value={child.bloodType} />
           <InfoRow label="주치의" value={child.primaryDoctor} />
           <InfoRow label="병원" value={child.primaryHospital} />
@@ -103,8 +122,11 @@ export const ChildProfileScreen = () => {
           <Muted>용법은 처방/기록 그대로 표시합니다. 앱은 용량을 계산하지 않습니다.</Muted>
         </Card>
 
-        <Text style={styles.section}>성장 그래프</Text>
-        <LineChart title="키 (cm)" unit="" points={growthPoints((m) => m.heightCm)} />
+        {/* 키 성장 곡선은 소아 전용 — 성인은 체중·BMI만 의미가 있다 */}
+        <Text style={styles.section}>{childFeatures ? '성장 그래프' : '체중 · BMI'}</Text>
+        {childFeatures && (
+          <LineChart title="키 (cm)" unit="" points={growthPoints((m) => m.heightCm)} />
+        )}
         <LineChart title="체중 (kg)" unit="" color={PALETTE.series[1]} points={growthPoints((m) => m.weightKg)} />
         <LineChart title="BMI" unit="" color={PALETTE.series[4]} points={growthPoints((m) => m.bmi)} />
 

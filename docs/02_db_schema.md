@@ -70,16 +70,50 @@ payload 키는 앱 코드와 동일한 **camelCase**로 저장한다(JSONB이므
 - `invite_guardian(cid, email, role)` RPC(definer): owner 검증 → auth.users에서
   이메일→uid 해석 → guardian_child upsert. 미가입 이메일은 오류로 가입 안내.
 
+### P0 무결성 강화 (`schema_security.sql`)
+- 적용 순서는 `schema.sql` → stage3 → subscriptions → settings → recipients → security다.
+  기존 데이터는 수정하지 않으며, 새 대상자 생성만 `create_recipient(jsonb)` 단일
+  `SECURITY DEFINER` 트랜잭션으로 제한한다.
+- 이 RPC는 대상자·최초 owner·만 나이 기준 필수 동의(법정대리/본인/성인 위임 +
+  `sensitive_health`)를 함께 생성하고, 구독 한도 실패 시 전체를 롤백한다.
+- `guardian_child`의 직접 INSERT/UPDATE를 폐기하고 `invite_guardian`/
+  `set_guardian_role` RPC로 초대·역할 변경을 강제한다. owner 승격·자기 초대는 불가다.
+- `daily_records.author_id`, `reports.created_by`는 INSERT 시 `auth.uid()`와 일치해야
+  하며 이후 수정도 trigger가 거부한다. 적용·검증·비상 롤백은
+  `docs/11_rls_data_integrity.md`를 단일 기준으로 따른다.
+
+### P0 동의 증빙·계정 탈퇴 (`schema_consent_deletion.sql`)
+- `consent_documents`와 recipient/account evidence 테이블은 문서 버전·항목 snapshot·시각·주체를 서버에서 append-only로 보관한다. raw `consents` 쓰기는 RPC로 대체한다.
+- `request_account_deletion(dry_run)`은 최근 재인증 custom JWT claim을 검증하고 멱등 job만 생성한다. Storage·공유 토큰·Auth 파기는 `delete-account` Edge Function이 정해진 순서로 수행한다.
+- 적용·재인증 claim·공동 데이터 소유권·partial retry·롤백 기준은 `docs/12_consent_account_deletion.md`를 단일 기준으로 따른다.
+
 ### 4단계 추가 — 레포트 발행 · 만료형 공유 링크
 - `reports`: owner/editor만 발행(`select` 자체는 viewer도 가능해 앱 내 열람은 허용).
   PDF는 Storage `reports` 버킷 `child_id/report_id.pdf` 경로에 업로드.
-- `share_links`: `select/insert/update/delete` 모두 owner/editor만 — **viewer는 공유
-  링크 목록 자체를 볼 수 없다**(레포트 내용은 볼 수 있어도 재공유는 못 함).
+- `share_links`: 원문 token을 저장하지 않고 SHA-256 hash만 저장한다. 발행은
+  `create_secure_share_link(report_id, ttl)` RPC만 가능하며, owner/editor·대상 아이의
+  유효 민감정보 동의를 서버에서 재확인한다. viewer는 목록·발행·회수 모두 불가하고,
+  회수는 `revoke_secure_share_link(link_id)` RPC만 가능하다.
 - **비로그인 수신자용 실제 접근 경로는 DB 함수가 아니라 Edge Function**
   (`supabase/functions/share-report`)이다. 이유: Storage 서명 URL은 한 번 발급하면
   회수할 수 없으므로, "지금 회수" 버튼이 실제로 접근을 끊으려면 매 요청마다
-  서버에서 `expires_at`/`revoked_at`을 재검사한 뒤 **그때그때 짧은 수명(5분)의
-  서명 URL을 새로 발급**해야 한다. Edge Function이 그 검사 지점 역할을 한다.
+  서버에서 `expires_at`/`revoked_at`/대상 아이 삭제를 원자적으로 재검사한 뒤
+  **그때그때 짧은 수명(5분)의 서명 URL을 새로 발급**해야 한다. Edge Function은
+  token hash만 전달하고, 동시 replay를 행 잠금+1초 rate limit으로 차단한다. 결과는
+  존재 여부를 구별하지 않는 404로 최소화하며 원문 token·IP·User-Agent는 보존하지
+  않는다. `share_link_access_audit`에는 link id·결과·시각만 최소 기록한다.
   배포: `supabase functions deploy share-report --no-verify-jwt`
   (수신자는 로그인 세션이 없으므로 JWT 검증을 꺼야 한다).
-- 공유 URL 형태: `{SUPABASE_URL}/functions/v1/share-report?token=<share_links.token>`
+- 공유 URL 형태: `{SUPABASE_URL}/functions/v1/share-report?token=<발행 응답의 일회성 원문 token>`
+  (목록에서 token을 다시 조회하거나 재구성할 수 없다).
+
+### P0 결제 entitlement ledger (`schema_entitlement_ledger.sql`)
+- `billing_event_inbox`는 provider·provider event ID의 유니크 키로 중복 delivery를
+  멱등 처리하고, 원문 payload·수신/유효 시각·처리 결과(applied/stale/dead-letter)를
+  감사 목적으로 보존한다. 일반 사용자 RLS에는 노출하지 않는다.
+- `ingest_entitlement_event(...)`는 service_role 전용이다. `effective_at`이 현재
+  projection보다 같거나 과거면 무시하므로, 늦게 도착한 expiration/refund가 새
+  restore/renewal을 되돌릴 수 없다. 앱의 유일한 읽기 원천은 계속 `subscriptions`다.
+- RevenueCat과 sandbox double만 현재 서명/토큰 검증 후 ledger로 정규화한다. Polar,
+  Apple, Google Play은 각 공급자 JWS/OAuth verifier를 실제로 등록하기 전에는 503으로
+  fail-closed하며 DB를 쓰지 않는다. 운영 credential·상품 등록·웹훅 배포는 별도 운영 작업이다.
