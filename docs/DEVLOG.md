@@ -661,3 +661,33 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 **다음**
 - 이 문서-only 보정을 같은 전용 원격 branch와 단일 Draft PR #22에 push하고, 구현자와 분리된
   same-card ratchet review의 APPROVE 또는 canonical REQUEST_CHANGES를 받는다.
+
+---
+
+## 2026-08-24 — P1 오프라인 실기기 QA evidence intake 계약·정적 validator (문서/테스트만)
+
+**한 일**
+- `docs/22_offline_device_qa_evidence_intake.md`와 양성/음성 fixture를 추가해 Android/iOS의
+  TalkBack/VoiceOver, picker focus, permissions, PDF/share, notification/deep-link, app-resume을
+  precondition·비식별 test data·expected/actual·capture reference·result·abort·rollback으로 수집하는
+  fail-closed 계약을 만들었다.
+- `validate-device-qa-evidence.ts`는 full SHA/Draft PR/current-head CI/review verdict, 플랫폼별
+  coverage, 필수 필드, PASS/proven·FAIL/not-proven·ABORT/needs-device 관계, 이메일·전화·token·건강정보·
+  local absolute path 금지 규칙을 결정적으로 검증한다. `test:device-qa-evidence`로 실행한다.
+
+**결정과 이유**
+- 선행 패킷의 PR #22 current head `7cb43eed5b532c236f6ed7d91f9a35a82fbdcd16`와 canonical Kanban
+  verdict locator를 source로 고정했다. Workers Builds failure는 non-green이므로 fixture는 실제 QA를
+  주장하지 않는 `ABORT`/`needs-device` 상태로 시작한다.
+- validator와 fixture는 기기·emulator·build/upload·계정/signing·운영 연동을 실행하지 않는다. 실제
+  승인된 QA 전까지 redacted `qa://pending/...` 참조만 허용해 민감정보와 false-green을 차단한다.
+
+**검증**
+- TDD RED: validator module 부재로 test가 `ERR_MODULE_NOT_FOUND`로 실패하는 것을 확인한 뒤 구현했다.
+- GREEN: `npx tsx scripts/device-qa-evidence-validator.test.mts` PASS 6/0, 양성 fixture VALID,
+  음성 fixture INVALID(민감정보·absolute path·상태 불일치·coverage 누락) 확인.
+- clean exact base에서 `npm ci` 성공(기존 advisories 22건, audit fix/script approval 미실행),
+  typecheck 성공, `test:device-qa-evidence` 성공, E2E 110/0, gating 27/0, Expo web export 성공,
+  `git diff --check` 성공. analytics/five-minute WOW/app-resume/native-preflight/accessibility/iOS/Deno와
+  fresh PG16은 이 branch에서 새로 실행하지 않았고 선행 decision packet의 exact-head source evidence와
+  명시적으로 분리한다.

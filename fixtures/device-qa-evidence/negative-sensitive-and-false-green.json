@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "exactCommitSha": "7cb43eed5b532c236f6ed7d91f9a35a82fbdcd16",
+    "draftPullRequestUrl": "https://github.com/pioneerddoji/Health-Care-App-Development/pull/22",
+    "currentHeadCiUrl": "https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592",
+    "reviewVerdictUrl": "kanban://task/t_d5098b8a/run/162"
+  },
+  "devices": [
+    { "platform": "android", "osVersion": "synthetic-android-os", "appBuildIdentifier": "qa-android-build" }
+  ],
+  "checks": [
+    {
+      "id": "android-screen-reader",
+      "platform": "android",
+      "area": "screen-reader",
+      "preconditions": ["approved QA-only build"],
+      "testDataClass": "synthetic",
+      "steps": ["Traverse key controls"],
+      "expected": "Names and focus are usable.",
+      "actual": "Patient email: qa.person@example.com",
+      "captureReference": "file:///opt/data/private/capture.png",
+      "result": "PASS",
+      "evidenceState": "needs-device",
+      "abortReason": "",
+      "rollback": "Keep the candidate Draft."
+    }
+  ]
+}
