@@ -73,6 +73,21 @@ assert.ok(
   'nested token-like values must report the sensitive-value constraint',
 );
 
+const tokenLikeValueAfterColon = makeValidPackage();
+tokenLikeValueAfterColon.checks[0].actual = 'synthetic marker:github_pat_placeholder';
+assert.ok(
+  expectInvalid(tokenLikeValueAfterColon, 'token-like markers after punctuation must fail closed').some((error) => error.includes('prohibited sensitive value')),
+  'token-like markers after punctuation must report the sensitive-value constraint',
+);
+
+const macosAbsolutePath = makeValidPackage();
+macosAbsolutePath.checks[0].actual = '/Users/example/private/capture.png';
+expectInvalid(macosAbsolutePath, 'macOS absolute paths must fail closed');
+
+const unixAbsolutePath = makeValidPackage();
+unixAbsolutePath.checks[0].actual = '/var/private/capture.png';
+expectInvalid(unixAbsolutePath, 'POSIX absolute paths must fail closed');
+
 const stateMismatch = makeValidPackage();
 stateMismatch.checks[0].result = 'PASS';
 expectInvalid(stateMismatch, 'PASS cannot claim needs-device');
@@ -148,6 +163,21 @@ const negativeFixtureMatrix: Array<[string, () => unknown]> = [
   ['nested Korean health-data label', () => {
     const evidence = makeValidPackage();
     evidence.checks[0].steps = ['Use synthetic values only', 'Do not record 건강정보'];
+    return evidence;
+  }],
+  ['token-like marker after colon', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = 'synthetic marker:github_pat_placeholder';
+    return evidence;
+  }],
+  ['macOS absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = '/Users/example/private/capture.png';
+    return evidence;
+  }],
+  ['POSIX absolute path', () => {
+    const evidence = makeValidPackage();
+    evidence.checks[0].actual = '/var/private/capture.png';
     return evidence;
   }],
   ['capture-reference query bypass', () => {

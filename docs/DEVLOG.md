@@ -722,3 +722,31 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 - TDD RED: nested `github_pat_placeholder_not_a_real_credential`가 validator를 통과하는 실패를
   재현했다. GREEN: 탐지 보강 뒤 test matrix `PASS 22 / FAIL 0`, positive fixture `VALID`, bundled
   negative fixture `INVALID`를 확인했다.
+
+---
+
+## 2026-08-24 — P1 offline device-QA evidence 변조 우회 보강 (review rework)
+
+**한 일**
+- token-like marker가 문자열 시작이나 공백 뒤에만 있던 경계 제한을 제거해, 구두점 뒤의
+  synthetic token-like 값도 fail-closed로 거부한다.
+- local absolute path 탐지를 일반 POSIX/macOS 경로로 보강하되 `https://`와 `qa://`는 허용한다.
+  결정적 negative matrix에 colon 뒤 token marker, `/Users/...`, `/var/...` fixture를 추가했다.
+
+**결정과 이유**
+- fixture에는 실제 credential·개인정보를 넣지 않고 synthetic marker와 예시 경로만 사용한다.
+  URL scheme 자체를 absolute path로 오인하면 approved source URL과 redacted capture reference가
+  false-negative가 되므로, path는 문자열 시작 또는 안전한 delimiter 뒤에 나타날 때만 검사한다.
+
+**검증**
+- TDD RED: colon 뒤 synthetic token-like marker가 `valid: true`를 반환해 test가 예상대로 실패했다.
+  GREEN: 보강 뒤 validator matrix `PASS 25 / FAIL 0`, positive fixture `VALID`를 확인했다.
+- 이 branch: clean `npm ci` 성공(기존 audit advisories 22건 및 pending `esbuild` allow-script warning,
+  audit fix/script approval 미실행), typecheck 성공, E2E 110/0, gating 27/0, Expo web export 성공,
+  `git diff --check` 성공.
+- parent exact source worktree `t_c5953c9f`의
+  `d97cdb4de8bfa6aed155ac5305f2e23b61fb221f`에서도 `npm ci`, typecheck, device evidence 12/0,
+  E2E 110/0, gating 27/0, Expo web export, diff check를 실제 재실행했다. 해당 exact source의
+  `package.json`과 tracked files에는 analytics/five-minute WOW/app-resume/native-preflight/
+  accessibility/iOS-preview-readiness/Deno contract 명령 또는 fixture가 없어, 이 항목들은 실행·PASS로
+  주장하지 않는다. fresh PG16은 task boundary에 따라 parent current-head CI marker만 참조한다.
