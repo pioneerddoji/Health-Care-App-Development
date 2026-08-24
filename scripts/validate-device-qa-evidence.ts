@@ -15,7 +15,13 @@ const RESULT_TO_STATE = {
   ABORT: 'needs-device',
 } as const;
 const TOP_LEVEL_KEYS = ['schemaVersion', 'source', 'devices', 'checks'];
-const SOURCE_KEYS = ['exactCommitSha', 'draftPullRequestUrl', 'currentHeadCiUrl', 'reviewVerdictUrl'];
+const SOURCE_KEYS = ['exactCommitSha', 'draftPullRequestUrl', 'currentHeadCiUrl', 'reviewVerdictUrl'] as const;
+const EXPECTED_SOURCE = {
+  exactCommitSha: '7cb43eed5b532c236f6ed7d91f9a35a82fbdcd16',
+  draftPullRequestUrl: 'https://github.com/pioneerddoji/Health-Care-App-Development/pull/22',
+  currentHeadCiUrl: 'https://github.com/pioneerddoji/Health-Care-App-Development/actions/runs/32676272592',
+  reviewVerdictUrl: 'kanban://task/t_d5098b8a/run/162',
+} as const;
 const DEVICE_KEYS = ['platform', 'osVersion', 'appBuildIdentifier'];
 const CHECK_KEYS = [
   'id',
@@ -40,7 +46,7 @@ export type ValidationResult = { valid: boolean; errors: string[] };
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const requireExactKeys = (value: Record<string, unknown>, allowed: string[], label: string, errors: string[]) => {
+const requireExactKeys = (value: Record<string, unknown>, allowed: readonly string[], label: string, errors: string[]) => {
   for (const key of allowed) {
     if (!(key in value)) errors.push(`${label}.${key} is required`);
   }
@@ -76,6 +82,9 @@ export const validateEvidencePackage = (value: unknown): ValidationResult => {
   } else {
     requireExactKeys(source, SOURCE_KEYS, 'source', errors);
     SOURCE_KEYS.forEach((key) => requireString(source, key, 'source', errors));
+    SOURCE_KEYS.forEach((key) => {
+      if (source[key] !== EXPECTED_SOURCE[key]) errors.push(`source.${key} must match the approved decision packet`);
+    });
     if (typeof source.exactCommitSha === 'string' && !/^[a-f0-9]{40}$/.test(source.exactCommitSha)) {
       errors.push('source.exactCommitSha must be a full lowercase SHA-1');
     }
@@ -114,6 +123,7 @@ export const validateEvidencePackage = (value: unknown): ValidationResult => {
     errors.push('package.checks must be a non-empty array');
   } else {
     const coverage = new Set<string>();
+    const checkIds = new Set<string>();
     value.checks.forEach((check, index) => {
       const label = `checks[${index}]`;
       if (!isObject(check)) {
@@ -141,7 +151,15 @@ export const validateEvidencePackage = (value: unknown): ValidationResult => {
         errors.push(`${label} result and evidenceState must fail closed together`);
       }
       if (check.result === 'ABORT' && !(check.abortReason as string).trim()) errors.push(`${label}.abortReason is required for ABORT`);
-      if (typeof check.platform === 'string' && typeof check.area === 'string') coverage.add(`${check.platform}:${check.area}`);
+      if (typeof check.id === 'string') {
+        if (checkIds.has(check.id)) errors.push(`${label}.id must be unique`);
+        checkIds.add(check.id);
+      }
+      if (typeof check.platform === 'string' && typeof check.area === 'string') {
+        const coverageKey = `${check.platform}:${check.area}`;
+        if (coverage.has(coverageKey)) errors.push(`${label}.platform and area combination must be unique`);
+        coverage.add(coverageKey);
+      }
     });
     PLATFORM_VALUES.forEach((platform) => AREA_VALUES.forEach((area) => {
       if (!coverage.has(`${platform}:${area}`)) errors.push(`package.checks must cover ${platform}:${area}`);

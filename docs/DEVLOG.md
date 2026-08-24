@@ -671,9 +671,10 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
   TalkBack/VoiceOver, picker focus, permissions, PDF/share, notification/deep-link, app-resume을
   precondition·비식별 test data·expected/actual·capture reference·result·abort·rollback으로 수집하는
   fail-closed 계약을 만들었다.
-- `validate-device-qa-evidence.ts`는 full SHA/Draft PR/current-head CI/review verdict, 플랫폼별
-  coverage, 필수 필드, PASS/proven·FAIL/not-proven·ABORT/needs-device 관계, 이메일·전화·token·건강정보·
-  local absolute path 금지 규칙을 결정적으로 검증한다. `test:device-qa-evidence`로 실행한다.
+- `validate-device-qa-evidence.ts`는 선행 패킷에 고정된 full SHA/Draft PR/current-head CI/review verdict,
+  플랫폼별 coverage와 check ID/platform-area 고유성, 필수 필드, PASS/proven·FAIL/not-proven·ABORT/needs-device
+  관계, 이메일·전화·token·건강정보·local absolute path 금지 규칙을 결정적으로 검증한다.
+  `test:device-qa-evidence`로 실행한다.
 
 **결정과 이유**
 - 선행 패킷의 PR #22 current head `7cb43eed5b532c236f6ed7d91f9a35a82fbdcd16`와 canonical Kanban
@@ -684,7 +685,10 @@ docs/07 §결제 수단 선택 검토에 기록. 요지: 앱 내 구독은 양�
 
 **검증**
 - TDD RED: validator module 부재로 test가 `ERR_MODULE_NOT_FOUND`로 실패하는 것을 확인한 뒤 구현했다.
-- GREEN: `npx tsx scripts/device-qa-evidence-validator.test.mts` PASS 6/0, 양성 fixture VALID,
+- ratchet 재검토 요청을 반영해 check ID 및 platform-area 중복을 거부하고, SHA/PR/CI/verdict가 §1의
+  source packet과 정확히 일치하지 않으면 거부하도록 보강했다. 네 source field 각각의 불일치와 두
+  uniqueness 위반을 결정적 음성 테스트로 고정했다.
+- GREEN: `npx tsx scripts/device-qa-evidence-validator.test.mts` PASS 12/0, 양성 fixture VALID,
   음성 fixture INVALID(민감정보·absolute path·상태 불일치·coverage 누락) 확인.
 - clean exact base에서 `npm ci` 성공(기존 advisories 22건, audit fix/script approval 미실행),
   typecheck 성공, `test:device-qa-evidence` 성공, E2E 110/0, gating 27/0, Expo web export 성공,

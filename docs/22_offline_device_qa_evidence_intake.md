@@ -32,14 +32,15 @@ npx tsx scripts/validate-device-qa-evidence.ts <redacted-evidence.json>
 ```
 
 최상위 필수 필드는 `schemaVersion`, `source`, `devices`, `checks`다. 알 수 없는 필드도 거부한다.
-`source`에는 full 40-character SHA, Draft PR URL, current-head CI URL, verdict URL을 모두 써야 한다.
+`source`에는 full 40-character SHA, Draft PR URL, current-head CI URL, verdict URL을 모두 쓰고, §1의
+고정된 선행 결정 패킷 값과 **정확히 일치**해야 한다.
 `devices`에는 Android와 iOS 각각의 비밀이 아닌 OS/app build 식별자가 있어야 한다.
 
 각 `checks[]`는 다음 필드를 모두 가져야 한다.
 
 | 필드 | 규칙 |
 |---|---|
-| `id`, `platform`, `area` | 고유 식별자, `android`/`ios`, 아래 coverage 영역 |
+| `id`, `platform`, `area` | 고유 식별자, `android`/`ios`, 아래 coverage 영역; `id`와 `platform`+`area` 조합은 각각 중복 불가 |
 | `preconditions`, `testDataClass`, `steps` | 실행 전제, `synthetic` 또는 `no-personal-data`, 재현 단계 |
 | `expected`, `actual`, `captureReference` | 기대/관찰 결과와 redacted `qa://pending/...` 또는 `qa://capture/...` 참조 |
 | `result`, `evidenceState` | `PASS`=`proven`, `FAIL`=`not-proven`, `ABORT`=`needs-device`만 허용 |
