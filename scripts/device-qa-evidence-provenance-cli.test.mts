@@ -11,21 +11,23 @@ const fixtureDirectory = join(repositoryRoot, 'fixtures', 'device-qa-evidence');
 const cli = join(repositoryRoot, 'scripts', 'check-device-qa-evidence-provenance.ts');
 const tsxCli = join(repositoryRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 
-const runCli = (cwd: string) => spawnSync(process.execPath, [tsxCli, cli], {
+const runCli = (cwd: string, environment: NodeJS.ProcessEnv = process.env) => spawnSync(process.execPath, [tsxCli, cli], {
   cwd,
+  env: environment,
   encoding: 'utf8',
 });
 
 const originalManifest = await readFile(join(fixtureDirectory, 'manifest.json'), 'utf8');
 const originalPositive = await readFile(join(fixtureDirectory, 'positive-needs-device.json'), 'utf8');
-const rootRun = runCli(repositoryRoot);
+const rootRun = runCli(repositoryRoot, { ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' });
 const isolatedCwd = await mkdtemp(join(tmpdir(), 'kidcare-provenance-cwd-'));
-const isolatedRun = runCli(isolatedCwd);
+const isolatedRun = runCli(isolatedCwd, { ...process.env, LC_ALL: 'C.UTF-8', LANG: 'C.UTF-8', TZ: 'Asia/Seoul' });
 assert.equal(rootRun.status, 0, rootRun.stderr);
 assert.equal(isolatedRun.status, rootRun.status, isolatedRun.stderr);
 assert.equal(isolatedRun.stdout, rootRun.stdout, 'CLI summary must be independent of the working directory');
 assert.equal(isolatedRun.stderr, rootRun.stderr, 'CLI diagnostics must be independent of the working directory');
 assert.match(rootRun.stdout, /^device QA evidence provenance: VALID fixtures=2\n$/);
+assert.doesNotMatch(rootRun.stdout + rootRun.stderr, /(?:\d{4}-\d{2}-\d{2}|\/opt\/|kidcare-provenance-|fixtures\/device-qa-evidence)/, 'CLI output must not disclose timestamps or local paths');
 assert.equal(await readFile(join(fixtureDirectory, 'manifest.json'), 'utf8'), originalManifest, 'CLI must not modify the manifest');
 assert.equal(await readFile(join(fixtureDirectory, 'positive-needs-device.json'), 'utf8'), originalPositive, 'CLI must not modify fixtures');
 
@@ -89,6 +91,14 @@ await withSyntheticCorpus(async (directory) => {
   await writeFile(join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 }, 'nested fixture paths must fail closed');
 
+for (const invalidPath of ['Positive-needs-device.json', 'positive_needs_device.json', 'positive\\needs-device.json', './positive-needs-device.json', 'positive-ne\u0301eds-device.json']) {
+  await withSyntheticCorpus(async (directory) => {
+    const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
+    manifest.fixtures[0].path = invalidPath;
+    await writeFile(join(directory, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  }, `non-canonical fixture path ${JSON.stringify(invalidPath)} must fail closed`);
+}
+
 await withSyntheticCorpus(async (directory) => {
   const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
   manifest.algorithm = 'sha512';
@@ -110,6 +120,27 @@ assert.equal(manifestSymlink.valid, false, 'manifest symlinks must fail closed')
 assert.ok(manifestSymlink.errors.includes('fixture manifest must be a regular file'), 'manifest symlink rejection must be explicit');
 await rm(manifestSymlinkDirectory, { force: true, recursive: true });
 
+const corpusSymlinkDirectory = await mkdtemp(join(tmpdir(), 'kidcare-provenance-corpus-symlink-'));
+const corpusSymlinkPath = join(corpusSymlinkDirectory, 'linked-corpus');
+await symlink(fixtureDirectory, corpusSymlinkPath);
+const corpusSymlinkResult = await verifyEvidenceFixtureDirectory(corpusSymlinkPath);
+assert.equal(corpusSymlinkResult.valid, false, 'corpus root symlinks must fail closed');
+assert.ok(corpusSymlinkResult.errors.includes('fixture corpus directory must be a real directory'), 'corpus symlink rejection must be explicit');
+await rm(corpusSymlinkDirectory, { force: true, recursive: true });
+
+await withSyntheticCorpus(async (directory) => {
+  await unlink(join(directory, 'positive-needs-device.json'));
+  await symlink('negative-sensitive-and-false-green.json', join(directory, 'positive-needs-device.json'));
+}, 'fixture file symlinks must fail closed');
+
+await withSyntheticCorpus(async (directory) => {
+  await symlink('missing-fixture.json', join(directory, 'broken-fixture.json'));
+}, 'broken fixture symlinks must fail closed');
+
+await withSyntheticCorpus(async (directory) => {
+  await rename(join(directory, 'positive-needs-device.json'), join(directory, 'nested-directory'));
+}, 'non-regular fixture directories must fail closed');
+
 const absolutePathDirectory = await mkdtemp(join(tmpdir(), 'kidcare-provenance-absolute-path-'));
 await cp(fixtureDirectory, absolutePathDirectory, { recursive: true });
 const absoluteManifest = JSON.parse(await readFile(join(absolutePathDirectory, 'manifest.json'), 'utf8'));
@@ -121,4 +152,4 @@ assert.equal(absolutePath.errors.some((error) => error.includes('/synthetic/priv
 await rm(absolutePathDirectory, { force: true, recursive: true });
 
 await rm(isolatedCwd, { force: true, recursive: true });
-console.log('device QA evidence provenance CLI: PASS 15 / FAIL 0');
+console.log('device QA evidence provenance CLI: PASS 24 / FAIL 0');

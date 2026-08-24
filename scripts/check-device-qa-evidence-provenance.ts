@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,9 @@ export const verifyEvidenceFixtureDirectory = async (fixtureDirectory: string): 
   let manifest: unknown;
 
   try {
+    if (!(await lstat(fixtureDirectory)).isDirectory()) {
+      return { valid: false, errors: ['fixture corpus directory must be a real directory'] };
+    }
     entries = await readdir(fixtureDirectory, { withFileTypes: true });
   } catch {
     return { valid: false, errors: ['fixture corpus directory is unavailable'] };
@@ -36,7 +39,7 @@ export const verifyEvidenceFixtureDirectory = async (fixtureDirectory: string): 
 
   const corpus = await Promise.all(fixtureEntries
     .filter((entry) => entry.isFile())
-    .sort((left, right) => left.name.localeCompare(right.name))
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
     .map(async (entry) => {
       try {
         return { path: entry.name, contents: await readFile(join(fixtureDirectory, entry.name), 'utf8') };
